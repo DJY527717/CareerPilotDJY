@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        width: 360px;
+        margin: 0;
+        padding: 14px;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #17202a;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 6px;
+        padding: 10px 12px;
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        margin-top: 8px;
+      }
+      button.primary { background: #166534; }
+      button.secondary { background: #1d4ed8; }
+      button:disabled {
+        background: #9ca3af;
+        cursor: default;
+      }
+      p {
+        margin: 10px 0 0;
+        color: #4b5563;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #status {
+        min-height: 18px;
+        color: #14532d;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+        margin: 8px 0 2px;
+      }
+      label {
+        color: #374151;
+        font-size: 12px;
+      }
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 4px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 7px 8px;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CareerPilot JD Saver</h1>
+    <div class="controls">
+      <label>Max pages
+        <input id="maxPages" type="number" min="1" max="20" value="4" />
+      </label>
+      <label>Scroll/page
+        <input id="scrollSteps" type="number" min="0" max="8" value="2" />
+      </label>
+      <label>Detail pages
+        <input id="detailLimit" type="number" min="0" max="80" value="20" />
+      </label>
+    </div>
+    <button id="nextPagesDetailSave" class="secondary">Collect list + detail pages</button>
+    <button id="savePage" class="primary">Save current detail page</button>
+    <p id="status"></p>
+    <p>Use Collect list + detail pages on search result pages. Set Detail pages to 0 for list-only collection.</p>
+    <p>Use Save current detail page only when you are already on one job detail page.</p>
+    <p>Files are saved to Downloads/CareerPilot_JD/YYYY-MM-DD.</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

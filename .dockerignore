@@ -1,0 +1,13 @@
+.venv/
+.venv_cp313/
+.venv_streamlit/
+venv/
+__pycache__/
+*.pyc
+*.db
+*.xlsx
+*.pdf
+*.docx
+*.log
+.git/
+.streamlit/

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.streamlit/
+.venv/
+.venv_streamlit/
+venv/
+carboncareer.db
+careerpilot.db
+*.db
+*.xlsx
+*.pdf
+*.docx
+*.log
+Downloads/
+CareerPilot_JD/
