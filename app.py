@@ -10,6 +10,7 @@ import os
 import re
 import hashlib
 import secrets
+import shutil
 import sqlite3
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -87,6 +88,7 @@ PLUGIN_UPLOAD_TOKEN_KEY = "plugin_upload_token"
 UPLOAD_API_PORT = int(os.getenv("UPLOAD_API_PORT", "8765") or "8765")
 UPLOAD_API_PATH = os.getenv("UPLOAD_API_PATH", "/api/plugin-upload").strip() or "/api/plugin-upload"
 UPLOAD_API_PUBLIC_URL = os.getenv("UPLOAD_API_PUBLIC_URL", "").strip()
+APP_BUILD_LABEL = os.getenv("APP_BUILD_LABEL", "theme-fix-direction-tree-2026-04-30")
 
 
 def cloud_upload_root_for_user(user_id: int) -> Path:
@@ -202,97 +204,107 @@ CHINA_CITY_OPTIONS = [
 ]
 
 RECRUITMENT_INDUSTRY_OPTIONS = [
-    "互联网/电子商务",
-    "移动互联网",
+    "互联网/AI",
+    "电子/电气/通信",
     "计算机软件",
-    "计算机硬件",
-    "IT服务/系统集成",
-    "云计算/大数据",
-    "人工智能",
-    "游戏",
-    "电子/半导体/集成电路",
-    "通信/网络设备",
-    "金融",
-    "银行",
-    "证券/期货",
-    "基金",
-    "保险",
-    "投资/融资",
-    "新能源",
-    "汽车/新能源汽车",
-    "机械/设备/重工",
-    "仪器仪表/工业自动化",
-    "原材料及加工",
-    "化工",
-    "环保",
-    "能源/矿产/电力",
-    "贸易/进出口",
-    "批发/零售",
-    "食品/饮料/酒水",
-    "服装/纺织/皮革",
-    "家居/家具/家电",
-    "快消品",
-    "物流/仓储",
-    "交通/运输",
-    "供应链/采购",
+    "产品",
+    "运营",
+    "设计",
+    "市场/公关/媒介",
+    "销售/商务拓展",
+    "客服/售前售后",
+    "人力/行政/法务",
+    "财务/审计/税务",
+    "采购/贸易",
+    "供应链/物流",
+    "生产制造",
+    "机械/设备",
+    "汽车",
     "房地产/建筑",
-    "物业管理",
-    "咨询",
-    "专业服务",
-    "检测/认证",
-    "会计/审计",
-    "法律",
-    "人力资源服务",
-    "广告/公关/会展",
-    "媒体/出版/影视",
-    "文化/体育/娱乐",
-    "教育/培训",
-    "学术/科研",
-    "医疗服务",
-    "医药/生物工程",
-    "医疗器械",
-    "养老/健康服务",
-    "餐饮",
-    "酒店/旅游",
-    "生活服务",
-    "政府/公共事业",
-    "非营利组织",
-    "农林牧渔",
+    "教育培训",
+    "医疗健康",
+    "金融",
+    "咨询/专业服务",
+    "传媒/广告",
+    "消费品/零售",
+    "餐饮/酒店/旅游",
+    "能源/化工/环保",
+    "农业/其他",
+    "管培生/实习生",
     "可持续发展/ESG",
     "跨境电商",
+    "新能源",
+    "汽车/新能源汽车",
+    "云计算/大数据",
+    "游戏",
+    "医药/生物工程",
 ]
 
-TARGET_ROLE_OPTIONS = [
-    "数据分析",
-    "商业分析",
-    "产品经理",
-    "产品运营",
-    "用户运营",
-    "内容运营",
-    "增长运营",
-    "项目管理",
-    "咨询顾问",
-    "行业研究",
-    "市场营销",
-    "品牌公关",
-    "商务拓展",
-    "客户成功",
-    "供应链管理",
-    "采购",
-    "财务分析",
-    "法务合规",
-    "人力资源",
-    "前端开发",
-    "后端开发",
-    "算法工程师",
-    "数据工程师",
-    "测试工程师",
-    "UI/UX设计",
-    "ESG/可持续发展",
-    "碳管理/LCA",
-]
+INDUSTRY_DIRECTION_TREE: dict[str, list[str]] = {
+    "互联网/AI": ["前端开发", "后端开发", "全栈开发", "测试工程师", "运维/技术支持", "数据分析", "数据工程", "算法工程师", "大模型算法", "NLP/机器学习"],
+    "电子/电气/通信": ["硬件工程师", "嵌入式开发", "电气工程师", "通信工程师", "网络工程师", "系统测试", "FAE/售前技术支持"],
+    "计算机软件": ["Java开发", "Python开发", "Go开发", "C++开发", "前端开发", "后端开发", "测试开发", "实施工程师", "技术支持", "DBA"],
+    "产品": ["产品经理", "AI产品经理", "数据产品经理", "产品运营", "产品策划", "用户研究"],
+    "运营": ["用户运营", "内容运营", "活动运营", "新媒体运营", "增长运营", "社区运营", "电商运营", "平台运营"],
+    "设计": ["UI设计", "UX设计", "交互设计", "视觉设计", "平面设计", "品牌设计", "三维/3D设计"],
+    "市场/公关/媒介": ["市场策划", "品牌公关", "媒介投放", "活动策划", "内容营销", "海外营销"],
+    "销售/商务拓展": ["销售专员", "销售经理", "商务拓展(BD)", "渠道销售", "大客户销售", "招商主管", "解决方案销售"],
+    "客服/售前售后": ["客服专员", "客服主管", "售前顾问", "售后支持", "客户成功", "实施顾问"],
+    "人力/行政/法务": ["招聘", "HRBP", "薪酬绩效", "培训发展", "行政", "法务", "合规"],
+    "财务/审计/税务": ["会计", "财务分析", "审计", "税务", "出纳", "内控/风控"],
+    "采购/贸易": ["采购", "采购开发", "外贸业务", "跟单", "进出口", "报关报检"],
+    "供应链/物流": ["供应链管理", "物流运营", "仓储管理", "计划/PMC", "运输调度", "跨境物流"],
+    "生产制造": ["生产管理", "工艺工程师", "质量工程师", "精益生产", "厂务", "制造工程师"],
+    "机械/设备": ["机械设计", "自动化工程师", "设备工程师", "机电工程师", "售后工程师", "项目工程师"],
+    "汽车": ["整车工程师", "智能驾驶", "三电系统", "汽车电子", "车联网", "汽车售后"],
+    "房地产/建筑": ["建筑设计", "土木工程", "工程管理", "造价/预算", "施工管理", "招商主管"],
+    "教育培训": ["教师", "教研", "课程顾问", "班主任", "学习规划师", "培训运营"],
+    "医疗健康": ["医生", "护士", "健康管理", "医疗器械销售", "临床协调", "医院运营"],
+    "金融": ["银行业务", "证券研究", "基金销售", "投资分析", "风控", "金融产品经理"],
+    "咨询/专业服务": ["咨询顾问", "战略咨询", "管理咨询", "行业研究", "会计师事务所", "猎头顾问"],
+    "传媒/广告": ["文案策划", "广告投放", "视频编导", "剪辑", "主播/直播运营", "出版编辑"],
+    "消费品/零售": ["品类运营", "零售管培生", "门店运营", "商品采购", "陈列设计", "电商运营"],
+    "餐饮/酒店/旅游": ["酒店运营", "旅游产品", "餐饮店长", "前厅/客房管理", "酒旅销售"],
+    "能源/化工/环保": ["环保工程师", "环境咨询/环评", "EHS", "化工工艺", "电力工程师", "储能/光伏工程师"],
+    "农业/其他": ["农业技术", "养殖管理", "农产品运营", "综合岗"],
+    "管培生/实习生": ["管培生", "培训生", "暑期实习", "日常实习", "校招生"],
+    "可持续发展/ESG": ["ESG咨询", "碳管理/LCA", "双碳/碳核算", "ESG报告/信息披露", "可持续供应链", "CSR/可持续发展"],
+    "跨境电商": ["跨境电商运营", "跨境选品", "跨境投放", "独立站运营", "海外客服"],
+    "新能源": ["光伏", "储能", "锂电池", "氢能", "充电桩", "能源交易"],
+    "汽车/新能源汽车": ["新能源整车", "电池/BMS", "智能驾驶", "热管理", "汽车质量", "汽车供应链"],
+    "云计算/大数据": ["云平台工程师", "数据开发", "大数据开发", "数据分析", "数据架构", "BI工程师"],
+    "游戏": ["游戏策划", "游戏运营", "游戏客户端", "游戏服务端", "TA/技术美术", "游戏测试"],
+    "医药/生物工程": ["药品注册", "医学事务", "药物研发", "生物分析", "临床试验", "医药销售"],
+}
 
 INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
+    "互联网/AI": ["互联网", "AI", "人工智能", "AIGC", "大模型", "算法", "软件", "平台", "SaaS", "互联网公司"],
+    "电子/电气/通信": ["电子", "电气", "通信", "半导体", "芯片", "硬件", "嵌入式", "网络设备", "5G"],
+    "计算机软件": ["软件", "开发", "前端", "后端", "全栈", "测试", "运维", "实施", "IT", "程序员"],
+    "产品": ["产品", "产品经理", "产品运营", "用户研究", "产品策划", "需求分析"],
+    "运营": ["运营", "用户运营", "内容运营", "活动运营", "增长运营", "社群运营", "新媒体运营"],
+    "设计": ["设计", "UI", "UX", "交互设计", "视觉设计", "平面设计", "工业设计"],
+    "市场/公关/媒介": ["市场", "营销", "品牌", "公关", "媒介", "投放", "活动策划"],
+    "销售/商务拓展": ["销售", "商务拓展", "BD", "客户开发", "渠道", "大客户", "商家运营"],
+    "客服/售前售后": ["客服", "售前", "售后", "客户成功", "技术支持", "服务顾问"],
+    "人力/行政/法务": ["人力", "HR", "招聘", "行政", "法务", "合规", "劳动关系"],
+    "财务/审计/税务": ["财务", "会计", "审计", "税务", "出纳", "财务分析", "内控"],
+    "采购/贸易": ["采购", "外贸", "贸易", "进出口", "报关", "跟单", "国际业务"],
+    "供应链/物流": ["供应链", "物流", "仓储", "计划", "运输", "配送", "库存"],
+    "生产制造": ["生产", "制造", "工艺", "质量", "厂务", "生产管理", "制造业"],
+    "机械/设备": ["机械", "设备", "自动化", "机电", "重工", "工程机械"],
+    "汽车": ["汽车", "整车", "新能源车", "车联网", "智能驾驶", "主机厂"],
+    "房地产/建筑": ["房地产", "建筑", "土木", "工程", "施工", "造价", "监理"],
+    "教育培训": ["教育", "培训", "教研", "课程", "教师", "教培"],
+    "医疗健康": ["医疗", "健康", "医院", "医生", "护士", "健康管理", "医疗器械"],
+    "金融": ["金融", "银行", "证券", "基金", "保险", "投资", "风控", "金融科技"],
+    "咨询/专业服务": ["咨询", "顾问", "研究", "专业服务", "事务所", "战略咨询", "管理咨询"],
+    "传媒/广告": ["传媒", "广告", "影视", "出版", "内容", "短视频", "直播"],
+    "消费品/零售": ["消费品", "零售", "快消", "商超", "门店", "电商", "零售运营"],
+    "餐饮/酒店/旅游": ["餐饮", "酒店", "旅游", "民宿", "景区", "酒旅"],
+    "能源/化工/环保": ["能源", "化工", "环保", "电力", "光伏", "储能", "碳中和"],
+    "农业/其他": ["农业", "农林牧渔", "养殖", "种植", "其他"],
+    "管培生/实习生": ["管培生", "培训生", "MT", "实习生", "应届生", "校招", "暑期实习"],
     "互联网/电子商务": ["互联网", "电商", "电子商务", "平台", "社区", "本地生活", "O2O", "SaaS"],
     "移动互联网": ["移动互联网", "App", "小程序", "移动端", "客户端"],
     "计算机软件": ["软件", "SaaS", "企业服务", "ERP", "CRM", "低代码", "数据库", "操作系统"],
@@ -3399,6 +3411,83 @@ def ocr_pdf_bytes(data: bytes, max_pages: int = 6) -> str:
         return "\n\n".join(chunks)
     except Exception as exc:
         return f"[PDF OCR 失败：请确认已安装 pypdfium2、pytesseract 和本机 Tesseract OCR，或上传文字版 PDF。错误：{exc}]"
+
+
+def resolve_tesseract_cmd() -> str | None:
+    candidates = [
+        os.getenv("TESSERACT_CMD", "").strip(),
+        shutil.which("tesseract") or "",
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract",
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.exists():
+            return str(path)
+    return None
+
+
+def prepare_image_variants_for_ocr(image: Any) -> list[Any]:
+    from PIL import ImageOps, ImageFilter
+
+    base = ImageOps.exif_transpose(image).convert("L")
+    if min(base.size) < 1400:
+        scale = max(1, int(round(1800 / max(min(base.size), 1))))
+        base = base.resize((base.width * scale, base.height * scale))
+
+    autocontrast = ImageOps.autocontrast(base)
+    sharpened = autocontrast.filter(ImageFilter.SHARPEN)
+    binary = sharpened.point(lambda x: 255 if x > 170 else 0, mode="1").convert("L")
+    soft_binary = sharpened.point(lambda x: 255 if x > 145 else 0, mode="1").convert("L")
+    return [autocontrast, sharpened, binary, soft_binary]
+
+
+def ocr_image_bytes(data: bytes) -> str:
+    try:
+        from PIL import Image
+        import pytesseract
+    except Exception as exc:
+        return f"[图片 OCR 失败：缺少 pillow 或 pytesseract。错误：{exc}]"
+
+    tesseract_cmd = resolve_tesseract_cmd()
+    if not tesseract_cmd:
+        return "[图片 OCR 失败：服务器未找到 Tesseract OCR 可执行文件。请安装 tesseract-ocr，并设置 TESSERACT_CMD 或加入 PATH。]"
+
+    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    try:
+        image = Image.open(io.BytesIO(data))
+    except Exception as exc:
+        return f"[图片 OCR 失败：无法打开图片。错误：{exc}]"
+
+    variants = prepare_image_variants_for_ocr(image)
+    configs = [
+        "--oem 3 --psm 6",
+        "--oem 3 --psm 4",
+        "--oem 3 --psm 11",
+    ]
+    outputs: list[str] = []
+
+    for variant in variants:
+        for config in configs:
+            try:
+                text = pytesseract.image_to_string(variant, lang="chi_sim+eng", config=config)
+            except Exception:
+                continue
+            cleaned = normalize_text(text)
+            if len(cleaned) >= 40:
+                return text.strip()
+            if cleaned:
+                outputs.append(text.strip())
+
+    best = max(outputs, key=lambda item: len(normalize_text(item)), default="")
+    if best:
+        return best
+    return "[图片 OCR 未读取到有效文本。建议上传更清晰截图，尽量避免压缩、裁掉空白边，并保证文字区域更大。]"
 
 
 def extract_text_from_upload(uploaded_file: Any) -> str:
@@ -6829,8 +6918,8 @@ def group_present(text: str, aliases: list[str]) -> bool:
 def preference_context_text(preferences: dict[str, Any] | None = None) -> str:
     preferences = preferences or {}
     parts = [
-        " ".join(split_preference_items(preferences.get("target_roles", []))),
         " ".join(split_preference_items(preferences.get("preferred_industries", []))),
+        " ".join(split_preference_items(preferences.get("target_roles", []))),
         " ".join(split_preference_items(preferences.get("job_keywords", []))),
         str(preferences.get("notes", "")),
     ]
@@ -7002,6 +7091,29 @@ def split_preference_items(value: Any) -> list[str]:
     return list(dict.fromkeys(item.strip() for item in raw_items if str(item).strip()))
 
 
+def industry_direction_options(selected_industries: list[str]) -> list[str]:
+    items: list[str] = []
+    for industry in split_preference_items(selected_industries):
+        items.extend(INDUSTRY_DIRECTION_TREE.get(industry, []))
+    return list(dict.fromkeys(items))
+
+
+def normalize_industry_direction_selection(
+    selected_industries: list[str] | Any,
+    selected_directions: list[str] | Any,
+) -> tuple[list[str], list[str]]:
+    industries = split_preference_items(selected_industries)
+    directions = split_preference_items(selected_directions)
+    inferred_industries = list(industries)
+    for direction in directions:
+        for industry, options in INDUSTRY_DIRECTION_TREE.items():
+            if direction in options and industry not in inferred_industries:
+                inferred_industries.append(industry)
+    allowed = set(industry_direction_options(inferred_industries))
+    clean_directions = [direction for direction in directions if direction in allowed]
+    return inferred_industries, clean_directions
+
+
 def free_input_multiselect(
     label: str,
     options: list[str],
@@ -7068,13 +7180,12 @@ def target_preference_adjustment(
     industry_hits = industry_preference_hits(jd_text, preferred_industries)
     if industry_hits:
         score += min(6, len(industry_hits) * 3)
-        reasons.append("行业偏好命中：" + " / ".join(industry_hits[:3]))
+        reasons.append("目标行业命中：" + " / ".join(industry_hits[:3]))
 
-    target_roles = split_preference_items(preferences.get("target_roles", []))
-    role_hits = preference_semantic_hits(jd_text, target_roles)
+    role_hits = preference_semantic_hits(jd_text, split_preference_items(preferences.get("target_roles", [])), conservative=True)
     if role_hits:
         score += min(8, len(role_hits) * 4)
-        reasons.append("求职方向/相关能力命中：" + " / ".join(role_hits[:3]))
+        reasons.append("二级方向/相关能力命中：" + " / ".join(role_hits[:3]))
 
     job_keywords = split_preference_items(preferences.get("job_keywords", []))
     keyword_hits = preference_semantic_hits(jd_text, job_keywords)
@@ -8190,6 +8301,10 @@ def load_target_preferences() -> dict[str, Any]:
     merged["preferred_industries"] = split_preference_items(
         split_preference_items(merged.get("preferred_industries", [])) + split_preference_items(merged.get("extra_industries", ""))
     )
+    merged["preferred_industries"], merged["target_roles"] = normalize_industry_direction_selection(
+        merged.get("preferred_industries", []),
+        merged.get("target_roles", []),
+    )
     merged["job_keywords"] = split_preference_items(merged.get("job_keywords", []))
     if merged["target_cities"] == LEGACY_AUTO_TARGET_CITIES:
         merged["target_cities"] = []
@@ -8217,6 +8332,10 @@ def save_target_preferences(preferences: dict[str, Any]) -> None:
     clean["target_roles"] = split_preference_items(clean.get("target_roles", []))
     clean["target_cities"] = split_preference_items(clean.get("target_cities", []))
     clean["preferred_industries"] = split_preference_items(clean.get("preferred_industries", []))
+    clean["preferred_industries"], clean["target_roles"] = normalize_industry_direction_selection(
+        clean.get("preferred_industries", []),
+        clean.get("target_roles", []),
+    )
     clean["job_keywords"] = split_preference_items(clean.get("job_keywords", []))
     clean["extra_cities"] = ""
     clean["extra_industries"] = ""
@@ -8231,15 +8350,16 @@ def save_target_preferences(preferences: dict[str, Any]) -> None:
 
 def target_preferences_text(preferences: dict[str, Any] | None = None) -> str:
     preferences = preferences or load_target_preferences()
-    role_items = split_preference_items(preferences.get("target_roles", []))
     city_items = split_preference_items(preferences.get("target_cities", []))
     industry_items = split_preference_items(preferences.get("preferred_industries", []))
     keyword_items = split_preference_items(preferences.get("job_keywords", []))
     lines = [
-        "求职方向：" + (" / ".join(role_items) if role_items else "不限"),
         "意向城市：" + (" / ".join(city_items) if city_items else "不限"),
         "目标行业：" + (" / ".join(industry_items) if industry_items else "不限"),
     ]
+    role_items = split_preference_items(preferences.get("target_roles", []))
+    if role_items:
+        lines.append("二级方向：" + " / ".join(role_items))
     if keyword_items:
         lines.append("岗位关键词：" + " / ".join(keyword_items))
     if preferences.get("avoid_keywords"):
@@ -8690,9 +8810,42 @@ def render_app_styles() -> None:
             --cp-red: #b42318;
         }
 
+        html[data-theme="dark"],
+        body[data-theme="dark"],
+        .stApp[data-theme="dark"],
+        [data-theme="dark"],
+        html[data-base-theme="dark"],
+        body[data-base-theme="dark"],
+        .stApp[data-base-theme="dark"],
+        [data-base-theme="dark"],
+        html.cp-force-dark,
+        body.cp-force-dark,
+        .cp-force-dark {
+            --cp-bg: #0e1117;
+            --cp-panel: #151a24;
+            --cp-panel-soft: #1b2230;
+            --cp-sidebar: #111723;
+            --cp-border: rgba(255, 255, 255, 0.14);
+            --cp-text: #f5f7fb;
+            --cp-muted: rgba(245, 247, 251, 0.72);
+            --cp-teal: #34d3bf;
+            --cp-teal-dark: #d8fffa;
+            --cp-accent-soft: rgba(52, 211, 191, 0.14);
+            --cp-gold: #f2c879;
+            --cp-red: #ff8a80;
+        }
+
         .stApp {
             background: var(--cp-bg);
             color: var(--cp-text);
+        }
+
+        div[data-testid="stAppViewContainer"],
+        section[data-testid="stMain"],
+        div[data-testid="stMainBlockContainer"],
+        div.block-container {
+            background: var(--cp-bg) !important;
+            color: var(--cp-text) !important;
         }
 
         header[data-testid="stHeader"] {
@@ -8706,13 +8859,33 @@ def render_app_styles() -> None:
         }
 
         section[data-testid="stSidebar"] {
-            background: var(--cp-sidebar);
+            background: var(--cp-sidebar) !important;
             border-right: 1px solid var(--cp-border);
+        }
+
+        section[data-testid="stSidebar"] > div {
+            background: var(--cp-sidebar) !important;
         }
 
         section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
         section[data-testid="stSidebar"] label {
             color: var(--cp-text);
+        }
+
+        .stRadio label,
+        .stRadio label p,
+        .stRadio div[role="radiogroup"] label,
+        .stRadio div[role="radiogroup"] label div,
+        .stRadio div[role="radiogroup"] label span,
+        div[data-baseweb="radio"] label,
+        div[data-baseweb="radio"] label p,
+        div[data-baseweb="radio"] label span {
+            color: var(--cp-text) !important;
+        }
+
+        .stRadio input[type="radio"],
+        input[type="radio"] {
+            accent-color: var(--cp-teal);
         }
 
         h1, h2, h3 {
@@ -8964,21 +9137,31 @@ def render_app_styles() -> None:
 
         .stTabs [data-baseweb="tab"] {
             border-radius: 6px 6px 0 0;
-            color: var(--cp-muted);
+            color: var(--cp-muted) !important;
             font-size: 15px;
             padding-left: 14px;
             padding-right: 14px;
         }
 
         .stTabs [aria-selected="true"] {
-            color: var(--cp-teal-dark);
-            background: var(--cp-accent-soft);
+            color: var(--cp-teal-dark) !important;
+            background: var(--cp-accent-soft) !important;
         }
 
         div[data-testid="stExpander"] {
             background: var(--cp-panel);
             border: 1px solid var(--cp-border);
             border-radius: 8px;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: var(--cp-panel) !important;
+            border: 1px solid var(--cp-border) !important;
+            border-radius: 10px;
+        }
+
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div {
+            color: var(--cp-text);
         }
 
         div[data-testid="stDataFrame"],
@@ -9019,6 +9202,27 @@ def render_app_styles() -> None:
         div[data-baseweb="select"] > div,
         div[data-baseweb="base-input"] {
             border-radius: 6px;
+            background: var(--cp-panel) !important;
+            color: var(--cp-text) !important;
+            border: 1px solid var(--cp-border) !important;
+        }
+
+        textarea::placeholder,
+        input::placeholder {
+            color: var(--cp-muted) !important;
+            opacity: 1;
+        }
+
+        div[data-baseweb="select"] *,
+        div[data-baseweb="base-input"] * {
+            color: var(--cp-text) !important;
+        }
+
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextArea"] label,
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stMultiSelect"] label {
+            color: var(--cp-text) !important;
         }
 
         @media (max-width: 760px) {
@@ -9042,6 +9246,38 @@ def render_app_styles() -> None:
             }
         }
         </style>
+        <script>
+        (function() {
+          const root = document.documentElement;
+          const parseColor = (value) => {
+            const match = String(value || "").match(/(\d+)\D+(\d+)\D+(\d+)/);
+            return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+          };
+          const luminance = (rgb) => rgb ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) : null;
+          const syncTheme = () => {
+            const styles = getComputedStyle(root);
+            const textRgb = parseColor(styles.getPropertyValue("--text-color") || styles.color);
+            const bgRgb = parseColor(styles.getPropertyValue("--background-color") || styles.backgroundColor);
+            const textLum = luminance(textRgb);
+            const bgLum = luminance(bgRgb);
+            const isDark =
+              root.dataset.theme === "dark" ||
+              root.dataset.baseTheme === "dark" ||
+              document.body?.dataset?.theme === "dark" ||
+              document.body?.dataset?.baseTheme === "dark" ||
+              (textLum !== null && textLum > 170) ||
+              (bgLum !== null && bgLum < 120);
+            root.classList.toggle("cp-force-dark", !!isDark);
+            if (document.body) document.body.classList.toggle("cp-force-dark", !!isDark);
+          };
+          syncTheme();
+          new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ["class", "style", "data-theme", "data-base-theme"] });
+          window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", syncTheme);
+          setTimeout(syncTheme, 50);
+          setTimeout(syncTheme, 250);
+          setTimeout(syncTheme, 800);
+        })();
+        </script>
         """,
         unsafe_allow_html=True,
     )
@@ -11263,23 +11499,24 @@ def render_interview_report_workspace_tab() -> None:
 def render_sidebar() -> None:
     st.sidebar.title(APP_TITLE)
     st.sidebar.caption("本地化全职业岗位分析、简历匹配与投递决策工具")
+    st.sidebar.caption(f"版本：{APP_BUILD_LABEL}")
     user = st.session_state.get(AUTH_SESSION_KEY) or {}
     if user:
         st.sidebar.caption(f"当前用户：{user.get('display_name') or user.get('email')}")
         if st.sidebar.button("退出登录", key="logout_user_btn"):
             logout_app_user()
             st.rerun()
-        with st.sidebar.expander("浏览器插件云上传", expanded=False):
-            upload_url = plugin_upload_public_url()
-            upload_token = get_or_create_plugin_upload_token(int(user["id"]))
-            st.caption("把下面两项填进浏览器插件后，插件抓到的 JD 会直接上传到当前账号的云端目录。")
-            st.text_input("上传地址", value=upload_url, disabled=True, key="sidebar_plugin_upload_url")
-            st.text_input("上传令牌", value=upload_token, disabled=True, key="sidebar_plugin_upload_token")
-            st.caption(f"当前账号云端目录：{cloud_upload_root_for_user(int(user['id']))}")
-            if st.button("重新生成上传令牌", key="rotate_plugin_upload_token_btn"):
-                new_token = rotate_plugin_upload_token(int(user["id"]))
-                st.session_state["sidebar_plugin_upload_token"] = new_token
-                st.success("上传令牌已更新，旧令牌已失效。记得把插件里的令牌同步替换。")
+        st.sidebar.markdown("#### 浏览器插件云上传")
+        upload_url = plugin_upload_public_url()
+        upload_token = get_or_create_plugin_upload_token(int(user["id"]))
+        st.sidebar.caption("把下面两项填进浏览器插件后，插件抓到的 JD 会直接上传到当前账号的云端目录。")
+        st.sidebar.text_input("上传地址", value=upload_url, disabled=True, key="sidebar_plugin_upload_url")
+        st.sidebar.text_input("上传令牌", value=upload_token, disabled=True, key="sidebar_plugin_upload_token")
+        st.sidebar.caption(f"当前账号云端目录：{cloud_upload_root_for_user(int(user['id']))}")
+        if st.sidebar.button("重新生成上传令牌", key="rotate_plugin_upload_token_btn"):
+            new_token = rotate_plugin_upload_token(int(user["id"]))
+            st.session_state["sidebar_plugin_upload_token"] = new_token
+            st.success("上传令牌已更新，旧令牌已失效。记得把插件里的令牌同步替换。")
     st.sidebar.markdown("#### 求职目标")
     profiles = load_user_profiles()
     active_profile = get_active_profile()
@@ -11288,9 +11525,14 @@ def render_sidebar() -> None:
     st.sidebar.caption(profile_name_label)
     if active_profile.get("content"):
         st.sidebar.write(compact_profile_summary(active_profile.get("content", "")))
-    st.sidebar.caption("方向：" + compact_list_text(prefs.get("target_roles", [])))
+    selected_industries, selected_directions = normalize_industry_direction_selection(
+        prefs.get("preferred_industries", []),
+        prefs.get("target_roles", []),
+    )
+    st.sidebar.caption("目标行业：" + compact_list_text(selected_industries))
+    if selected_directions:
+        st.sidebar.caption("二级方向：" + compact_list_text(selected_directions))
     st.sidebar.caption("城市：" + compact_list_text(prefs.get("target_cities", [])))
-    st.sidebar.caption("行业：" + compact_list_text(prefs.get("preferred_industries", [])))
 
     with st.sidebar.expander("编辑求职目标", expanded=profiles.empty):
         profile_name = st.text_input(
@@ -11298,26 +11540,33 @@ def render_sidebar() -> None:
             value=active_profile.get("name", ""),
             key=f"target_goal_name_{active_profile.get('id') or 'new'}",
         )
-        selected_roles = free_input_multiselect(
-            "求职方向",
-            TARGET_ROLE_OPTIONS,
-            split_preference_items(prefs.get("target_roles", [])),
-            key="target_role_selector",
-            help_text="选择常见岗位方向；也可以直接输入新的方向后回车确认。",
-        )
+        with st.container(border=True):
+            st.markdown("##### 目标行业体系")
+            st.caption("先选一级行业，再选对应的二级方向；二级方向会随一级行业联动收缩。")
+            default_industries = [item for item in selected_industries if item in RECRUITMENT_INDUSTRY_OPTIONS]
+            selected_industries = st.multiselect(
+                "一级行业",
+                RECRUITMENT_INDUSTRY_OPTIONS,
+                default=default_industries,
+                key="target_industry_selector",
+                placeholder="选择 1 个或多个一级行业",
+            )
+            available_directions = industry_direction_options(selected_industries)
+            default_directions = [item for item in selected_directions if item in available_directions]
+            selected_directions = st.multiselect(
+                "二级方向",
+                available_directions,
+                default=default_directions,
+                key="target_direction_selector",
+                placeholder="先选择一级行业，再选择对应二级方向" if not available_directions else "只显示已选行业对应的二级方向",
+                disabled=not available_directions,
+            )
         selected_cities = free_input_multiselect(
             "意向城市",
             CHINA_CITY_OPTIONS,
             split_preference_items(prefs.get("target_cities", [])),
             key="target_city_selector",
             help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以直接输入新城市后回车确认。",
-        )
-        selected_industries = free_input_multiselect(
-            "目标行业",
-            RECRUITMENT_INDUSTRY_OPTIONS,
-            split_preference_items(prefs.get("preferred_industries", [])),
-            key="target_industry_selector",
-            help_text="按主流招聘网站行业口径细分；也可以直接输入新的行业标签后回车确认。",
         )
         job_keywords = st.text_input(
             "岗位关键词",
@@ -11350,7 +11599,7 @@ def render_sidebar() -> None:
                         save_user_profile(int(active_profile["id"]), profile_name, profile_content)
                     save_target_preferences(
                         {
-                            "target_roles": selected_roles,
+                            "target_roles": selected_directions,
                             "target_cities": selected_cities,
                             "extra_cities": "",
                             "accept_remote": bool(prefs.get("accept_remote")),
@@ -11369,7 +11618,7 @@ def render_sidebar() -> None:
                     st.error("目标名称已存在，请换一个名称。")
         if target_cols[1].button("清空结构化项"):
             save_target_preferences(DEFAULT_TARGET_PREFERENCES)
-            st.success("已清空求职方向、城市、行业和关键词。")
+            st.success("已清空城市、一级行业、二级方向和关键词。")
         if not profiles.empty and st.button("删除目标"):
             delete_user_profile(int(active_profile["id"]))
             st.success("目标意向已删除，可重新新建。")
