@@ -2,8 +2,11 @@ __pycache__/
 *.pyc
 .streamlit/
 .venv/
+.venv_cp313/
+.venv_server/
 .venv_streamlit/
 venv/
+.env
 carboncareer.db
 careerpilot.db
 *.db
@@ -13,3 +16,4 @@ careerpilot.db
 *.log
 Downloads/
 CareerPilot_JD/
+uploaded_jd/

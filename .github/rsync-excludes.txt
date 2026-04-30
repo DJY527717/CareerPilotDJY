@@ -1,0 +1,16 @@
+.git/
+.github/
+.venv/
+.venv_cp313/
+.venv_server/
+.venv_streamlit/
+venv/
+__pycache__/
+*.pyc
+*.db
+*.log
+.env
+uploaded_jd/
+Downloads/
+CareerPilot_JD/
+browser_extension/*.zip

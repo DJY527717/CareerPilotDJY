@@ -1,0 +1,15 @@
+[Unit]
+Description=CareerPilot Streamlit Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/www/CareerPilotDJY
+EnvironmentFile=-/www/CareerPilotDJY/.env
+ExecStart=/www/CareerPilotDJY/.venv_server/bin/python /www/CareerPilotDJY/serve.py
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

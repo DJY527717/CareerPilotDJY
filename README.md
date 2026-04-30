@@ -55,7 +55,19 @@ start_lan.bat
 
 ## 公网部署
 
-如果要让任何电脑、任何网络都能打开，需要部署到公网云平台，而不是只运行本地脚本。推荐把项目上传到 GitHub 后部署到 Streamlit Community Cloud；之后每次把本机修改推送到 GitHub，线上网页会自动更新。
+推荐长期方案不是“服务器手动 `git pull`”，而是：
+
+- 代码推到 GitHub
+- GitHub Actions 自动同步到阿里云
+- 服务器自动安装依赖并重启
+
+这样以后你只需要：
+
+```bash
+git add .
+git commit -m "Update CareerPilot"
+git push origin main
+```
 
 详细步骤见：
 
