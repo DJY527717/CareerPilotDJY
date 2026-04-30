@@ -50,7 +50,7 @@ if not errorlevel 1 (
 echo Starting CareerPilot at %APP_URL%
 if defined APP_SHARE_URL echo Other computers can open: %APP_SHARE_URL%
 start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 5; Start-Process '%APP_URL%'"
-"%ENV_DIR%\Scripts\python.exe" -m streamlit run app.py --server.address %APP_HOST% --server.port %APP_PORT%
+"%ENV_DIR%\Scripts\python.exe" serve.py
 
 echo.
 echo CareerPilot has stopped. You can close this window or run the shortcut again.

@@ -69,4 +69,47 @@ careerpilot.db
 
 ## 浏览器插件说明
 
-公网网页不能直接读取你本机浏览器插件导出的 `Downloads/CareerPilot_JD` 文件。插件批量导出的岗位如果要在线上分析，需要通过网页上传，或后续把插件改成直接上传到云端接口。
+公网网页不能直接读取你本机浏览器插件导出的 `Downloads/CareerPilot_JD` 文件。只有当插件导出目录本身就在服务器上时，线上应用才可以直接扫描。
+
+如果你已经把导出目录同步到了服务器，例如：
+
+```text
+/root/Downloads/CareerPilot_JD
+```
+
+可以在服务端环境变量里显式指定：
+
+```text
+JD_EXPORT_DIR=/root/Downloads/CareerPilot_JD
+```
+
+如果要配置多个扫描目录，可使用：
+
+```text
+JD_EXPORT_DIRS=/root/Downloads/CareerPilot_JD;/app/CareerPilot_JD
+```
+
+如果插件导出仍然保存在你自己的电脑上，云服务器依然读不到；这种情况仍然需要通过网页上传，或后续把插件改成直接上传到云端接口。
+
+现在项目已经支持“插件直接上传到云端接口”。
+
+部署时建议同时配置：
+
+```text
+APP_PUBLIC_URL=http://你的域名或IP:8503
+UPLOAD_API_PORT=8765
+UPLOAD_API_PUBLIC_URL=http://你的域名或IP:8765/api/plugin-upload
+```
+
+如果你使用 Docker 直接跑在阿里云服务器上，还需要：
+
+1. 放通 `8503` 和 `8765` 端口
+2. 用 `python serve.py` 或 Docker 默认启动方式一起拉起 Streamlit 和上传 API
+3. 登录 CareerPilot 后，在侧边栏“浏览器插件云上传”里复制上传地址和上传令牌
+4. 粘贴到浏览器插件里，之后插件抓到的 JD 会直接保存到服务器上的当前用户目录
+
+服务端保存位置类似：
+
+```text
+/app/uploaded_jd/user_用户ID/YYYY-MM-DD/
+```

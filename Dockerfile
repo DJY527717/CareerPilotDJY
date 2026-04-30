@@ -21,6 +21,6 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-EXPOSE 8503
+EXPOSE 8503 8765
 
-CMD streamlit run app.py --server.address 0.0.0.0 --server.port ${PORT:-8503} --server.headless true
+CMD python serve.py

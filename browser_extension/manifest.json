@@ -3,7 +3,7 @@
   "name": "CareerPilot JD Saver",
   "version": "0.5.1",
   "description": "Save the current job page text for CareerPilot Job Analyzer.",
-  "permissions": ["activeTab", "scripting", "downloads", "tabs"],
+  "permissions": ["activeTab", "scripting", "downloads", "tabs", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",

@@ -59,6 +59,26 @@
         padding: 7px 8px;
         font-size: 13px;
       }
+      .settings {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #e5e7eb;
+      }
+      .settings h2 {
+        margin: 0 0 8px;
+        font-size: 13px;
+      }
+      .checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      .checkbox input {
+        width: auto;
+        margin-top: 0;
+      }
     </style>
   </head>
   <body>
@@ -74,12 +94,25 @@
         <input id="detailLimit" type="number" min="0" max="80" value="20" />
       </label>
     </div>
+    <div class="settings">
+      <h2>Cloud Upload</h2>
+      <label>Upload URL
+        <input id="serverUrl" type="url" placeholder="https://your-domain:8765/api/plugin-upload" />
+      </label>
+      <label>Upload token
+        <input id="uploadToken" type="password" placeholder="Paste token from CareerPilot sidebar" />
+      </label>
+      <label class="checkbox">
+        <input id="saveLocalCopy" type="checkbox" checked />
+        <span>Also save a local copy to Downloads</span>
+      </label>
+    </div>
     <button id="nextPagesDetailSave" class="secondary">Collect list + detail pages</button>
     <button id="savePage" class="primary">Save current detail page</button>
     <p id="status"></p>
     <p>Use Collect list + detail pages on search result pages. Set Detail pages to 0 for list-only collection.</p>
+    <p>When Upload URL and token are filled in, the plugin uploads directly to CareerPilot cloud. If not, it falls back to local Downloads.</p>
     <p>Use Save current detail page only when you are already on one job detail page.</p>
-    <p>Files are saved to Downloads/CareerPilot_JD/YYYY-MM-DD.</p>
     <script src="popup.js"></script>
   </body>
 </html>

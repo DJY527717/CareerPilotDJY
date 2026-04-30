@@ -88,9 +88,42 @@ streamlit run app.py
 
 ```text
 Downloads/CareerPilot_JD/YYYY-MM-DD/
+
+线上部署时，服务端默认会扫描这些目录：
+
+- `项目目录/CareerPilot_JD`
+- `项目目录/data/CareerPilot_JD`
+- `~/Downloads/CareerPilot_JD`
+
+也可以通过环境变量覆盖：
+
+```text
+JD_EXPORT_DIR=/root/Downloads/CareerPilot_JD
+```
+
+或配置多个目录：
+
+```text
+JD_EXPORT_DIRS=/root/Downloads/CareerPilot_JD;/app/CareerPilot_JD
+```
 ```
 
 Streamlit 的“批量JD分析”里可以按导出日期筛选，避免不同日期的岗位混在一起。
+
+浏览器插件也支持直接上传到云端：
+
+1. 登录 CareerPilot
+2. 在侧边栏“浏览器插件云上传”里复制上传地址和上传令牌
+3. 打开插件，把两项配置粘进去
+4. 之后插件可直接把 JSON 上传到服务器，无需依赖本机 `Downloads`
+
+线上部署建议额外配置：
+
+```text
+APP_PUBLIC_URL=http://你的域名或IP:8503
+UPLOAD_API_PORT=8765
+UPLOAD_API_PUBLIC_URL=http://你的域名或IP:8765/api/plugin-upload
+```
 
 ## P1 / P2 / P3 含义
 

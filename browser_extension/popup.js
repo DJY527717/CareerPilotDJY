@@ -1,8 +1,55 @@
+const SETTINGS_KEYS = ["serverUrl", "uploadToken", "saveLocalCopy", "maxPages", "scrollSteps", "detailLimit"];
+
 function sanitizeFileName(input) {
   return (input || "jd")
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, "_")
     .slice(0, 80);
+}
+
+async function loadSettings() {
+  const stored = await chrome.storage.local.get(SETTINGS_KEYS);
+  document.getElementById("serverUrl").value = stored.serverUrl || "";
+  document.getElementById("uploadToken").value = stored.uploadToken || "";
+  document.getElementById("saveLocalCopy").checked = stored.saveLocalCopy !== false;
+  if (stored.maxPages) document.getElementById("maxPages").value = stored.maxPages;
+  if (stored.scrollSteps !== undefined) document.getElementById("scrollSteps").value = stored.scrollSteps;
+  if (stored.detailLimit !== undefined) document.getElementById("detailLimit").value = stored.detailLimit;
+}
+
+async function saveSettings() {
+  await chrome.storage.local.set({
+    serverUrl: document.getElementById("serverUrl").value.trim(),
+    uploadToken: document.getElementById("uploadToken").value.trim(),
+    saveLocalCopy: document.getElementById("saveLocalCopy").checked,
+    maxPages: document.getElementById("maxPages").value,
+    scrollSteps: document.getElementById("scrollSteps").value,
+    detailLimit: document.getElementById("detailLimit").value
+  });
+}
+
+function configuredServerUrl() {
+  return (document.getElementById("serverUrl").value || "").trim();
+}
+
+function configuredUploadToken() {
+  return (document.getElementById("uploadToken").value || "").trim();
+}
+
+async function uploadPayload(serverUrl, uploadToken, payload, prefix) {
+  const response = await fetch(serverUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CareerPilot-Upload-Token": uploadToken
+    },
+    body: JSON.stringify({ payload, prefix })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `Upload failed with HTTP ${response.status}`);
+  }
+  return data;
 }
 
 function activeTab() {
@@ -477,6 +524,27 @@ async function downloadPayload(payload, prefix) {
   await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: "uniquify" });
 }
 
+async function persistPayload(payload, prefix, status) {
+  await saveSettings();
+  const serverUrl = configuredServerUrl();
+  const uploadToken = configuredUploadToken();
+  const saveLocalCopy = document.getElementById("saveLocalCopy").checked;
+  let uploadResult = null;
+  let localSaved = false;
+
+  if (serverUrl && uploadToken) {
+    status.textContent = "Uploading to CareerPilot cloud...";
+    uploadResult = await uploadPayload(serverUrl, uploadToken, payload, prefix);
+  }
+
+  if (!uploadResult || saveLocalCopy) {
+    await downloadPayload(payload, prefix);
+    localSaved = true;
+  }
+
+  return { uploadResult, localSaved };
+}
+
 function numericInput(id, fallback, min, max) {
   const raw = Number(document.getElementById(id).value);
   if (!Number.isFinite(raw)) return fallback;
@@ -491,8 +559,14 @@ async function saveDetailPage() {
   try {
     const payload = await runExtractor(extractPage);
     if (!payload || !payload.text || payload.text.length < 30) throw new Error("Page text is too short.");
-    await downloadPayload(payload, "detail");
-    status.textContent = `Saved detail page: ${payload.text.length} chars`;
+    const result = await persistPayload(payload, "detail", status);
+    if (result.uploadResult && result.localSaved) {
+      status.textContent = `Uploaded and saved locally: ${payload.text.length} chars`;
+    } else if (result.uploadResult) {
+      status.textContent = `Uploaded detail page: ${payload.text.length} chars`;
+    } else {
+      status.textContent = `Saved detail page locally: ${payload.text.length} chars`;
+    }
   } catch (error) {
     status.textContent = `Failed: ${error.message}`;
   } finally {
@@ -567,8 +641,14 @@ async function collectNextPagesWithDetailsAndSave() {
       jobs: allJobs.slice(0, 800)
     };
     if (!finalPayload.jobs.length) throw new Error("No jobs detected across pages.");
-    await downloadPayload(finalPayload, "list_next_pages_details");
-    status.textContent = `Saved ${finalPayload.jobs.length} jobs, ${detailJobs.length} detail pages attempted`;
+    const result = await persistPayload(finalPayload, "list_next_pages_details", status);
+    if (result.uploadResult && result.localSaved) {
+      status.textContent = `Uploaded + saved locally: ${finalPayload.jobs.length} jobs`;
+    } else if (result.uploadResult) {
+      status.textContent = `Uploaded ${finalPayload.jobs.length} jobs to cloud`;
+    } else {
+      status.textContent = `Saved ${finalPayload.jobs.length} jobs locally`;
+    }
   } catch (error) {
     status.textContent = `Failed: ${error.message}`;
   } finally {
@@ -578,3 +658,9 @@ async function collectNextPagesWithDetailsAndSave() {
 
 document.getElementById("savePage").addEventListener("click", saveDetailPage);
 document.getElementById("nextPagesDetailSave").addEventListener("click", collectNextPagesWithDetailsAndSave);
+["serverUrl", "uploadToken", "saveLocalCopy", "maxPages", "scrollSteps", "detailLimit"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", saveSettings);
+});
+loadSettings().catch((error) => {
+  document.getElementById("status").textContent = `Failed to load settings: ${error.message}`;
+});

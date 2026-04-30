@@ -50,11 +50,54 @@ except Exception:  # pragma: no cover - optional semantic scorer
 
 
 APP_TITLE = "CareerPilot 全职业岗位分析器"
-DB_PATH = Path(__file__).with_name("careerpilot.db")
+APP_DIR = Path(__file__).resolve().parent
+DB_PATH = APP_DIR / "careerpilot.db"
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
-JD_EXPORT_DIR = Path.home() / "Downloads" / "CareerPilot_JD"
-JD_EXPORT_DIRS = [JD_EXPORT_DIR]
+def _split_export_dir_env(raw: str) -> list[Path]:
+    parts = re.split(r"[;\n\r]+", raw)
+    return [Path(part.strip()).expanduser() for part in parts if part.strip()]
+
+
+def resolve_jd_export_dirs() -> list[Path]:
+    configured_dirs = _split_export_dir_env(os.getenv("JD_EXPORT_DIRS", ""))
+    single_configured_dir = os.getenv("JD_EXPORT_DIR", "").strip()
+    if single_configured_dir:
+        configured_dirs.extend(_split_export_dir_env(single_configured_dir))
+
+    default_dirs = [
+        APP_DIR / "CareerPilot_JD",
+        APP_DIR / "data" / "CareerPilot_JD",
+        Path.home() / "Downloads" / "CareerPilot_JD",
+    ]
+
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for path in [*configured_dirs, *default_dirs]:
+        normalized = str(path.resolve(strict=False))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append(path)
+    return resolved
+
+
+JD_EXPORT_DIRS = resolve_jd_export_dirs()
+PLUGIN_UPLOAD_TOKEN_KEY = "plugin_upload_token"
+UPLOAD_API_PORT = int(os.getenv("UPLOAD_API_PORT", "8765") or "8765")
+UPLOAD_API_PATH = os.getenv("UPLOAD_API_PATH", "/api/plugin-upload").strip() or "/api/plugin-upload"
+UPLOAD_API_PUBLIC_URL = os.getenv("UPLOAD_API_PUBLIC_URL", "").strip()
+
+
+def cloud_upload_root_for_user(user_id: int) -> Path:
+    return APP_DIR / "uploaded_jd" / f"user_{int(user_id)}"
+
+
+def jd_export_dirs_for_user(user_id: int | None = None) -> list[Path]:
+    dirs = list(JD_EXPORT_DIRS)
+    if user_id:
+        dirs.insert(0, cloud_upload_root_for_user(int(user_id)))
+    return dirs
 
 APP_NAVIGATION = {
     "main_tabs": ["岗位工作台", "简历工作台", "求职决策", "面试与报告"],
@@ -4834,12 +4877,13 @@ def read_exported_jd_file(path: Path) -> dict[str, str]:
     }
 
 
-def existing_jd_export_dirs() -> list[Path]:
-    return [path for path in JD_EXPORT_DIRS if path.exists()]
+def existing_jd_export_dirs(user_id: int | None = None) -> list[Path]:
+    resolved_user_id = user_id if user_id is not None else current_user_id()
+    return [path for path in jd_export_dirs_for_user(resolved_user_id) if path.exists()]
 
 
 def export_date_label(path: Path) -> str:
-    for root in JD_EXPORT_DIRS:
+    for root in jd_export_dirs_for_user(current_user_id()):
         try:
             relative = path.relative_to(root)
         except ValueError:
@@ -7804,6 +7848,57 @@ def seed_app_settings(conn: Any, user_id: int) -> None:
     )
 
 
+def load_user_setting_value(conn: Any, user_id: int, key: str) -> str:
+    row = conn.execute("SELECT value FROM app_settings WHERE user_id = ? AND key = ?", (int(user_id), key)).fetchone()
+    return str(row[0]) if row and row[0] is not None else ""
+
+
+def save_user_setting_value(conn: Any, user_id: int, key: str, value: str) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing = conn.execute("SELECT 1 FROM app_settings WHERE user_id = ? AND key = ?", (int(user_id), key)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE app_settings SET value = ?, updated_at = ? WHERE user_id = ? AND key = ?",
+            (value.strip(), now, int(user_id), key),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO app_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
+            (int(user_id), key, value.strip(), now),
+        )
+
+
+def get_or_create_plugin_upload_token(user_id: int) -> str:
+    init_db()
+    with db_connect() as conn:
+        token = load_user_setting_value(conn, int(user_id), PLUGIN_UPLOAD_TOKEN_KEY)
+        if token:
+            return token
+        token = secrets.token_urlsafe(24)
+        save_user_setting_value(conn, int(user_id), PLUGIN_UPLOAD_TOKEN_KEY, token)
+        return token
+
+
+def rotate_plugin_upload_token(user_id: int) -> str:
+    init_db()
+    token = secrets.token_urlsafe(24)
+    with db_connect() as conn:
+        save_user_setting_value(conn, int(user_id), PLUGIN_UPLOAD_TOKEN_KEY, token)
+    return token
+
+
+def plugin_upload_public_url() -> str:
+    if UPLOAD_API_PUBLIC_URL:
+        return UPLOAD_API_PUBLIC_URL
+    app_public_url = os.getenv("APP_PUBLIC_URL", "").strip()
+    if app_public_url:
+        parsed = urlparse(app_public_url)
+        if parsed.scheme and parsed.hostname:
+            netloc = f"{parsed.hostname}:{UPLOAD_API_PORT}"
+            return urlunparse((parsed.scheme, netloc, UPLOAD_API_PATH, "", "", ""))
+    return f"http://127.0.0.1:{UPLOAD_API_PORT}{UPLOAD_API_PATH}"
+
+
 def ensure_profile_table_ready(conn: Any) -> None:
     repair_default_profiles(conn)
 
@@ -9818,7 +9913,7 @@ def render_browser_extension_import(key_prefix: str, default: bool = False, show
     with st.container(border=True):
         st.markdown("##### 浏览器插件导入")
         st.write("在 Edge/Chrome 已登录页面里点击 JD Saver 插件，文件会保存到：")
-        st.code("\n".join(str(path) for path in JD_EXPORT_DIRS))
+        st.code("\n".join(str(path) for path in jd_export_dirs_for_user(current_user_id())))
         if st.button("扫描插件导出文件", key=f"{key_prefix}_scan_exports"):
             text, table = scan_browser_export_folder()
             st.session_state[f"{key_prefix}_exported_text"] = text
@@ -9977,7 +10072,7 @@ def render_jd_tab() -> None:
                 if use_plugin_import:
                     with st.container(border=True):
                         st.markdown("##### 浏览器插件导入")
-                        st.caption("在 Edge/Chrome 已登录页面里点击 JD Saver 插件，文件会保存到本地目录；这里仅扫描本地导出文本。")
+                        st.caption("在 Edge/Chrome 已登录页面里点击 JD Saver 插件，文件会保存到本地目录；这里仅扫描当前服务端可访问的导出目录文本。")
                         if st.button("扫描插件导出文件", key="jd_scan_exports_inline"):
                             text_from_export, table_from_export = scan_browser_export_folder()
                             st.session_state["jd_exported_text"] = text_from_export
@@ -10109,7 +10204,7 @@ def render_batch_jd_tab() -> None:
         else:
             st.warning("没有读到插件导出的岗位。请在浏览器列表页优先点击 Collect current + next pages。")
     if st.checkbox("查看插件导出目录", value=False, key="batch_show_export_dirs"):
-        st.code("\n".join(str(path) for path in JD_EXPORT_DIRS))
+        st.code("\n".join(str(path) for path in jd_export_dirs_for_user(current_user_id())))
 
     export_table = st.session_state.get("batch_export_table")
     if export_table is not None and not export_table.empty:
@@ -11174,6 +11269,17 @@ def render_sidebar() -> None:
         if st.sidebar.button("退出登录", key="logout_user_btn"):
             logout_app_user()
             st.rerun()
+        with st.sidebar.expander("浏览器插件云上传", expanded=False):
+            upload_url = plugin_upload_public_url()
+            upload_token = get_or_create_plugin_upload_token(int(user["id"]))
+            st.caption("把下面两项填进浏览器插件后，插件抓到的 JD 会直接上传到当前账号的云端目录。")
+            st.text_input("上传地址", value=upload_url, disabled=True, key="sidebar_plugin_upload_url")
+            st.text_input("上传令牌", value=upload_token, disabled=True, key="sidebar_plugin_upload_token")
+            st.caption(f"当前账号云端目录：{cloud_upload_root_for_user(int(user['id']))}")
+            if st.button("重新生成上传令牌", key="rotate_plugin_upload_token_btn"):
+                new_token = rotate_plugin_upload_token(int(user["id"]))
+                st.session_state["sidebar_plugin_upload_token"] = new_token
+                st.success("上传令牌已更新，旧令牌已失效。记得把插件里的令牌同步替换。")
     st.sidebar.markdown("#### 求职目标")
     profiles = load_user_profiles()
     active_profile = get_active_profile()
