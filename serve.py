@@ -53,6 +53,11 @@ def normalize_path(value: str, default: str) -> str:
     return cleaned if cleaned.startswith("/") else f"/{cleaned}"
 
 
+def loopback_connect_host(bind_host: str) -> str:
+    host = (bind_host or "").strip()
+    return "127.0.0.1" if host in {"", "0.0.0.0", "::", "[::]"} else host
+
+
 def build_upstream_url(base: str, request_uri: str, scheme: str) -> str:
     parsed_base = urlsplit(base)
     parsed_request = urlsplit(request_uri)
@@ -114,11 +119,15 @@ class ReverseProxyHandler(web.RequestHandler):
             return
 
         self.set_status(response.code, response.reason)
+        self.clear_header("Content-Type")
         for name, value in response.headers.get_all():
             lowered = name.lower()
             if lowered in HOP_BY_HOP_HEADERS or lowered in {"content-length", "content-encoding"}:
                 continue
-            self.add_header(name, value)
+            if lowered == "set-cookie":
+                self.add_header(name, value)
+            else:
+                self.set_header(name, value)
         if self.request.method != "HEAD" and response.body:
             self.write(response.body)
 
@@ -217,9 +226,17 @@ def main() -> None:
     upload_api_path = normalize_path(os.getenv("UPLOAD_API_PATH", "/api/capture-upload"), "/api/capture-upload")
     bookmarklet_path = capture_bookmarklet_script_path(upload_api_path)
 
+    os.environ["CAPTURE_UPLOAD_SAME_ORIGIN"] = "1"
+    os.environ.setdefault("UPLOAD_API_HOST", upload_host)
+    os.environ.setdefault("UPLOAD_API_PORT", str(upload_port))
+    os.environ.setdefault("UPLOAD_API_PATH", upload_api_path)
+
+    import app as careerpilot_app
+
+    careerpilot_app.ensure_embedded_capture_upload_service()
     streamlit_process = start_streamlit(streamlit_host, streamlit_port, upload_host, upload_port)
-    streamlit_base = f"http://{streamlit_host}:{streamlit_port}"
-    upload_base = f"http://{upload_host}:{upload_port}"
+    streamlit_base = f"http://{loopback_connect_host(streamlit_host)}:{streamlit_port}"
+    upload_base = f"http://{loopback_connect_host(upload_host)}:{upload_port}"
 
     app = web.Application(
         [
