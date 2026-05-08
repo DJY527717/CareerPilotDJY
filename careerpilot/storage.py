@@ -146,7 +146,16 @@ def capture_upload_public_url(
     if upload_api_public_url:
         return upload_api_public_url
 
+    same_origin_upload = os.getenv("CAPTURE_UPLOAD_SAME_ORIGIN", "").strip().lower() in {"1", "true", "yes", "on"}
     app_public_url = os.getenv("APP_PUBLIC_URL", "").strip()
+    if same_origin_upload:
+        for candidate in [app_public_url, current_context_url.strip()]:
+            if not candidate:
+                continue
+            parsed = urlparse(candidate)
+            if parsed.scheme and parsed.netloc:
+                return urlunparse((parsed.scheme, parsed.netloc, upload_api_path, "", "", ""))
+
     for candidate in [app_public_url, current_context_url.strip()]:
         if not candidate:
             continue

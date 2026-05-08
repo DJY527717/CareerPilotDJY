@@ -3,7 +3,9 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     PYTHONIOENCODING=utf-8 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=8503
 
 WORKDIR /app
 
@@ -21,4 +23,4 @@ COPY . .
 
 EXPOSE 8503 8765
 
-CMD ["python", "-m", "streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8503", "--server.headless", "true"]
+CMD ["python", "serve.py"]
