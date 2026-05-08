@@ -5,6 +5,7 @@ cd /d "%~dp0"
 
 set "ENV_DIR=.venv_cp313"
 set "VENV_PY=%ENV_DIR%\Scripts\python.exe"
+set "ENV_READY_FLAG=%ENV_DIR%\.deps_ready"
 set "PY_CMD="
 set "VENV_OK=0"
 set "PYTHONUTF8=1"
@@ -105,6 +106,7 @@ if "%VENV_OK%"=="0" if not defined PY_CMD (
 
 if "%VENV_OK%"=="0" if exist "%VENV_PY%" (
     echo Existing local environment is broken or too old. Recreating...
+    if exist "%ENV_READY_FLAG%" del /f /q "%ENV_READY_FLAG%" >nul 2>nul
     rmdir /s /q "%ENV_DIR%"
 )
 
@@ -133,7 +135,7 @@ if errorlevel 1 (
 )
 
 echo Checking installed dependencies...
-"%VENV_PY%" -c "import streamlit, pandas, numpy, plotly, requests, openpyxl, pypdf, docx, bs4, PIL, pytesseract, reportlab, rapidfuzz, jieba, sklearn, pdfplumber, lxml, playwright" >nul 2>nul
+"%VENV_PY%" -c "import streamlit, pandas, numpy, plotly, requests, openpyxl, pypdf, docx, bs4, PIL, rapidocr_onnxruntime, reportlab, rapidfuzz, jieba, sklearn, pdfplumber, lxml" >nul 2>nul
 if not errorlevel 1 (
     echo Dependencies are already available. Skipping network install.
     goto START_APP
@@ -169,13 +171,14 @@ if errorlevel 1 (
 
 echo.
 echo Verifying dependencies...
-"%VENV_PY%" -c "import streamlit, pandas, numpy, plotly, requests, openpyxl, pypdf, docx, bs4, PIL, pytesseract, reportlab, rapidfuzz, jieba, sklearn, pdfplumber, lxml, playwright" >nul 2>nul
+"%VENV_PY%" -c "import streamlit, pandas, numpy, plotly, requests, openpyxl, pypdf, docx, bs4, PIL, rapidocr_onnxruntime, reportlab, rapidfuzz, jieba, sklearn, pdfplumber, lxml" >nul 2>nul
 if errorlevel 1 (
     echo Dependency verification failed after installation.
     echo Please run this file again, or delete %ENV_DIR% and retry setup.
     pause
     exit /b 1
 )
+>"%ENV_READY_FLAG%" echo ready
 
 :START_APP
 echo.
@@ -190,7 +193,7 @@ if not errorlevel 1 (
 echo Starting CareerPilot at %APP_URL%
 if defined APP_SHARE_URL echo Other computers can open: %APP_SHARE_URL%
 start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 5; Start-Process '%APP_URL%'"
-"%VENV_PY%" -m streamlit run app.py --server.address %APP_HOST% --server.port %APP_PORT%
+"%VENV_PY%" -m streamlit run app.py --server.address %APP_HOST% --server.port %APP_PORT% --server.headless true --browser.gatherUsageStats false
 
 echo.
 echo CareerPilot has stopped. You can close this window or run the shortcut again.

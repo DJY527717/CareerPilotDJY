@@ -11,8 +11,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
-        tesseract-ocr \
-        tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -23,4 +21,4 @@ COPY . .
 
 EXPOSE 8503 8765
 
-CMD python serve.py
+CMD ["python", "-m", "streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8503", "--server.headless", "true"]

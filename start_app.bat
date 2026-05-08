@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "ENV_DIR=.venv_cp313"
+set "ENV_READY_FLAG=%ENV_DIR%\.deps_ready"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 if not defined APP_HOST set "APP_HOST=127.0.0.1"
@@ -31,12 +32,15 @@ if errorlevel 1 (
     exit /b
 )
 
-echo Checking installed dependencies...
-"%ENV_DIR%\Scripts\python.exe" -c "import streamlit, pandas, numpy, plotly, requests, openpyxl, pypdf, docx, bs4, PIL, pytesseract, reportlab, rapidfuzz, jieba, sklearn, pdfplumber, lxml, playwright" >nul 2>nul
-if errorlevel 1 (
-    echo Some dependencies are missing or damaged. Running setup repair...
-    call "%~dp0install_and_run.bat"
-    exit /b
+if not exist "%ENV_READY_FLAG%" (
+    echo First launch after setup detected. Verifying key dependencies...
+    "%ENV_DIR%\Scripts\python.exe" -c "import streamlit, pandas, numpy, plotly, requests" >nul 2>nul
+    if errorlevel 1 (
+        echo Some dependencies are missing or damaged. Running setup repair...
+        call "%~dp0install_and_run.bat"
+        exit /b
+    )
+    >"%ENV_READY_FLAG%" echo ready
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -UseBasicParsing '%APP_URL%' -TimeoutSec 2; if ($r.StatusCode -ge 200) { exit 0 } } catch { exit 1 }" >nul 2>nul
@@ -50,7 +54,7 @@ if not errorlevel 1 (
 echo Starting CareerPilot at %APP_URL%
 if defined APP_SHARE_URL echo Other computers can open: %APP_SHARE_URL%
 start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 5; Start-Process '%APP_URL%'"
-"%ENV_DIR%\Scripts\python.exe" serve.py
+"%ENV_DIR%\Scripts\python.exe" -m streamlit run app.py --server.address %APP_HOST% --server.port %APP_PORT% --server.headless true --browser.gatherUsageStats false
 
 echo.
 echo CareerPilot has stopped. You can close this window or run the shortcut again.

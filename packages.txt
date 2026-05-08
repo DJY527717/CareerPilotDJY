@@ -1,2 +1,1 @@
-tesseract-ocr
-tesseract-ocr-chi-sim
+# No external OCR system packages are required.
