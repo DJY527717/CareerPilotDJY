@@ -559,6 +559,82 @@ def browser_capture_bookmarklet_code_v2(
     return "javascript:" + script.strip().replace("\n", "")
 
 
+def browser_capture_install_page(bookmarklet: str) -> str:
+    escaped_href = html.escape(bookmarklet, quote=True)
+    escaped_text = html.escape(bookmarklet)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CareerPilot 一键采集安装页</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 32px;
+      background: #f7f4ec;
+      color: #1f2933;
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      max-width: 760px;
+      margin: 0 auto;
+      background: #fffdfa;
+      border: 1px solid #e7decc;
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 18px 42px rgba(31, 41, 51, 0.08);
+    }}
+    h1 {{
+      margin: 0 0 8px;
+      font-size: 24px;
+    }}
+    .bookmarklet {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin: 18px 0;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 12px;
+      border: 1px solid #65a69a;
+      background: #eef8f5;
+      color: #0f766e;
+      font-weight: 800;
+      text-decoration: none;
+    }}
+    textarea {{
+      width: 100%;
+      min-height: 140px;
+      box-sizing: border-box;
+      border: 1px solid #d7cbbb;
+      border-radius: 10px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+    }}
+    ol {{
+      padding-left: 22px;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CareerPilot 一键采集安装页</h1>
+    <p>把下面这个“一键采集”拖到浏览器书签栏。之后在已登录的招聘网页点击书签，再回到 CareerPilot 同步采集结果。</p>
+    <p><a class="bookmarklet" href="{escaped_href}">一键采集</a></p>
+    <ol>
+      <li>如果浏览器不允许拖拽，请复制下面整段代码。</li>
+      <li>新建一个浏览器书签，把网址改成这段代码。</li>
+      <li>打开招聘网站岗位页或列表页，点击书签栏里的“一键采集”。</li>
+    </ol>
+    <textarea readonly>{escaped_text}</textarea>
+  </main>
+</body>
+</html>
+"""
+
+
 def render_browser_capture_helper_v2(
     upload_url: str,
     upload_token: str,
@@ -568,6 +644,7 @@ def render_browser_capture_helper_v2(
     container: Any,
 ) -> None:
     bookmarklet = browser_capture_bookmarklet_code_v2(upload_url, upload_token)
+    install_page = browser_capture_install_page(bookmarklet)
     container.markdown(
         """
         <div class="cp-capture-panel">
@@ -594,19 +671,26 @@ def render_browser_capture_helper_v2(
         (
             '<div class="cp-capture-actions">'
             '<a class="cp-capture-link" href="{href}">一键采集</a>'
-            '<button type="button" class="cp-capture-ghost" '
-            'onclick="navigator.clipboard.writeText(this.dataset.code);'
-            "this.innerText='已复制书签代码';setTimeout(()=>this.innerText='复制书签代码',1500);\" "
-            'data-code="{code}">复制书签代码</button>'
             "</div>"
         ).format(
             href=html.escape(bookmarklet, quote=True),
-            code=html.escape(bookmarklet, quote=True),
         ),
         unsafe_allow_html=True,
     )
-    with container.expander("备用方式：手动复制书签地址", expanded=False):
-        container.text_area("采集书签地址", value=bookmarklet, height=120, key=f"{key_prefix}_bookmarklet_code")
+    container.download_button(
+        "下载一键采集安装页",
+        install_page.encode("utf-8"),
+        file_name="careerpilot_capture_bookmarklet.html",
+        mime="text/html",
+        key=f"{key_prefix}_bookmarklet_install_page",
+    )
+    container.text_area(
+        "备用方式：复制这段书签地址",
+        value=bookmarklet,
+        height=120,
+        key=f"{key_prefix}_bookmarklet_code",
+        help="如果页面上的按钮没有反应，新建浏览器书签，把网址改成这里的完整内容。",
+    )
 
 
 def render_browser_capture_helper(
