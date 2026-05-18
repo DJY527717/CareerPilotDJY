@@ -63,6 +63,26 @@ def capture_bookmarklet_script_path(upload_api_path: str) -> str:
     return cleaned.rstrip("/") + "/bookmarklet.js"
 
 
+def bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def capture_options_from_job_limit(job_limit: int) -> dict[str, int | str]:
+    max_jobs = bounded_int(job_limit, 30, 1, 200)
+    return {
+        "fastMode": "auto",
+        "maxJobs": max_jobs,
+        "maxPages": bounded_int((max_jobs + 14) // 15, 2, 1, 8),
+        "maxScrollRounds": bounded_int((max_jobs + 4) // 5, 6, 4, 24),
+        "detailLimit": max_jobs,
+        "detailConcurrency": bounded_int((max_jobs + 9) // 10, 4, 2, 6),
+    }
+
+
 def ensure_embedded_capture_upload_service(
     *,
     capture_core_path: Path,
@@ -115,10 +135,13 @@ def ensure_embedded_capture_upload_service(
             params = parse_qs(parsed.query or "")
             token = str((params.get("token") or [""])[0]).strip()
             endpoint = str((params.get("endpoint") or [upload_api_path])[0]).strip() or upload_api_path
-            script = browser_capture_loader_script_v3(
+            max_jobs = bounded_int((params.get("maxJobs") or ["30"])[0], 30, 1, 200)
+            capture_options = capture_options_from_job_limit(max_jobs)
+            script = browser_capture_loader_script(
                 endpoint=endpoint,
                 upload_token=token,
                 capture_core_path=capture_core_path,
+                capture_options=capture_options,
             )
             self._send_javascript(200, script)
 
@@ -186,136 +209,28 @@ def ensure_embedded_capture_upload_service(
 
 
 @lru_cache(maxsize=8)
-def _capture_engine_source(capture_core_path: str) -> str:
+def _capture_engine_source(capture_core_path: str, modified_ns: int) -> str:
     return Path(capture_core_path).read_text(encoding="utf-8")
 
 
-def browser_capture_bookmarklet_code(
-    upload_url: str,
-    upload_token: str,
+def browser_capture_loader_script(
     *,
+    endpoint: str,
+    upload_token: str,
     capture_core_path: Path,
+    capture_options: dict[str, Any] | None = None,
 ) -> str:
-    script = f"""
-(() => {{
-  const endpoint = __UPLOAD_URL__;
-  const token = __UPLOAD_TOKEN__;
-  const extractorSource = __EXTRACTOR_SOURCE__;
-
-  async function persistPayload(payload) {{
-    const response = await fetch(endpoint, {{
-      method: "POST",
-      mode: "cors",
-      credentials: "omit",
-      headers: {{
-        "Content-Type": "application/json",
-        "X-CareerPilot-Upload-Token": token,
-      }},
-      body: JSON.stringify({{ prefix: "bookmarklet", payload }}),
-    }});
-    const data = await response.json().catch(() => ({{}}));
-    if (!response.ok || data.ok === false) {{
-      throw new Error(data.error || `Upload failed (${{response.status}})`);
-    }}
-    return data;
-  }}
-
-  (async () => {{
-    eval(extractorSource);
-    if (!window.CareerPilotExtractor || typeof window.CareerPilotExtractor.collectAutoPayload !== "function") {{
-      throw new Error("CareerPilot extractor failed to load.");
-    }}
-    const payload = await window.CareerPilotExtractor.collectAutoPayload({{
-      fastMode: true,
-      maxPages: 2,
-      scrollSteps: 3,
-      maxScrollRounds: 4,
-      detailLimit: 0,
-    }});
-    payload.source = "careerpilot_bookmarklet";
-    const data = await persistPayload(payload);
-    const count = Number(data.job_count || payload.jobCount || (payload.text ? 1 : 0));
-    alert(`CareerPilot 已接收${{count ? "：" + count + " 条内容" : "当前页面内容"}}。返回 CareerPilot 后直接点“同步采集结果”或去批量分析即可。`);
-  }})().catch((error) => {{
-    alert(`CareerPilot 采集失败：${{error.message}}\\n\\n请确认你已经登录招聘网站，并且 CareerPilot 上传地址可以从当前浏览器访问。`);
-  }});
-}})();
-"""
-    return (
-        "javascript:"
-        + script.strip()
-        .replace("__UPLOAD_URL__", json.dumps(upload_url))
-        .replace("__UPLOAD_TOKEN__", json.dumps(upload_token))
-        .replace("__EXTRACTOR_SOURCE__", json.dumps(_capture_engine_source(str(capture_core_path))))
-        .replace("\n", "")
+    options = capture_options_from_job_limit(
+        int((capture_options or {}).get("maxJobs") or 30)
     )
-
-
-def browser_capture_loader_script_v2(
-    *,
-    endpoint: str,
-    upload_token: str,
-    capture_core_path: Path,
-) -> str:
-    return f"""
-(() => {{
-  const endpoint = {json.dumps(endpoint)};
-  const token = {json.dumps(upload_token)};
-  const extractorSource = {json.dumps(_capture_engine_source(str(capture_core_path)))};
-
-  async function persistPayload(payload) {{
-    const response = await fetch(endpoint, {{
-      method: "POST",
-      mode: "cors",
-      credentials: "omit",
-      headers: {{
-        "Content-Type": "application/json",
-        "X-CareerPilot-Upload-Token": token,
-      }},
-      body: JSON.stringify({{ prefix: "bookmarklet", payload }}),
-    }});
-    const data = await response.json().catch(() => ({{}}));
-    if (!response.ok || data.ok === false) {{
-      throw new Error(data.error || `Upload failed (${{response.status}})`);
-    }}
-    return data;
-  }}
-
-  (async () => {{
-    eval(extractorSource);
-    if (!window.CareerPilotExtractor || typeof window.CareerPilotExtractor.collectAutoPayload !== "function") {{
-      throw new Error("CareerPilot extractor failed to load.");
-    }}
-    const payload = await window.CareerPilotExtractor.collectAutoPayload({{
-      fastMode: true,
-      maxPages: 2,
-      scrollSteps: 3,
-      maxScrollRounds: 4,
-      detailLimit: 0,
-    }});
-    payload.source = "careerpilot_bookmarklet";
-    const data = await persistPayload(payload);
-    const count = Number(data.job_count || payload.jobCount || (payload.text ? 1 : 0));
-    alert(`CareerPilot 已接收${{count ? "：" + count + " 条内容" : "当前页面内容"}}。返回 CareerPilot 后点击“同步采集结果”即可。`);
-  }})().catch((error) => {{
-    alert(`CareerPilot 采集失败：${{error.message}}\\n\\n请确认你已经登录招聘网站，并且当前页面能访问 CareerPilot 上传地址。`);
-  }});
-}})();
-""".strip()
-
-
-def browser_capture_loader_script_v3(
-    *,
-    endpoint: str,
-    upload_token: str,
-    capture_core_path: Path,
-) -> str:
+    options.update({key: value for key, value in (capture_options or {}).items() if key in options})
     return f"""
 (() => {{
   window.__careerpilotCaptureLoaderStarted = Date.now();
   const endpoint = {json.dumps(endpoint)};
   const token = {json.dumps(upload_token)};
-  const extractorSource = {json.dumps(_capture_engine_source(str(capture_core_path)))};
+  const extractorSource = {json.dumps(_capture_engine_source(str(capture_core_path), capture_core_path.stat().st_mtime_ns))};
+  const captureOptions = {json.dumps(options, ensure_ascii=False)};
   const overlayId = "careerpilot-capture-status";
   const stopButtonId = "careerpilot-capture-stop";
   const activeKey = "__careerpilotCaptureRun";
@@ -329,8 +244,8 @@ def browser_capture_loader_script_v3(
     if (!root) {{
       root = document.createElement("div");
       root.id = overlayId;
-      root.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#111827;color:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.28);font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;min-width:220px";
-      root.innerHTML = '<div id="' + overlayId + '-text">CareerPilot 正在采集中...</div><button id="' + stopButtonId + '" style="margin-top:8px;border:0;border-radius:8px;padding:6px 10px;background:#ef4444;color:#fff;cursor:pointer;">停止采集</button>';
+      root.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#111827;color:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.28);font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;min-width:240px;max-width:360px";
+      root.innerHTML = '<div id="' + overlayId + '-text">CareerPilot 正在准备采集...</div><button id="' + stopButtonId + '" style="margin-top:8px;border:0;border-radius:8px;padding:6px 10px;background:#ef4444;color:#fff;cursor:pointer;">停止采集</button>';
       (document.body || document.documentElement).appendChild(root);
     }}
     return root;
@@ -378,12 +293,9 @@ def browser_capture_loader_script_v3(
     if (!window.CareerPilotExtractor || typeof window.CareerPilotExtractor.collectAutoPayload !== "function") {{
       throw new Error("CareerPilot extractor failed to load.");
     }}
-    setOverlayText("CareerPilot 正在抓取岗位列表，请稍候...");
+    setOverlayText(`CareerPilot 正在识别页面类型并深度采集，最多 ${{captureOptions.maxJobs || 30}} 条...`);
     const payload = await window.CareerPilotExtractor.collectAutoPayload({{
-      fastMode: true,
-      maxPages: 2,
-      maxScrollRounds: 4,
-      detailLimit: 0,
+      ...captureOptions,
       signal: controller,
     }});
     if (controller.cancelled) {{
@@ -401,7 +313,7 @@ def browser_capture_loader_script_v3(
     if (error && (error.name === "AbortError" || /stopped by user/i.test(String(error.message || "")))) {{
       return;
     }}
-    alert(`CareerPilot 采集失败：${{error.message}}\\n\\n请确认你已经登录招聘网站，并且当前页面能访问 CareerPilot 上传地址。`);
+    alert(`CareerPilot 采集失败：${{error.message}}\\n\\n请确认你已经登录招聘网站，并且当前页面可以连接 CareerPilot。`);
   }}).finally(() => {{
     delete window[activeKey];
   }});
@@ -409,19 +321,28 @@ def browser_capture_loader_script_v3(
 """.strip()
 
 
-def browser_capture_bookmarklet_code_v2(
+def browser_capture_bookmarklet_code(
     upload_url: str,
     upload_token: str,
+    *,
+    capture_limit: int = 30,
 ) -> str:
     parsed = urlparse(upload_url)
     script_path = capture_bookmarklet_script_path(parsed.path or "/api/capture-upload")
     loader_url = f"{parsed.scheme}://{parsed.netloc}{script_path}"
-    script_src = f"{loader_url}?token={quote(upload_token)}&endpoint={quote(upload_url, safe=':/?&=%')}&t="
+    options = capture_options_from_job_limit(capture_limit)
+    option_query = "".join(
+        f"&{key}={quote(str(value))}"
+        for key, value in options.items()
+        if key != "fastMode"
+    )
+    script_src = f"{loader_url}?token={quote(upload_token)}&endpoint={quote(upload_url, safe=':/')}{option_query}&t="
     script = f"""
 (() => {{
   const id = "careerpilot-capture-loader";
   const endpoint = {json.dumps(upload_url)};
   const token = {json.dumps(upload_token)};
+  const captureLimit = {int(options["maxJobs"])};
   const loaderStartedKey = "__careerpilotCaptureLoaderStarted";
   const fallbackStartedKey = "__careerpilotCaptureFallbackStarted";
   const old = document.getElementById(id);
@@ -489,9 +410,9 @@ def browser_capture_bookmarklet_code_v2(
         title: document.title || "CareerPilot 采集",
         url: location.href,
         savedAt: new Date().toISOString(),
-        jobCount: jobs.length,
+        jobCount: Math.min(jobs.length, captureLimit),
         detailCount: 0,
-        jobs: jobs.slice(0, 300),
+        jobs: jobs.slice(0, captureLimit),
         text: pageText.slice(0, 120000),
         source: "careerpilot_bookmarklet_fallback",
       }};
@@ -561,7 +482,6 @@ def browser_capture_bookmarklet_code_v2(
 
 def browser_capture_install_page(bookmarklet: str) -> str:
     escaped_href = html.escape(bookmarklet, quote=True)
-    escaped_text = html.escape(bookmarklet)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -603,18 +523,9 @@ def browser_capture_install_page(bookmarklet: str) -> str:
       font-weight: 800;
       text-decoration: none;
     }}
-    textarea {{
-      width: 100%;
-      min-height: 140px;
-      box-sizing: border-box;
-      border: 1px solid #d7cbbb;
-      border-radius: 10px;
-      padding: 12px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-    }}
-    ol {{
-      padding-left: 22px;
+    .steps {{
+      margin-top: 12px;
+      color: #4b5563;
     }}
   </style>
 </head>
@@ -623,19 +534,18 @@ def browser_capture_install_page(bookmarklet: str) -> str:
     <h1>CareerPilot 一键采集安装页</h1>
     <p>把下面这个“一键采集”拖到浏览器书签栏。之后在已登录的招聘网页点击书签，再回到 CareerPilot 同步采集结果。</p>
     <p><a class="bookmarklet" href="{escaped_href}">一键采集</a></p>
-    <ol>
-      <li>如果浏览器不允许拖拽，请复制下面整段代码。</li>
-      <li>新建一个浏览器书签，把网址改成这段代码。</li>
-      <li>打开招聘网站岗位页或列表页，点击书签栏里的“一键采集”。</li>
-    </ol>
-    <textarea readonly>{escaped_text}</textarea>
+    <div class="steps">
+      <div>1. 将“一键采集”拖到浏览器书签栏。</div>
+      <div>2. 打开已登录的招聘岗位页或列表页。</div>
+      <div>3. 点击书签后回到 CareerPilot 同步结果。</div>
+    </div>
   </main>
 </body>
 </html>
 """
 
 
-def render_browser_capture_helper_v2(
+def render_browser_capture_helper_ui(
     upload_url: str,
     upload_token: str,
     *,
@@ -643,53 +553,30 @@ def render_browser_capture_helper_v2(
     key_prefix: str,
     container: Any,
 ) -> None:
-    bookmarklet = browser_capture_bookmarklet_code_v2(upload_url, upload_token)
-    install_page = browser_capture_install_page(bookmarklet)
+    capture_limit = bounded_int(os.getenv("CAREERPILOT_CAPTURE_LIMIT", "30"), 30, 1, 200)
+    bookmarklet = browser_capture_bookmarklet_code(
+        upload_url,
+        upload_token,
+        capture_limit=capture_limit,
+    )
     container.markdown(
         """
-        <div class="cp-capture-panel">
-            <div class="cp-capture-header">
-                <div>
-                    <div class="cp-capture-kicker">Capture Flow</div>
-                    <div class="cp-capture-title">一键网页采集</div>
-                </div>
-                <div class="cp-capture-help-badge" tabindex="0">
-                    ?
-                    <div class="cp-capture-tooltip">
-                        <strong>使用说明</strong><br/>
-                        1. 把“一键采集”拖到浏览器书签栏。<br/>
-                        2. 在已登录的招聘页面点击这个书签。<br/>
-                        3. 回到 CareerPilot，点击“同步采集结果”查看导入内容。
-                    </div>
-                </div>
-            </div>
+        <div class="cp-capture-actions">
+            <a class="cp-capture-link" href="{href}" aria-describedby="{help_id}">一键采集</a>
+            <span class="cp-capture-help-badge" tabindex="0" role="button" aria-label="一键采集功能说明和用法说明">?</span>
+            <span class="cp-capture-tooltip" id="{help_id}" role="tooltip">
+                <strong>隐藏说明</strong><br/>
+                功能：自动识别岗位详情页或列表页；详情页直接采当前岗位，列表页会滚动、翻页并尽量补全详情页。<br/>
+                用法：把“一键采集”拖到浏览器书签栏；在已登录招聘网站打开岗位页或列表页后点击书签；回到 CareerPilot 点击“同步采集结果”。<br/>
+                提示：默认最多采集 {limit} 条，可通过 CAREERPILOT_CAPTURE_LIMIT 调整。
+            </span>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    container.markdown(
-        (
-            '<div class="cp-capture-actions">'
-            '<a class="cp-capture-link" href="{href}">一键采集</a>'
-            "</div>"
-        ).format(
+        """.format(
             href=html.escape(bookmarklet, quote=True),
+            help_id=html.escape(f"{key_prefix}_capture_help", quote=True),
+            limit=capture_limit,
         ),
         unsafe_allow_html=True,
-    )
-    container.download_button(
-        "下载一键采集安装页",
-        install_page.encode("utf-8"),
-        file_name="careerpilot_capture_bookmarklet.html",
-        mime="text/html",
-        key=f"{key_prefix}_bookmarklet_install_page",
-    )
-    container.text_area(
-        "备用方式：复制这段书签地址",
-        value=bookmarklet,
-        height=120,
-        key=f"{key_prefix}_bookmarklet_code",
-        help="如果页面上的按钮没有反应，新建浏览器书签，把网址改成这里的完整内容。",
     )
 
 
@@ -701,38 +588,10 @@ def render_browser_capture_helper(
     key_prefix: str,
     container: Any,
 ) -> None:
-    render_browser_capture_helper_v2(
+    render_browser_capture_helper_ui(
         upload_url,
         upload_token,
         capture_core_path=capture_core_path,
         key_prefix=key_prefix,
         container=container,
     )
-    return
-
-    bookmarklet = browser_capture_bookmarklet_code_v2(upload_url, upload_token)
-    container.markdown("##### 一键网页采集")
-    container.caption("一个入口自动识别列表页或详情页，并把可用岗位内容同步回 CareerPilot。")
-    parsed_upload_url = urlparse(upload_url)
-    if parsed_upload_url.hostname in {"127.0.0.1", "localhost"}:
-        container.warning("当前采集上传地址仍是本机地址。若要让其他电脑直接在浏览器使用，请在部署环境配置 APP_PUBLIC_URL 或 UPLOAD_API_PUBLIC_URL。")
-    container.markdown(
-        (
-            '<a href="{href}" style="display:inline-block;padding:0.55rem 0.9rem;'
-            'border-radius:999px;background:#0f766e;color:#fff;text-decoration:none;'
-            'font-weight:700;">一键采集</a>'
-        ).format(href=html.escape(bookmarklet, quote=True)),
-        unsafe_allow_html=True,
-    )
-    container.caption("用法很简单：在招聘网站登录后点击这个书签。列表页会自动翻页并补抓详情，详情页会直接采当前岗位。")
-    with container.expander("备用方式：复制采集书签代码", expanded=False):
-        container.markdown(
-            (
-                '<button type="button" onclick="navigator.clipboard.writeText(this.dataset.code);'
-                "this.innerText='已复制采集代码';setTimeout(()=>this.innerText='复制采集代码',1500);\" "
-                'data-code="{code}" style="margin-top:0.2rem;padding:0.45rem 0.85rem;border-radius:10px;'
-                'border:1px solid #c7d2fe;background:#eef2ff;cursor:pointer;">复制采集代码</button>'
-            ).format(code=html.escape(bookmarklet, quote=True)),
-            unsafe_allow_html=True,
-        )
-        container.text_area("采集书签地址", value=bookmarklet, height=120, key=f"{key_prefix}_bookmarklet_code")

@@ -8,7 +8,8 @@ SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 cat > "${SERVICE_PATH}" <<EOF
 [Unit]
 Description=CareerPilot Streamlit Service
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -16,7 +17,7 @@ WorkingDirectory=${PROJECT_DIR}
 EnvironmentFile=-${PROJECT_DIR}/.env
 ExecStart=${PROJECT_DIR}/.venv_server/bin/python ${PROJECT_DIR}/serve.py
 Restart=always
-RestartSec=5
+RestartSec=3
 User=root
 
 [Install]

@@ -23,4 +23,7 @@ COPY . .
 
 EXPOSE 8503 8765
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${APP_PORT}/api/health" || exit 1
+
 CMD ["python", "serve.py"]

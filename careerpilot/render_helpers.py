@@ -33,12 +33,7 @@ def render_risk_logic_note(*, streamlit_module: Any) -> None:
     streamlit_module.markdown(
         """
         <div class="cp-note">
-            <div><strong>注：</strong></div>
-            <div><strong>综合分：</strong>由目标岗位/行业/城市偏好、薪资与地域匹配、岗位价值、应届/实习友好度、当前简历匹配度共同加权，并扣除低价值、职责不清、经验门槛过高等风险。</div>
-            <div><strong>投递建议：</strong>P1表示优先投递，P2表示值得投递但需补关键词或项目证据，P3表示可作为备选，谨慎表示低价值或门槛风险较高。</div>
-            <div><strong>风险标签：</strong>来自JD中的职责范围、经验学历门槛、销售/行政杂务信号、产出是否明确等文本特征。</div>
-            <div><strong>高价值：</strong>表示岗位更容易沉淀可复用项目、业务结果或技术/分析能力。</div>
-            <div><strong>低价值风险：</strong>表示职责可能偏杂、偏执行或与目标方向弱相关。</div>
+            <div><strong>说明：</strong>结果用于帮助你快速筛选岗位。推荐评分越高，通常越应优先关注；风险提示越多，越需要进一步核实岗位职责、成长空间和投递成本。</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -165,7 +160,7 @@ def render_resume_empty_state(
 ) -> None:
     if not jd_analysis:
         title = "还没有目标岗位"
-        copy = "先在岗位工作台导入并分析一条 JD，简历工作台才能判断这份简历该突出什么。"
+        copy = "先在岗位工作台导入并分析一条 JD，简历工作台会按这条 JD 检查当前简历证据。"
         steps = ["进入岗位工作台粘贴 JD。", "完成 JD 分析并设为当前目标。", "回到这里运行简历匹配。"]
     elif not active_resume.get("content", "").strip():
         title = "还没有当前简历"
@@ -173,7 +168,7 @@ def render_resume_empty_state(
         steps = ["在左侧当前简历上传或粘贴内容。", "保存为当前简历。", "回到这里点击匹配分析。"]
     elif not has_match:
         title = "等待运行简历匹配"
-        copy = "点击左侧按钮后，这里会集中显示匹配度、已覆盖证据、必须补齐的关键词和投递前动作。"
+        copy = "点击左侧按钮后，这里会集中显示按岗位要求评估的匹配度、直接证据、相关证据、待补充项和投递前动作。"
         steps = ["确认左侧当前简历是最新版本。", "点击使用当前简历分析匹配。", "根据右侧结论进入定制简历。"]
     else:
         return

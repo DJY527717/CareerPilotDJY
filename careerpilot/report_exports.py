@@ -4,6 +4,56 @@ from typing import Any, Callable
 import pandas as pd
 
 
+def _requirement_name(item: dict[str, Any]) -> str:
+    return str(item.get("requirement") or item.get("jd_requirement") or item.get("target_requirement") or "").strip()
+
+
+def _resume_overall_score(resume_match: dict[str, Any] | None) -> Any:
+    if not resume_match:
+        return "待分析"
+    # Legacy fallback is only for old saved records that predate overall_score.
+    return resume_match["overall_score"] if "overall_score" in resume_match else resume_match.get("score", "")
+
+
+def _resume_final_rank_score(resume_match: dict[str, Any] | None) -> Any:
+    if not resume_match:
+        return ""
+    # Legacy fallback is only for old saved records that predate final_rank_score/overall_score.
+    if "final_rank_score" in resume_match:
+        return resume_match["final_rank_score"]
+    if "overall_score" in resume_match:
+        return resume_match["overall_score"]
+    return resume_match.get("score", "")
+
+
+def _matched_evidence_labels(resume_match: dict[str, Any]) -> list[str]:
+    labels = []
+    for item in resume_match.get("matched_evidence", []) or []:
+        requirement = _requirement_name(item)
+        evidence = str(item.get("resume_evidence") or "").strip()
+        if requirement and evidence:
+            labels.append(f"{requirement}: {evidence}")
+        elif requirement:
+            labels.append(requirement)
+    # Legacy fallback is only for old saved records that lack matched_evidence.
+    if "matched_evidence" not in resume_match:
+        labels = [str(item).strip() for item in resume_match.get("matched_skills", []) or []]
+    return list(dict.fromkeys(item for item in labels if item))
+
+
+def _missing_requirement_labels(resume_match: dict[str, Any]) -> list[str]:
+    labels = [_requirement_name(item) for item in resume_match.get("missing_requirements", []) or []]
+    # Legacy fallback is only for old saved records that lack missing_requirements.
+    if "missing_requirements" not in resume_match:
+        labels = [str(item).strip() for item in resume_match.get("missing_skills", []) or []]
+    return list(dict.fromkeys(item for item in labels if item))
+
+
+def _weak_requirement_labels(resume_match: dict[str, Any]) -> list[str]:
+    labels = [_requirement_name(item) for item in resume_match.get("weak_requirements", []) or []]
+    return list(dict.fromkeys(item for item in labels if item))
+
+
 def build_report_frames(
     *,
     session_state: Any,
@@ -39,13 +89,14 @@ def build_report_frames(
                     "目标岗位": basic.get("岗位名", ""),
                     "目标公司": basic.get("公司名", ""),
                     "来源": target_meta.get("source", ""),
-                    "岗位分类": jd_analysis.get("category", ""),
-                    "岗位价值": "高" if jd_analysis.get("value", {}).get("is_high_value") else "待判",
-                    "低价值风险": "高" if jd_analysis.get("value", {}).get("is_generic_esg") else "低",
+                    "岗位方向": jd_analysis.get("category", ""),
+                    "优先关注": "是" if jd_analysis.get("value", {}).get("is_high_value") else "待确认",
+                    "待核实风险": "是" if jd_analysis.get("value", {}).get("is_generic_esg") else "否",
                     "简历版本": active_resume.get("name", ""),
-                    "简历匹配度": resume_match.get("score", "") if resume_match else "待分析",
-                    "投递判断": action_plan["decision"],
-                    "投递前动作": " / ".join(action_plan["actions"]),
+                    "简历匹配度": _resume_overall_score(resume_match),
+                    "推荐评分": _resume_final_rank_score(resume_match),
+                    "投递建议": action_plan["decision"],
+                    "下一步": " / ".join(action_plan["actions"]),
                     "面试准备": " / ".join(action_plan["interview_focus"]),
                 }
             ]
@@ -60,9 +111,9 @@ def build_report_frames(
                 {
                     "简历名称": active_resume.get("name", ""),
                     "更新时间": active_resume.get("updated_at", ""),
-                    "有效行数": len(parsed_resume.get("lines", [])),
-                    "识别板块": len(parsed_resume.get("sections", {})),
-                    "技能命中": " / ".join(parsed_resume.get("skills", [])[:12]),
+                    "内容行数": len(parsed_resume.get("lines", [])),
+                    "简历栏目数": len(parsed_resume.get("sections", {})),
+                    "已识别技能": " / ".join(parsed_resume.get("skills", [])[:12]),
                     "质量": quality["label"],
                     "质量说明": quality["detail"],
                 }
@@ -70,13 +121,13 @@ def build_report_frames(
         )
     if jd_analysis:
         frames["岗位基本信息"] = pd.DataFrame([jd_analysis["basic"]])
-        frames["技能关键词"] = jd_analysis["skills"]
+        frames["岗位关键词"] = jd_analysis["skills"]
         frames["岗位判断"] = pd.DataFrame(
             [
                 {
-                    "岗位分类": jd_analysis.get("category", ""),
-                    "高价值词命中": jd_analysis.get("value", {}).get("high_score", ""),
-                    "低价值风险词命中": jd_analysis.get("value", {}).get("low_score", ""),
+                    "岗位方向": jd_analysis.get("category", ""),
+                    "优先关注依据": jd_analysis.get("value", {}).get("high_score", ""),
+                    "风险依据": jd_analysis.get("value", {}).get("low_score", ""),
                     "判断": jd_analysis.get("value", {}).get("label", ""),
                 }
             ]
@@ -85,22 +136,22 @@ def build_report_frames(
         frames["简历匹配"] = pd.DataFrame(
             [
                 {
-                    "匹配度": resume_match["score"],
-                    "匹配技能": " / ".join(resume_match["matched_skills"]),
-                    "缺口技能": " / ".join(resume_match["missing_skills"]),
-                    "优势": " / ".join(resume_match["strengths"]),
-                    "缺口说明": " / ".join(resume_match["gap_examples"]),
+                    "匹配度": _resume_overall_score(resume_match),
+                    "推荐评分": _resume_final_rank_score(resume_match),
+                    "已匹配证据": " / ".join(_matched_evidence_labels(resume_match)),
+                    "待补充要求": " / ".join(_missing_requirement_labels(resume_match)),
+                    "证据偏弱要求": " / ".join(_weak_requirement_labels(resume_match)),
                 }
             ]
         )
     if batch_jd_analysis is not None and not batch_jd_analysis.empty:
-        frames["批量JD分析"] = public_export_df(batch_jd_analysis)
+        frames["批量岗位分析"] = public_export_df(batch_jd_analysis)
     if custom_resume:
         frames["定制简历"] = pd.DataFrame(
             [
                 {
                     "目标岗位": custom_resume["job_title"],
-                    "岗位分类": custom_resume["category"],
+                    "岗位方向": custom_resume["category"],
                     "关键词": custom_resume["keyword_line"],
                     "直接可用版本": custom_resume.get("ready_resume_text", ""),
                     "摘要": custom_resume["summary"],
@@ -120,8 +171,18 @@ def build_report_frames(
                     "简历通过率": offer_prediction["简历通过率"],
                     "进入面试概率": offer_prediction["进入面试概率"],
                     "拿Offer概率": offer_prediction["拿 offer 概率"],
-                    "短板数量": offer_prediction["shortcomings"],
-                    "影响因素": " / ".join(offer_prediction["drivers"]),
+                    "推进判断": offer_prediction.get("decision_tier", ""),
+                    "主要瓶颈": offer_prediction.get("bottleneck", ""),
+                    "最弱阶段": offer_prediction.get("weakest_stage", ""),
+                    "阶段诊断": " / ".join(
+                        f"{name}:{score}" for name, score in offer_prediction.get("stage_scores", {}).items()
+                    ),
+                    "可信度": offer_prediction.get("confidence", ""),
+                    "判断范围": offer_prediction.get("scope_note", ""),
+                    "岗位族": " / ".join(offer_prediction.get("career_families", [])),
+                    "风险因素": " / ".join(offer_prediction.get("risk_flags", [])),
+                    "待补充项数": offer_prediction["shortcomings"],
+                    "预测依据": " / ".join(offer_prediction["drivers"]),
                     "提升建议": " / ".join(offer_prediction["actions"]),
                     "投递步骤": " / ".join(offer_prediction.get("application_steps", [])),
                 }
@@ -140,6 +201,23 @@ def build_report_frames(
         frames["努力方向"] = pd.DataFrame(gap_analysis["priorities"], columns=["优先级", "建议"])
     if interview_analysis:
         rows = []
+        rows.append(
+            {
+                "分类": "准备成熟度",
+                "面经问题": f"{interview_analysis.get('readiness_score', 0)} / 100 - {interview_analysis.get('readiness_label', '')}",
+            }
+        )
+        if interview_analysis.get("readiness_breakdown"):
+            rows.append(
+                {
+                    "分类": "成熟度拆解",
+                    "面经问题": " / ".join(
+                        f"{name}:{score}" for name, score in interview_analysis.get("readiness_breakdown", {}).items()
+                    ),
+                }
+            )
+        for focus in interview_analysis.get("preparation_focus", []):
+            rows.append({"分类": "优先补齐", "面经问题": focus})
         for answer in interview_analysis.get("answer_templates", []):
             rows.append({"分类": "回答框架", "面经问题": answer})
         for category, questions in interview_analysis["buckets"].items():
@@ -156,6 +234,7 @@ def build_report_frames(
                     "实习价值评分": internship_analysis["score"],
                     "结论": internship_analysis["verdict"],
                     "决策建议": internship_analysis["decision"],
+                    "识别方向": " / ".join(internship_analysis.get("signal_profile", {}).get("career_families", [])),
                     "有利原因": " / ".join(internship_analysis["reasons"]),
                     "风险点": " / ".join(internship_analysis["risks"]),
                     "建议产出": " / ".join(internship_analysis["recommended_outputs"]),
@@ -164,7 +243,7 @@ def build_report_frames(
                 }
             ]
         )
-        frames["实习维度评分"] = internship_analysis["dimension_scores"]
+        frames["实习各项判断"] = internship_analysis["dimension_scores"]
     return frames
 
 

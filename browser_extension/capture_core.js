@@ -136,8 +136,9 @@
       });
     }
     for (const anchor of anchors) {
-      const resolved = resolveUrl(anchor.getAttribute("href"), baseUrl);
-      if (resolved && !/^(javascript:|mailto:|tel:)/i.test(resolved)) return resolved;
+      const href = anchor.getAttribute("href") || "";
+      const resolved = resolveUrl(href, baseUrl);
+      if (resolved && isLikelyJobUrl(href, baseUrl)) return resolved;
     }
     return "";
   }
@@ -648,7 +649,7 @@
   }
 
   function scoreJobCard(text) {
-    const keywords = ["岗位", "职位", "薪资", "公司", "实习", "全职", "经验", "本科", "硕士", "LCA", "ESG", "CBAM", "EPD", "ISO", "Python", "SimaPro", "GaBi", "openLCA"];
+    const keywords = ["岗位", "职位", "薪资", "公司", "实习", "全职", "经验", "本科", "硕士"];
     let score = 0;
     keywords.forEach((keyword) => { if (String(text || "").includes(keyword)) score += 1; });
     if (findSalary(text)) score += 6;
@@ -899,6 +900,14 @@
       || extractGenericDetail(doc, pageUrl, pageTitle);
   }
 
+  function currentPageDetailPayloadIfStrong() {
+    if (!isLikelyJobUrl(location.href, location.href)) return null;
+    const detail = extractDetailFromDocument(document, location.href, document.title || "");
+    const detailText = cleanText(detail && detail.text);
+    if (detailText.length < 80) return null;
+    return detail;
+  }
+
   function findNextHref(doc, baseUrl) {
     const candidates = [];
     queryAllDeep(doc, "a[href], button[data-url], [rel='next']").forEach((node) => {
@@ -1013,9 +1022,10 @@
     return false;
   }
 
-  function mergeJobs(target, incoming, seen) {
+  function mergeJobs(target, incoming, seen, maxJobs) {
     let added = 0;
     (incoming || []).forEach((job) => {
+      if (maxJobs && target.length >= maxJobs) return;
       const key = `${job.url || ""}|${compact(job.title || job.text).slice(0, 260)}`;
       if (seen.has(key)) return;
       seen.add(key);
@@ -1029,13 +1039,15 @@
     const signal = options && options.signal;
     const siteKey = siteKeyFromHost(location.href);
     const maxScrollRounds = Math.max(4, Number(options.maxScrollRounds) || (siteKey === "boss" ? 32 : 18));
+    const maxJobs = Math.max(1, Number(options.maxJobs) || 2000);
     let stagnantRounds = 0;
     let lastHeight = 0;
     const scrollContainers = findScrollableContainers(document);
 
     for (let round = 0; round < maxScrollRounds; round += 1) {
       throwIfAborted(signal);
-      const added = mergeJobs(targetJobs, collectJobsFromDocument(document, location.href, 1, true), seen);
+      const added = mergeJobs(targetJobs, collectJobsFromDocument(document, location.href, 1, true), seen, maxJobs);
+      if (targetJobs.length >= maxJobs) break;
       const currentHeight = Math.max(
         document.body ? document.body.scrollHeight : 0,
         document.documentElement ? document.documentElement.scrollHeight : 0
@@ -1084,12 +1096,27 @@
     return false;
   }
 
-  async function fetchDocument(url) {
-    const response = await fetch(url, { credentials: "include" });
-    if (!response.ok) throw new Error(`打开 ${url} 失败 (${response.status})`);
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    return { doc, url: response.url || url, title: doc.title || "" };
+  async function fetchDocument(url, signal, timeoutMs) {
+    throwIfAborted(signal);
+    const controller = new AbortController();
+    const timeout = Math.max(3000, Number(timeoutMs) || 9000);
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const abortFromParent = () => controller.abort();
+    if (signal && typeof signal.addEventListener === "function") {
+      signal.addEventListener("abort", abortFromParent, { once: true });
+    }
+    try {
+      const response = await fetch(url, { credentials: "include", signal: controller.signal });
+      if (!response.ok) throw new Error(`打开 ${url} 失败 (${response.status})`);
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      return { doc, url: response.url || url, title: doc.title || "" };
+    } finally {
+      clearTimeout(timeoutId);
+      if (signal && typeof signal.removeEventListener === "function") {
+        signal.removeEventListener("abort", abortFromParent);
+      }
+    }
   }
 
   async function collectCurrentAndNextPages(options) {
@@ -1097,6 +1124,7 @@
     const allJobs = [];
     const seen = new Set();
     const maxPages = Math.max(1, Number(options.maxPages) || 8);
+    const maxJobs = Math.max(1, Number(options.maxJobs) || 2000);
     let lastTitle = document.title || "";
     let lastUrl = location.href;
 
@@ -1106,7 +1134,7 @@
 
     let nextHref = findNextHref(document, location.href);
     let pageIndex = 2;
-    while (pageIndex <= maxPages) {
+    while (pageIndex <= maxPages && allJobs.length < maxJobs) {
       throwIfAborted(signal);
       let clicked = false;
       if (!nextHref) {
@@ -1121,10 +1149,10 @@
         const current = new URL(location.href);
         const next = new URL(nextHref, location.href);
         if (current.origin !== next.origin) break;
-        const fetched = await fetchDocument(next.href);
+        const fetched = await fetchDocument(next.href, signal, 9000);
         lastTitle = fetched.title || lastTitle;
         lastUrl = fetched.url || lastUrl;
-        mergeJobs(allJobs, collectJobsFromDocument(fetched.doc, fetched.url, pageIndex, false), seen);
+        mergeJobs(allJobs, collectJobsFromDocument(fetched.doc, fetched.url, pageIndex, false), seen, maxJobs);
         nextHref = findNextHref(fetched.doc, fetched.url) || buildPagedUrl(fetched.url, pageIndex + 1);
         pageIndex += 1;
         continue;
@@ -1144,7 +1172,9 @@
 
   async function enrichWithDetailPages(allJobs, listUrl, detailLimit) {
     const signal = arguments[3];
+    const detailConcurrency = Math.max(1, Math.min(6, Number(arguments[4]) || 4));
     const currentOrigin = new URL(location.href).origin;
+    let enrichedCount = 0;
     const detailJobs = allJobs
       .map((job, index) => ({ job, index }))
       .filter(({ job }) => usableDetailUrl(job.url, listUrl))
@@ -1157,12 +1187,27 @@
       })
       .slice(0, Math.max(0, Number(detailLimit) || 0));
 
-    for (let i = 0; i < detailJobs.length; i += 1) {
+    let cursor = 0;
+    async function enrichNextDetail() {
+      while (cursor < detailJobs.length) {
       throwIfAborted(signal);
-      const { job, index } = detailJobs[i];
+      const { job, index } = detailJobs[cursor];
+      cursor += 1;
       try {
-        const fetched = await fetchDocument(job.url);
+        const fetched = await fetchDocument(job.url, signal, 8000);
         const detail = extractDetailFromDocument(fetched.doc, fetched.url, fetched.title);
+        const detailUrl = usableDetailUrl(detail.url || fetched.url || job.url, listUrl)
+          ? (detail.url || fetched.url || job.url)
+          : "";
+        const detailText = cleanText(detail.text || "");
+        if (!detailUrl || detailText.length < 30) {
+          allJobs[index] = {
+            ...job,
+            detailFetched: false,
+            detailFetchError: "empty_detail_page",
+          };
+          continue;
+        }
         allJobs[index] = {
           ...job,
           title: detail.title || job.title,
@@ -1172,14 +1217,24 @@
           education: detail.education || job.education,
           experience: detail.experience || job.experience,
           detailTitle: detail.title || "",
-          detailUrl: detail.url || job.url,
-          detailText: detail.text || "",
-          text: [job.text || "", "", "详情页信息：", detail.text || ""].filter(Boolean).join("\n"),
+          detailUrl,
+          url: detailUrl,
+          detailFetched: true,
+          detailText,
         };
+        allJobs[index].text = [job.text || "", "", "Detail page:", detailText].filter(Boolean).join("\n");
+        enrichedCount += 1;
       } catch (_error) {
+        allJobs[index] = {
+          ...job,
+          detailFetched: false,
+          detailFetchError: "fetch_failed",
+        };
       }
     }
-    return detailJobs.length;
+    }
+    await Promise.all(Array.from({ length: Math.min(detailConcurrency, detailJobs.length) }, enrichNextDetail));
+    return enrichedCount;
   }
 
   async function collectDetailPayload(options) {
@@ -1193,30 +1248,39 @@
     const normalized = {
       maxPages: Math.max(1, Number(options && options.maxPages) || 2),
       maxScrollRounds: Math.max(2, Number(options && (options.maxScrollRounds ?? options.scrollSteps)) || 6),
+      maxJobs: Math.max(1, Number(options && options.maxJobs) || 2000),
       detailLimit: Math.max(0, Number(options && options.detailLimit) || 0),
+      detailConcurrency: Math.max(1, Number(options && options.detailConcurrency) || 4),
       signal,
     };
     const { allJobs, lastTitle, lastUrl } = await collectCurrentAndNextPages(normalized);
+    const limitedJobs = allJobs.slice(0, normalized.maxJobs);
     const detailCount = normalized.detailLimit > 0
-      ? await enrichWithDetailPages(allJobs, lastUrl || location.href, normalized.detailLimit, signal)
+      ? await enrichWithDetailPages(limitedJobs, lastUrl || location.href, Math.min(normalized.detailLimit, normalized.maxJobs), signal, normalized.detailConcurrency)
       : 0;
+    const finalJobs = normalized.detailLimit > 0 && detailCount > 0
+      ? limitedJobs.filter((job) => job && job.detailFetched && usableDetailUrl(job.detailUrl || job.url, lastUrl || location.href))
+      : limitedJobs;
     return {
       type: "list_paginated_with_details",
       title: lastTitle || document.title || "paginated_jobs_with_details",
       url: lastUrl || location.href,
       savedAt: new Date().toISOString(),
-      jobCount: allJobs.length,
+      jobCount: finalJobs.length,
+      cardCount: limitedJobs.length,
+      detailRequired: normalized.detailLimit > 0,
       detailCount,
-      jobs: allJobs.slice(0, 2000),
+      jobs: finalJobs,
       text: cleanText((document.body && document.body.innerText) || "").slice(0, 120000),
     };
   }
 
   async function collectFastVisiblePayload(options) {
     const signal = options && options.signal;
+    const maxJobs = Math.max(1, Number(options && options.maxJobs) || 300);
     throwIfAborted(signal);
     await waitForDomSettled(1200, 250);
-    const jobs = collectJobsFromDocument(document, location.href, 1, true).slice(0, 300);
+    const jobs = collectJobsFromDocument(document, location.href, 1, true).slice(0, maxJobs);
     const text = cleanText((document.body && document.body.innerText) || bodyText(document)).slice(0, 120000);
     if (jobs.length) {
       return {
@@ -1241,10 +1305,67 @@
 
   async function collectAutoPayload(options) {
     const signal = options && options.signal;
+    const fastMode = options && options.fastMode;
+    const wantsDetails = Math.max(0, Number(options && options.detailLimit) || 0) > 0;
     throwIfAborted(signal);
-    if (!options || options.fastMode !== false) {
+    const currentDetail = currentPageDetailPayloadIfStrong();
+    if (currentDetail) return currentDetail;
+    if (!options || fastMode !== false) {
       const quickPayload = await collectFastVisiblePayload(options || {});
-      if ((quickPayload.jobs && quickPayload.jobs.length) || cleanText(quickPayload.text).length >= 30) {
+      const quickJobCount = quickPayload.jobs && quickPayload.jobs.length ? quickPayload.jobs.length : 0;
+      if (quickJobCount >= 2 && fastMode !== "visible") {
+        try {
+          const listPayload = await collectListPayload(options || {});
+          const listJobCount = listPayload.jobs && listPayload.jobs.length ? listPayload.jobs.length : 0;
+          if (wantsDetails) return listPayload;
+          if (listJobCount >= quickJobCount) return listPayload;
+        } catch (error) {
+          if (wantsDetails) {
+            return {
+              type: "list_detail_capture_failed",
+              title: document.title || "capture_failed",
+              url: location.href,
+              savedAt: new Date().toISOString(),
+              jobCount: 0,
+              cardCount: quickJobCount,
+              detailCount: 0,
+              detailRequired: true,
+              jobs: [],
+              error: String(error && error.message ? error.message : error || "detail_capture_failed"),
+              text: cleanText(quickPayload.text || "").slice(0, 120000),
+            };
+          }
+          if (quickJobCount) return quickPayload;
+        }
+      }
+      if (quickJobCount && wantsDetails && fastMode !== "visible") {
+        try {
+          return await collectListPayload(options || {});
+        } catch (error) {
+          return {
+            type: "list_detail_capture_failed",
+            title: document.title || "capture_failed",
+            url: location.href,
+            savedAt: new Date().toISOString(),
+            jobCount: 0,
+            cardCount: quickJobCount,
+            detailCount: 0,
+            detailRequired: true,
+            jobs: [],
+            error: String(error && error.message ? error.message : error || "detail_capture_failed"),
+            text: cleanText(quickPayload.text || "").slice(0, 120000),
+          };
+        }
+      }
+      if (quickJobCount && fastMode === "visible") return quickPayload;
+      if (!quickJobCount) {
+        try {
+          const detailPayload = await collectDetailPayload(options || {});
+          if (cleanText(detailPayload && detailPayload.text).length >= 30) return detailPayload;
+        } catch (_error) {
+        }
+      }
+      if (quickJobCount || cleanText(quickPayload.text).length >= 30) {
         return quickPayload;
       }
     }

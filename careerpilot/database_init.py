@@ -105,12 +105,31 @@ def cleanup_legacy_database_state(
             data = {}
         clean = dict(default_target_preferences)
         clean.update(data)
+        clean["target_roles"] = split_preference_items(
+            split_preference_items(clean.get("target_roles", []))
+            + split_preference_items(clean.get("target_directions", []))
+            + split_preference_items(clean.get("preferred_roles", []))
+            + split_preference_items(clean.get("job_directions", []))
+        )
         clean["target_cities"] = split_preference_items(
             split_preference_items(clean.get("target_cities", [])) + split_preference_items(clean.get("extra_cities", ""))
         )
         clean["preferred_industries"] = split_preference_items(
-            split_preference_items(clean.get("preferred_industries", [])) + split_preference_items(clean.get("extra_industries", ""))
+            split_preference_items(clean.get("preferred_industries", []))
+            + split_preference_items(clean.get("target_industries", []))
+            + split_preference_items(clean.get("industries", []))
+            + split_preference_items(clean.get("extra_industries", ""))
         )
+        clean["job_keywords"] = split_preference_items(
+            split_preference_items(clean.get("job_keywords", []))
+            + split_preference_items(clean.get("positive_keywords", []))
+            + split_preference_items(clean.get("preferred_keywords", []))
+        )
+        if not str(clean.get("avoid_keywords", "")).strip():
+            clean["avoid_keywords"] = "、".join(
+                split_preference_items(clean.get("avoid_terms", []))
+                + split_preference_items(clean.get("negative_keywords", []))
+            )
         if clean["target_cities"] == legacy_auto_target_cities:
             clean["target_cities"] = []
         if clean["preferred_industries"] == legacy_auto_target_industries:

@@ -43,4 +43,22 @@ else
   tail -n 40 careerpilot.log || true
 fi
 
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://127.0.0.1:${APP_PORT:-8000}/api/health}"
+echo "[deploy] waiting for health check: ${HEALTHCHECK_URL}"
+if command -v curl >/dev/null 2>&1; then
+  for attempt in {1..20}; do
+    if curl -fsS "${HEALTHCHECK_URL}" >/dev/null; then
+      echo "[deploy] health check passed"
+      break
+    fi
+    if [[ "${attempt}" -eq 20 ]]; then
+      echo "[deploy] health check failed"
+      exit 1
+    fi
+    sleep 2
+  done
+else
+  echo "[deploy] curl not found, skipping HTTP health check"
+fi
+
 echo "[deploy] done"

@@ -43,8 +43,8 @@ APP_HOST=0.0.0.0
 APP_PORT=8000
 UPLOAD_API_HOST=0.0.0.0
 UPLOAD_API_PORT=8765
-APP_PUBLIC_URL=http://你的域名或IP:8000
-UPLOAD_API_PUBLIC_URL=http://你的域名或IP:8765/api/capture-upload
+APP_PUBLIC_URL=https://你的域名
+UPLOAD_API_PUBLIC_URL=https://你的域名/api/capture-upload
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DBNAME
 JD_EXPORT_DIR=/root/Downloads/CareerPilot_JD
 APP_BUILD_LABEL=production
@@ -99,10 +99,21 @@ git push origin main
 /api/capture-upload
 ```
 
-如果你使用公网访问，请确保：
+如果通过 `serve.py` 对外提供服务，`/api/capture-upload` 会与主应用同源，书签可直接在 HTTPS 招聘页面使用。公网访问请确保：
 
-- `8765` 端口可访问
-- `UPLOAD_API_PUBLIC_URL` 指向正确公网地址
+- `APP_PUBLIC_URL` 指向用户实际访问的 HTTPS 地址
+- `UPLOAD_API_PUBLIC_URL` 优先使用同一个 HTTPS 域名下的 `/api/capture-upload`
+- 如果单独暴露上传端口，`UPLOAD_API_PUBLIC_URL` 必须是浏览器可访问的 HTTPS 地址
+
+## 健康检查
+
+`serve.py` 提供健康检查接口：
+
+```text
+/api/health
+```
+
+GitHub Actions 部署脚本会在重启后等待该接口返回 200；Docker 镜像也会用它做容器健康检查。
 
 ## 常用运维命令
 

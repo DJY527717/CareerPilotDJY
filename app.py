@@ -12,13 +12,12 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import requests
 import streamlit as st
 from careerpilot import auth as auth_utils
@@ -32,29 +31,23 @@ from careerpilot import session_data as session_data_utils
 from careerpilot import storage as storage_utils
 from careerpilot import table_formats as table_format_utils
 from careerpilot import user_data as user_data_utils
+from careerpilot.ui import components as ui_components
+from careerpilot.ui.styles import inject_global_styles
+from careerpilot.matching.preference_fit import (
+    apply_preference_ceilings,
+    calculate_preference_fit,
+    extract_salary_from_jd,
+    has_meaningful_preferences,
+)
+from careerpilot.matching.report_builder import generate_match_report
+from careerpilot.matching.ranking import sort_batch_rank_rows
+from careerpilot.matching.resume_revision import generate_targeted_resume_revision
+from careerpilot.matching.schema import MatchingServices
 
 try:
     import psycopg
 except Exception:  # pragma: no cover - optional cloud database backend
     psycopg = None
-
-try:
-    from rapidfuzz import fuzz
-except Exception:  # pragma: no cover - optional acceleration
-    fuzz = None
-
-try:
-    import jieba
-except Exception:  # pragma: no cover - optional Chinese tokenizer
-    jieba = None
-
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-except Exception:  # pragma: no cover - optional semantic scorer
-    TfidfVectorizer = None
-    cosine_similarity = None
-
 
 APP_TITLE = "CareerPilot 全职业岗位分析"
 APP_DIR = Path(__file__).resolve().parent
@@ -74,6 +67,109 @@ UPLOAD_API_PORT = int(os.getenv("UPLOAD_API_PORT", "8765") or "8765")
 UPLOAD_API_PATH = os.getenv("UPLOAD_API_PATH", "/api/capture-upload").strip() or "/api/capture-upload"
 UPLOAD_API_PUBLIC_URL = os.getenv("UPLOAD_API_PUBLIC_URL", "").strip()
 APP_BUILD_LABEL = os.getenv("APP_BUILD_LABEL", "local")
+_DB_INIT_DONE = False
+_DB_INIT_LOCK = Lock()
+_CAPTURE_SERVICE_ENSURED = False
+_CAPTURE_SERVICE_LOCK = Lock()
+
+
+@lru_cache(maxsize=1)
+def get_plotly_express() -> Any:
+    return importlib.import_module("plotly.express")
+
+
+@lru_cache(maxsize=1)
+def get_plotly_graph_objects() -> Any:
+    return importlib.import_module("plotly.graph_objects")
+
+
+CHART_COLOR_SEQUENCE = ["#2563EB", "#0F766E", "#F59E0B", "#DC2626", "#7C3AED", "#0891B2", "#65A30D", "#DB2777"]
+
+
+def pretty_bar_chart(
+    df: pd.DataFrame,
+    *,
+    x: str,
+    y: str,
+    title: str = "",
+    orientation: str = "v",
+    range_y: list[int] | None = None,
+    sort_desc: bool = True,
+    limit: int | None = None,
+) -> Any:
+    chart_df = df.copy()
+    if sort_desc and y in chart_df.columns:
+        chart_df = chart_df.sort_values(y, ascending=False)
+    if limit:
+        chart_df = chart_df.head(limit)
+    px = get_plotly_express()
+    color_field = y if orientation == "h" else x
+    fig = px.bar(
+        chart_df,
+        x=x,
+        y=y,
+        orientation=orientation,
+        color=color_field,
+        range_y=range_y,
+        title=title,
+        color_discrete_sequence=CHART_COLOR_SEQUENCE,
+    )
+    if orientation == "h":
+        fig.update_traces(
+            texttemplate="%{x}",
+            textposition="outside",
+            marker_line_color="rgba(15,23,42,0.18)",
+            marker_line_width=1,
+            cliponaxis=False,
+        )
+        fig.update_layout(yaxis={"categoryorder": "total ascending"})
+    else:
+        fig.update_traces(
+            texttemplate="%{y}",
+            textposition="outside",
+            marker_line_color="rgba(15,23,42,0.18)",
+            marker_line_width=1,
+            cliponaxis=False,
+        )
+    fig.update_layout(
+        template="plotly_white",
+        showlegend=False,
+        title={"text": title, "x": 0.02, "xanchor": "left", "font": {"size": 17}},
+        bargap=0.34,
+        margin={"l": 16, "r": 28, "t": 54 if title else 28, "b": 42},
+        plot_bgcolor="rgba(255,255,255,0)",
+        paper_bgcolor="rgba(255,255,255,0)",
+        font={"family": "Inter, Microsoft YaHei, Arial, sans-serif", "size": 13, "color": "#334155"},
+        xaxis={"showgrid": False, "zeroline": False, "title": ""},
+        yaxis={"gridcolor": "rgba(148,163,184,0.18)", "zeroline": False, "title": ""},
+    )
+    return fig
+
+
+@lru_cache(maxsize=1)
+def get_jieba_module() -> Any | None:
+    try:
+        return importlib.import_module("jieba")
+    except Exception:  # pragma: no cover - optional Chinese tokenizer
+        return None
+
+
+@lru_cache(maxsize=1)
+def get_rapidfuzz_fuzz() -> Any | None:
+    try:
+        return importlib.import_module("rapidfuzz.fuzz")
+    except Exception:  # pragma: no cover - optional acceleration
+        return None
+
+
+@lru_cache(maxsize=1)
+def get_sklearn_similarity_tools() -> tuple[Any | None, Any | None]:
+    try:
+        feature_module = importlib.import_module("sklearn.feature_extraction.text")
+        pairwise_module = importlib.import_module("sklearn.metrics.pairwise")
+        return feature_module.TfidfVectorizer, pairwise_module.cosine_similarity
+    except Exception:  # pragma: no cover - optional semantic scorer
+        return None, None
 
 
 def cloud_upload_root_for_user(user_id: int) -> Path:
@@ -122,14 +218,21 @@ def resolve_capture_upload_bind_host() -> str:
 
 
 def ensure_embedded_capture_upload_service() -> None:
-    capture_utils.ensure_embedded_capture_upload_service(
-        capture_core_path=CAPTURE_CORE_PATH,
-        upload_api_port=UPLOAD_API_PORT,
-        upload_api_path=UPLOAD_API_PATH,
-        lookup_user_id_by_capture_token=lookup_user_id_by_capture_token,
-        save_capture_payload_for_user=save_capture_payload_for_user,
-        records_from_exported_jd_file=records_from_exported_jd_file,
-    )
+    global _CAPTURE_SERVICE_ENSURED
+    if _CAPTURE_SERVICE_ENSURED:
+        return
+    with _CAPTURE_SERVICE_LOCK:
+        if _CAPTURE_SERVICE_ENSURED:
+            return
+        capture_utils.ensure_embedded_capture_upload_service(
+            capture_core_path=CAPTURE_CORE_PATH,
+            upload_api_port=UPLOAD_API_PORT,
+            upload_api_path=UPLOAD_API_PATH,
+            lookup_user_id_by_capture_token=lookup_user_id_by_capture_token,
+            save_capture_payload_for_user=save_capture_payload_for_user,
+            records_from_exported_jd_file=records_from_exported_jd_file,
+        )
+        _CAPTURE_SERVICE_ENSURED = True
 
 APP_NAVIGATION = {
     "main_tabs": ["岗位工作台", "简历工作台", "求职决策", "面试与报告"],
@@ -146,7 +249,7 @@ MAIN_WORKSPACE_LABELS = {
     "report": "面试与报告",
 }
 
-RUNTIME_CACHE_SCHEMA = "2026-04-29-quality-match-v3"
+RUNTIME_CACHE_SCHEMA = "2026-05-13-adaptive-match-v1"
 DB_SCHEMA_VERSION = "auth-user-v1"
 PASSWORD_HASH_ITERATIONS = 260_000
 AUTH_SESSION_KEY = "auth_user"
@@ -173,7 +276,11 @@ DEFAULT_TARGET_PREFERENCES: dict[str, Any] = {
     "accept_remote": True,
     "accept_nationwide": True,
     "min_monthly_salary": 10000,
+    "max_monthly_salary": 0,
     "min_daily_salary": 120,
+    "target_salary_enabled": False,
+    "salary_strict": False,
+    "target_city_strict": False,
     "preferred_industries": [],
     "extra_industries": "",
     "job_keywords": [],
@@ -409,58 +516,28 @@ HIGH_VALUE_KEYWORDS = [
     "核心项目",
     "项目交付",
     "独立负责",
-    "业务分析",
-    "数据分析",
+    "主导",
+    "负责",
+    "落地",
+    "交付物",
+    "成果",
+    "复盘",
     "指标体系",
-    "用户研究",
-    "需求分析",
-    "产品设计",
     "项目管理",
-    "增长",
+    "可量化",
+    "量化",
     "策略",
-    "咨询",
-    "行业研究",
-    "客户成功",
-    "商业分析",
-    "SQL",
-    "Python",
-    "Tableau",
-    "Power BI",
-    "Java",
-    "C++",
-    "前端",
-    "后端",
-    "算法",
-    "机器学习",
-    "财务分析",
-    "法务合规",
-    "供应链管理",
-    "采购",
-    "英文",
+    "方案",
+    "真实项目",
+    "客户项目",
+    "核心任务",
+    "流程优化",
+    "跨部门",
+    "培训",
+    "导师",
     "转正",
     "校招",
     "管培",
-    "LCA",
-    "生命周期评价",
-    "生命周期评估",
-    "CFP",
-    "产品碳足迹",
-    "ISO14067",
-    "ISO 14067",
-    "EPD",
-    "CBAM",
-    "碳边境调节机制",
-    "碳核查",
-    "碳盘查",
-    "供应链碳",
-    "供应链碳数据",
-    "SimaPro",
-    "GaBi",
-    "openLCA",
-    "PEF",
-    "GHG Protocol",
-    "温室气体核算",
-    "出海合规",
 ]
 
 LOW_VALUE_KEYWORDS = [
@@ -468,27 +545,17 @@ LOW_VALUE_KEYWORDS = [
     "纯执行",
     "无明确职责",
     "长期实习无转正",
-    "电话销售",
-    "地推",
-    "陌拜",
-    "销售指标",
     "行政杂务",
     "材料搬运",
     "只做排版",
     "只做整理",
     "无培训",
     "无成长",
-    "ESG报告",
-    "ESG 报告",
-    "信息披露",
-    "CSR",
-    "CSR传播",
-    "公众号",
-    "活动策划",
-    "行政",
-    "行政协同",
-    "品牌传播",
-    "可持续传播",
+    "无导师",
+    "自学为主",
+    "服从安排",
+    "临时安排",
+    "领导交办",
     "材料整理",
     "会议组织",
 ]
@@ -496,11 +563,9 @@ LOW_VALUE_KEYWORDS = [
 LOW_VALUE_RISK_RULES: dict[str, list[str]] = {
     "职责模糊": ["职责不清", "职责模糊", "工作内容不限", "服从安排", "临时安排", "领导交办", "其他事项", "协助完成", "支持部门"],
     "纯执行/杂务": ["打杂", "纯执行", "行政杂务", "材料整理", "会议组织", "只做排版", "只做整理", "资料归档", "跑腿", "材料搬运"],
-    "销售指标伪装": ["电话销售", "地推", "陌拜", "销售指标", "邀约客户", "拉新指标", "业绩考核", "转化指标", "客户开发"],
     "无转正/培养弱": ["长期实习无转正", "无转正", "不提供转正", "无培训", "无成长", "无导师", "自学为主", "短期实习"],
-    "标题内容不一致": ["岗位名称仅供参考", "实际工作以销售为主", "实际工作以行政为主", "挂名", "储备干部", "综合岗"],
+    "标题内容不一致": ["岗位名称仅供参考", "实际工作与标题不一致", "挂名", "储备干部", "综合岗"],
     "实习生当全职用": ["独立负责", "可独立承担", "高强度", "抗压", "加班", "全职实习", "每周5天", "长期稳定实习", "人手紧张"],
-    "泛宣传/披露": ["ESG报告", "ESG 报告", "信息披露", "CSR", "CSR传播", "公众号", "活动策划", "品牌传播", "可持续传播", "宣传"],
 }
 
 SKILL_ALIASES: dict[str, list[str]] = {
@@ -542,7 +607,7 @@ SEMANTIC_CAPABILITY_GROUPS: dict[str, list[str]] = {
     "数据分析": [
         "数据分析", "数据处理", "数据清洗", "数据建模", "统计分析", "指标体系", "指标拆解", "经营分析", "商业分析",
         "业务分析", "报表", "看板", "BI", "可视化", "SQL", "Python", "pandas", "Excel", "Tableau", "Power BI",
-        "漏斗分析", "归因分析", "用户数据", "A/B测试", "AB测试",
+        "漏斗分析", "归因分析", "用户数据", "留存数据", "复盘数据", "转化率", "活动转化率", "A/B测试", "AB测试",
     ],
     "产品能力": [
         "产品经理", "产品助理", "产品运营", "需求分析", "需求调研", "需求梳理", "PRD", "原型", "Axure",
@@ -551,7 +616,7 @@ SEMANTIC_CAPABILITY_GROUPS: dict[str, list[str]] = {
     ],
     "运营增长": [
         "运营", "用户运营", "内容运营", "活动运营", "社群运营", "增长运营", "策略运营", "增长", "转化",
-        "留存", "拉新", "促活", "复购", "渠道运营", "活动策划", "私域", "社群", "增长策略",
+        "留存", "留存数据", "拉新", "促活", "复购", "渠道运营", "活动策划", "转化路径", "转化率", "活动转化率", "私域", "社群", "增长策略",
     ],
     "项目/咨询": [
         "项目管理", "项目推进", "项目交付", "项目协调", "PMO", "进度管理", "里程碑", "跨部门", "交付",
@@ -669,6 +734,44 @@ CATEGORY_RULES: dict[str, list[str]] = {
     "泛运营岗": ["运营", "公众号", "活动", "行政", "宣传", "品牌", "会议"],
 }
 
+CATEGORY_TITLE_RULES: dict[str, list[str]] = {
+    "数据/商业分析岗": ["数据分析", "商业分析", "经营分析", "BI", "数据运营", "策略分析", "分析师"],
+    "产品岗": ["产品经理", "产品助理", "产品运营", "产品实习", "需求分析", "用户研究"],
+    "运营岗": ["运营", "用户运营", "内容运营", "活动运营", "增长运营", "社群运营"],
+    "市场/销售岗": ["市场", "营销", "品牌", "销售", "商务", "BD", "客户成功"],
+    "咨询/项目岗": ["咨询", "顾问", "项目经理", "项目助理", "项目管理", "PMO", "交付"],
+    "研发/工程岗": ["开发", "工程师", "前端", "后端", "全栈", "算法", "测试", "架构", "数据工程"],
+    "设计岗": ["设计", "UI", "UX", "交互", "视觉"],
+    "财务/金融岗": ["财务", "金融", "投研", "审计", "风控", "预算"],
+    "法务/合规岗": ["法务", "合规", "合同", "监管", "隐私"],
+    "人力/行政岗": ["人力", "HR", "招聘", "培训", "行政"],
+    "供应链/采购岗": ["供应链", "采购", "物流", "库存", "供应商"],
+    "LCA技术岗": ["LCA", "生命周期", "环境足迹"],
+    "产品碳足迹岗": ["产品碳足迹", "碳足迹", "CFP", "EPD"],
+    "ESG岗": ["ESG", "可持续", "可持续发展", "信息披露"],
+    "碳核算岗": ["碳核算", "碳盘查", "碳核查", "温室气体"],
+    "CBAM/出海合规岗": ["CBAM", "碳边境", "出海合规", "欧盟合规", "电池法"],
+}
+
+CATEGORY_SKILL_HINTS: dict[str, list[str]] = {
+    "数据/商业分析岗": ["数据分析", "业务分析", "SQL", "Python", "Excel", "Power BI"],
+    "产品岗": ["产品能力", "用户研究"],
+    "运营岗": ["运营"],
+    "市场/销售岗": ["市场营销", "销售/商务"],
+    "咨询/项目岗": ["项目管理", "沟通协作"],
+    "研发/工程岗": ["前端", "后端", "机器学习/AI"],
+    "设计岗": ["设计"],
+    "财务/金融岗": ["财务分析"],
+    "法务/合规岗": ["法务合规"],
+    "人力/行政岗": ["人力资源"],
+    "供应链/采购岗": ["供应链管理"],
+    "LCA技术岗": ["LCA", "SimaPro", "GaBi", "openLCA"],
+    "产品碳足迹岗": ["ISO14067", "EPD", "PEF"],
+    "ESG岗": ["GHG Protocol"],
+    "碳核算岗": ["GHG Protocol", "供应链碳管理"],
+    "CBAM/出海合规岗": ["CBAM", "英文能力"],
+}
+
 INTERVIEW_CATEGORIES: dict[str, list[str]] = {
     "技术问题": [
         "LCA",
@@ -709,6 +812,121 @@ CERT_KEYWORDS = ["CFA", "CPA", "FRM", "PMP", "法律职业资格", "教师资格
 PROJECT_KEYWORDS = ["数据分析", "产品", "运营", "研发", "咨询", "市场", "销售", "财务", "法务", "人力", "供应链", "制造业", "新能源", "金融", "医疗", "CBAM", "EPD"]
 
 
+SCORING_MAINTENANCE_LAYERS = {
+    "rules": "规则词表：岗位分类、能力别名、高低价值信号和风险信号，只做增量扩展。",
+    "formula": "权重公式：覆盖、证据、语义、硬门槛和分数上限，改动后必须跑黄金样本。",
+    "presentation": "展示口径：面向用户解释为推荐优先级、证据强弱和谨慎原因，不展示内部公式。",
+}
+
+
+def extend_unique(target: list[str], extra: list[str]) -> None:
+    target[:] = list(dict.fromkeys(target + extra))
+
+
+def extend_rule_map(target: dict[str, list[str]], extra: dict[str, list[str]]) -> None:
+    for key, values in extra.items():
+        target[key] = list(dict.fromkeys(target.get(key, []) + values))
+
+
+extend_unique(
+    HIGH_VALUE_KEYWORDS,
+    [
+        "真实业务", "业务场景", "核心模块", "独立交付", "客户交付", "验收", "上线", "闭环",
+        "可复用", "标准化", "自动化", "SOP", "看板", "数据看板", "模型搭建", "需求分析",
+        "用户访谈", "竞品分析", "代码开发", "接口开发", "报告交付", "清单数据", "碳足迹",
+        "合规申报", "英文汇报", "海外客户", "跨团队",
+    ],
+)
+extend_unique(
+    LOW_VALUE_KEYWORDS,
+    [
+        "重复性", "基础整理", "资料录入", "表格整理", "文档排版", "电话邀约", "电话销售",
+        "地推", "陌拜", "无薪", "长期无薪", "免费劳动力", "人手紧张", "高强度执行",
+        "简单执行", "支持性工作", "临时支援", "公众号搬运", "宣传物料",
+    ],
+)
+extend_rule_map(
+    LOW_VALUE_RISK_RULES,
+    {
+        "职责模糊": ["支持性工作", "临时支援", "根据需要安排", "完成上级安排", "其他临时任务", "协助各部门"],
+        "纯执行/杂务": ["重复性", "基础整理", "资料录入", "表格整理", "文档排版", "打印装订", "物料整理"],
+        "无转正/培养弱": ["无留用", "不保证转正", "长期无薪", "无薪实习", "免费劳动力", "无人带教"],
+        "销售指标伪装": ["电话销售", "电话邀约", "地推", "陌拜", "销售指标", "拉新指标", "业绩考核", "邀约客户"],
+        "泛宣传/披露": ["公众号搬运", "宣传物料", "品牌传播", "CSR传播", "ESG报告排版", "信息披露整理"],
+        "实习生当全职用": ["独立顶岗", "人手紧张", "高强度执行", "快速响应", "随叫随到"],
+    },
+)
+extend_rule_map(
+    SKILL_ALIASES,
+    {
+        "产品能力": ["产品规划", "产品方案", "功能设计", "需求梳理", "需求池", "MVP", "用户旅程", "Roadmap"],
+        "运营": ["策略运营", "渠道运营", "私域运营", "增长策略", "A/B测试", "复购", "促活"],
+        "用户研究": ["深访", "用户调研", "可用性", "NPS", "满意度调研", "访谈纪要"],
+        "项目管理": ["项目协调", "风险管理", "项目排期", "资源协调", "验收", "复盘会", "交付管理"],
+        "沟通协作": ["跨团队", "跨职能", "stakeholder", "客户汇报", "英文汇报", "会议纪要"],
+        "业务分析": ["指标拆解", "专题分析", "竞品分析", "用户分析", "收入分析", "成本分析", "经营看板"],
+        "市场营销": ["内容营销", "社媒运营", "品牌传播", "广告投放", "线索转化", "CRM"],
+        "销售/商务": ["大客户", "KA", "客户成功", "解决方案销售", "渠道拓展", "商机推进"],
+        "财务分析": ["财务模型", "经营预算", "管理会计", "费用分析", "利润分析", "内控"],
+        "法务合规": ["合同审查", "隐私合规", "数据安全", "贸易合规", "海外合规", "监管政策"],
+        "人力资源": ["HRBP", "人才盘点", "组织诊断", "招聘漏斗", "员工培训", "劳动关系"],
+        "供应链管理": ["供应商开发", "需求计划", "产销协同", "履约", "采购分析", "成本优化"],
+        "设计": ["设计系统", "组件库", "交互原型", "用户体验设计", "可用性评估"],
+        "前端": ["Next.js", "Webpack", "Vite", "小程序", "响应式", "组件库"],
+        "后端": ["Django", "Flask", "FastAPI", "MySQL", "PostgreSQL", "Redis", "RESTful", "部署"],
+        "机器学习/AI": ["大模型", "RAG", "Prompt", "特征工程", "模型评估", "向量数据库"],
+        "LCA": ["系统边界", "功能单位", "清单分析", "影响评价", "敏感性分析", "分配规则"],
+        "ISO14067": ["ISO 14067:2018", "碳足迹核算标准", "产品碳足迹核算"],
+        "GHG Protocol": ["Scope 1", "Scope 2", "Scope 3", "GHG核算", "温室气体盘查"],
+        "PEF": ["欧盟PEF", "PEFCR", "环境足迹"],
+        "CBAM": ["碳边境", "CBAM申报", "欧盟CBAM", "电池法", "EUDR", "海外合规"],
+        "EPD": ["PCR", "产品环境声明", "环境产品声明报告"],
+        "供应链碳管理": ["供应商碳数据", "活动数据", "供应链减排", "供应商盘查"],
+        "英文能力": ["英文报告", "英文邮件", "英语汇报", "跨文化沟通", "海外客户", "商务英语"],
+        "数据分析": ["指标拆解", "经营分析", "数据清洗", "数据建模", "可视化分析", "A/B测试"],
+        "SQL": ["MySQL", "PostgreSQL", "SQL查询", "数据仓库", "Hive"],
+        "Python": ["scikit-learn", "matplotlib", "seaborn", "自动化脚本", "数据清洗"],
+        "Excel": ["透视表", "数据透视表", "Power Pivot", "函数模型", "动态图表"],
+        "Power BI": ["Tableau", "Looker", "FineBI", "仪表盘", "Dashboard"],
+    },
+)
+extend_rule_map(
+    SEMANTIC_CAPABILITY_GROUPS,
+    {
+        "数据分析": ["数据仓库", "数据治理", "埋点", "留存分析", "收入分析", "经营看板", "Dashboard", "Hive", "Looker"],
+        "产品能力": ["产品规划", "用户旅程", "MVP", "Roadmap", "需求池", "功能迭代", "灰度发布"],
+        "运营增长": ["A/B测试", "裂变", "复购", "生命周期运营", "会员运营", "渠道转化", "GMV"],
+        "项目/咨询": ["交付管理", "风险管理", "项目排期", "客户汇报", "现状诊断", "蓝图设计"],
+        "市场商务": ["CRM", "线索转化", "KA", "客户成功", "解决方案销售", "品牌传播"],
+        "研发工程": ["FastAPI", "Django", "Flask", "MySQL", "PostgreSQL", "Redis", "部署", "测试"],
+        "财务法务人力": ["管理会计", "内控", "合同审查", "数据安全", "HRBP", "招聘漏斗"],
+        "供应链": ["供应商开发", "履约", "采购分析", "成本优化", "供应链计划", "产销协同"],
+        "LCA/碳足迹": ["影响评价", "敏感性分析", "分配规则", "数据质量", "ISO 14067:2018", "PEFCR"],
+        "碳核算/ESG": ["双碳", "减排路径", "SBTi", "TCFD", "ISSB", "CDP", "碳市场"],
+        "出海合规": ["CBAM申报", "电池护照", "贸易合规", "EUDR合规", "欧盟法规"],
+        "英文沟通": ["英文邮件", "英文会议", "商务英语", "英文材料", "海外沟通"],
+    },
+)
+extend_rule_map(
+    CATEGORY_RULES,
+    {
+        "数据/商业分析岗": ["数据仓库", "经营看板", "专题分析", "用户分析", "A/B测试", "Hive", "Dashboard"],
+        "产品岗": ["产品规划", "MVP", "Roadmap", "需求池", "用户旅程", "功能迭代"],
+        "运营岗": ["策略运营", "私域", "复购", "生命周期", "会员运营", "GMV", "渠道转化"],
+        "市场/销售岗": ["CRM", "KA", "客户成功", "解决方案销售", "内容营销", "线索转化"],
+        "咨询/项目岗": ["现状诊断", "蓝图设计", "客户汇报", "风险管理", "交付管理"],
+        "研发/工程岗": ["FastAPI", "Django", "Flask", "MySQL", "PostgreSQL", "Redis", "部署", "测试"],
+        "财务/金融岗": ["管理会计", "费用分析", "利润分析", "财务模型", "内控"],
+        "法务/合规岗": ["隐私合规", "数据安全", "贸易合规", "合同审查", "监管政策"],
+        "人力/行政岗": ["HRBP", "招聘漏斗", "人才盘点", "组织诊断", "劳动关系"],
+        "供应链/采购岗": ["供应商开发", "履约", "采购分析", "成本优化", "产销协同"],
+        "LCA技术岗": ["功能单位", "影响评价", "敏感性分析", "分配规则", "数据质量"],
+        "产品碳足迹岗": ["碳足迹核算", "清单数据", "ISO 14067:2018", "PEFCR"],
+        "ESG岗": ["SBTi", "TCFD", "ISSB", "CDP", "双碳", "减排路径"],
+        "碳核算岗": ["Scope 1", "Scope 2", "Scope 3", "活动数据", "碳市场"],
+        "CBAM/出海合规岗": ["CBAM申报", "电池护照", "EUDR合规", "贸易合规"],
+    },
+)
 FULLWIDTH_TRANSLATION = str.maketrans(
     {
         **{chr(0xFF10 + index): str(index) for index in range(10)},
@@ -1003,6 +1221,7 @@ def tokenize_for_similarity(text: str) -> str:
     text = normalize_text(text)
     if not text:
         return ""
+    jieba = get_jieba_module()
     if jieba:
         tokens = jieba.lcut(text)
     else:
@@ -1026,6 +1245,7 @@ def semantic_similarity(text_a: str, text_b: str) -> float:
     token_a = tokenize_for_similarity(enrich_text_for_semantic_similarity(text_a))
     token_b = tokenize_for_similarity(enrich_text_for_semantic_similarity(text_b))
     base_score = 0.0
+    TfidfVectorizer, cosine_similarity = get_sklearn_similarity_tools()
     if TfidfVectorizer and cosine_similarity and token_a and token_b:
         try:
             matrix = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b", ngram_range=(1, 2)).fit_transform([token_a, token_b])
@@ -1034,6 +1254,7 @@ def semantic_similarity(text_a: str, text_b: str) -> float:
             base_score = max(base_score, float(np.clip(cosine_similarity(char_matrix[0], char_matrix[1])[0][0], 0, 1)) * 0.86)
         except Exception:
             pass
+    fuzz = get_rapidfuzz_fuzz()
     if fuzz:
         base_score = max(base_score, float(np.clip(fuzz.token_set_ratio(text_a, text_b) / 100, 0, 1)) * 0.72)
 
@@ -1066,6 +1287,7 @@ def semantic_similarity_fast(text_a: str, text_b: str) -> float:
         overlap = len(tokens_a & tokens_b) / max(len(tokens_a | tokens_b), 1)
         coverage = len(tokens_a & tokens_b) / max(min(len(tokens_a), len(tokens_b)), 1)
         base_score = max(base_score, overlap * 0.72 + coverage * 0.28)
+    fuzz = get_rapidfuzz_fuzz()
     if fuzz:
         base_score = max(base_score, float(np.clip(fuzz.token_set_ratio(text_a, text_b) / 100, 0, 1)) * 0.62)
     capability_score = capability_overlap_similarity(text_a, text_b)
@@ -1096,6 +1318,7 @@ def duplicate_text_similarity(text_a: str | None, text_b: str | None) -> float:
         return 0.0
 
     score = SequenceMatcher(None, a, b).ratio()
+    fuzz = get_rapidfuzz_fuzz()
     if fuzz:
         try:
             score = max(score, float(fuzz.token_set_ratio(a, b) / 100))
@@ -1132,6 +1355,7 @@ def duplicate_block_candidates(text: str) -> list[str]:
     return [line for line in clean.splitlines() if normalize_text(line)]
 
 
+@lru_cache(maxsize=2048)
 def remove_duplicate_information(text: str | None, threshold: float = DUPLICATE_SIMILARITY_THRESHOLD) -> tuple[str, int]:
     blocks = duplicate_block_candidates(str(text or ""))
     if not blocks:
@@ -1208,26 +1432,23 @@ def alias_hits(text: str, aliases: list[str]) -> list[str]:
     return [alias for alias in aliases if text_contains(text, alias)]
 
 
-JD_RELATED_SKILL_ALLOWLIST = {"LCA", "ISO14067", "PEF", "EPD", "CBAM", "SimaPro", "GaBi", "openLCA", "供应链碳管理"}
-
-
 def keyword_table(text: str) -> pd.DataFrame:
     rows = []
     for skill, aliases in SKILL_ALIASES.items():
         direct_hits = alias_hits(text, aliases)
         related = related_alias_hits(text, skill, aliases)
-        if skill not in JD_RELATED_SKILL_ALLOWLIST:
+        if not direct_hits and len(related) < 2:
             related = []
-        elif len(related) < 2 and not direct_hits:
+        if skill == "沟通协作" and not direct_hits:
             related = []
         hits = len(direct_hits)
         if hits or related:
             hit_words = list(direct_hits)
             hit_words.extend(item for item in related if item not in hit_words)
-            rows.append({"技能": skill, "命中次数": hits + len(related), "命中词": " / ".join(hit_words[:10])})
+            rows.append({"技能": skill, "出现频次": hits + len(related), "相关关键词": " / ".join(hit_words[:10])})
     if not rows:
-        return pd.DataFrame(columns=["技能", "命中次数", "命中词"])
-    return pd.DataFrame(rows).sort_values(["命中次数", "技能"], ascending=[False, True]).reset_index(drop=True)
+        return pd.DataFrame(columns=["技能", "出现频次", "相关关键词"])
+    return pd.DataFrame(rows).sort_values(["出现频次", "技能"], ascending=[False, True]).reset_index(drop=True)
 
 
 def score_keywords(text: str, keywords: list[str]) -> int:
@@ -1814,6 +2035,7 @@ def render_china_province_map(df: pd.DataFrame, title: str = "省份岗位分布
     if map_df.empty:
         st.caption("暂无可在地图上定位的省份数据。")
         return
+    go = get_plotly_graph_objects()
     fig = go.Figure()
     fig.add_trace(
         go.Scattergeo(
@@ -1887,7 +2109,7 @@ def extract_job_title(text: str) -> str:
         [
             r"(?:岗位名称|职位名称|招聘职位|岗位|职位|Job Title|Position)[:：]\s*([^，。；;\n]{2,80}?)(?=\s+(?:公司名称|企业名称|公司|企业|地点|城市|薪资|学历|经验|链接|URL|JD|职责|要求)[:：]|[，。；;\n]|$)",
             r"招聘\s*([^，。；;\n]{2,40}(?:工程师|顾问|专员|分析师|经理|实习生))",
-            r"([^，。；;\n]{2,40}(?:产品|运营|数据|研发|算法|前端|后端|市场|销售|财务|法务|人力|供应链|咨询|项目|合规|LCA|ESG|CBAM)[^，。；;\n]{0,20}(?:工程师|顾问|专员|分析师|经理|实习生|助理|管培生)?)",
+            r"([^，。；;\n]{2,40}(?:产品|运营|数据|研发|算法|前端|后端|市场|销售|财务|法务|人力|供应链|咨询|项目|合规)[^，。；;\n]{0,20}(?:工程师|顾问|专员|分析师|经理|实习生|助理|管培生)?)",
         ],
     )
     return explicit
@@ -1917,17 +2139,70 @@ def extract_experience(text: str) -> str:
     )
 
 
-def classify_job(text: str) -> tuple[str, dict[str, int]]:
+def classify_job(text: str, title: str = "", skills: list[str] | None = None) -> tuple[str, dict[str, int], dict[str, str]]:
+    clean = normalize_text(text)
+    title_text = normalize_text(title)
+    skill_items = skills or []
     scores = {}
     for category, words in CATEGORY_RULES.items():
         aliases = list(words)
         for group in CATEGORY_SEMANTIC_GROUPS.get(category, []):
             aliases.extend(SEMANTIC_CAPABILITY_GROUPS.get(group, []))
-        scores[category] = score_keywords(text, split_preference_items(aliases))
+        scores[category] = score_keywords(clean, split_preference_items(aliases))
+        title_hits = score_keywords(title_text, CATEGORY_TITLE_RULES.get(category, []))
+        if title_hits:
+            scores[category] += title_hits * 4
+        skill_hits = sum(1 for skill in CATEGORY_SKILL_HINTS.get(category, []) if skill in skill_items)
+        if skill_hits:
+            scores[category] += skill_hits * 2
     if not any(scores.values()):
-        return "待人工判断", scores
+        return "待人工判断", scores, {"confidence": "低", "source": "未识别", "reason": "没有识别到足够的岗位方向关键词"}
     category = max(scores, key=scores.get)
-    return category, scores
+    best_score = scores.get(category, 0)
+    ordered_scores = sorted(scores.values(), reverse=True)
+    second_score = ordered_scores[1] if len(ordered_scores) > 1 else 0
+    has_detail_text = any(
+        text_contains(clean, marker)
+        for marker in ["岗位职责", "工作职责", "职位描述", "工作内容", "任职要求", "岗位要求", "你将负责", "负责"]
+    )
+    title_hit = score_keywords(title_text, CATEGORY_TITLE_RULES.get(category, []))
+    skill_hit = sum(1 for skill in CATEGORY_SKILL_HINTS.get(category, []) if skill in skill_items)
+    if has_detail_text and best_score >= 4:
+        source = "根据JD正文判断"
+    elif title_hit or skill_hit:
+        source = "根据岗位名称和关键词推断"
+    else:
+        source = "根据文本关键词推断"
+    if best_score >= 8 and best_score >= second_score + 3:
+        confidence = "高"
+    elif best_score >= 4:
+        confidence = "中"
+    else:
+        confidence = "低"
+    reason_parts = []
+    if title_hit:
+        reason_parts.append("岗位名称命中")
+    if skill_hit:
+        reason_parts.append("技能关键词命中")
+    if has_detail_text:
+        reason_parts.append("正文职责命中")
+    return category, scores, {
+        "confidence": confidence,
+        "source": source,
+        "reason": "、".join(reason_parts) or source,
+    }
+
+
+def category_display_label(jd_analysis: dict[str, Any] | None) -> str:
+    if not jd_analysis:
+        return "待判断"
+    category = str(jd_analysis.get("category", "") or "待判断")
+    meta = jd_analysis.get("category_meta", {}) or {}
+    if category in {"待人工判断", "待判断"}:
+        return "待判断"
+    if meta.get("source") != "根据JD正文判断" or meta.get("confidence") != "高":
+        return f"{category}（参考）"
+    return category
 
 
 def low_value_risk_labels(text: str) -> tuple[list[str], list[str]]:
@@ -1945,26 +2220,11 @@ def value_verdict(text: str, category: str) -> dict[str, Any]:
     high_score = score_keywords(text, HIGH_VALUE_KEYWORDS)
     low_score = score_keywords(text, LOW_VALUE_KEYWORDS)
     risk_tags, risk_details = low_value_risk_labels(text)
-    high_value_categories = [
-        "数据/商业分析岗",
-        "产品岗",
-        "咨询/项目岗",
-        "研发/工程岗",
-        "财务/金融岗",
-        "法务/合规岗",
-        "供应链/采购岗",
-        "LCA技术岗",
-        "产品碳足迹岗",
-        "CBAM/出海合规岗",
-        "碳核算岗",
-    ]
-    high_value = high_score >= 3 or (high_score >= 2 and category in high_value_categories)
-    generic_esg = (low_score >= 2 or len(risk_tags) >= 2) and high_score <= 2
-    if category == "泛运营岗":
-        generic_esg = True
-    if high_value and not generic_esg:
-        label = "岗位职责相对清晰，能沉淀可量化成果，建议优先深看"
-    elif generic_esg:
+    high_value = high_score >= 3
+    low_value_risk = (low_score >= 2 or len(risk_tags) >= 2) and high_score <= 2
+    if high_value and not low_value_risk:
+        label = "岗位职责相对清晰，能沉淀可量化成果，建议优先关注"
+    elif low_value_risk:
         label = "疑似低价值/杂务型岗位，建议先核实真实职责和产出"
     else:
         label = "中等价值岗位，需要结合薪资与项目内容判断"
@@ -1972,26 +2232,28 @@ def value_verdict(text: str, category: str) -> dict[str, Any]:
         "high_score": high_score,
         "low_score": low_score,
         "is_high_value": high_value,
-        "is_generic_esg": generic_esg,
-        "is_low_value_risk": generic_esg,
+        "is_generic_esg": low_value_risk,
+        "is_low_value_risk": low_value_risk,
         "risk_tags": risk_tags,
         "risk_details": risk_details,
         "label": label,
     }
 
 
-def analyze_jd(text: str) -> dict[str, Any]:
-    clean = text_without_urls(normalize_text(text))
-    category, category_scores = classify_job(clean)
-    value = value_verdict(clean, category)
+@lru_cache(maxsize=4096)
+def _analyze_jd_cached(clean: str) -> dict[str, Any]:
+    title = extract_job_title(clean)
     skills = keyword_table(clean)
+    skill_names = [str(item) for item in skills["技能"].dropna().tolist()] if not skills.empty and "技能" in skills.columns else []
+    category, category_scores, category_meta = classify_job(clean, title=title, skills=skill_names)
+    value = value_verdict(clean, category)
     location = extract_location(clean)
     region_info = classify_region(location, clean)
     return {
         "raw_text": clean,
         "basic": {
             "公司名": extract_company(clean),
-            "岗位名": extract_job_title(clean),
+            "岗位名": title,
             "地点": location,
             **region_info,
             "薪资": extract_salary(clean),
@@ -2001,7 +2263,22 @@ def analyze_jd(text: str) -> dict[str, Any]:
         "skills": skills,
         "category": category,
         "category_scores": category_scores,
+        "category_meta": category_meta,
         "value": value,
+    }
+
+
+def analyze_jd(text: str) -> dict[str, Any]:
+    clean = text_without_urls(normalize_text(text))
+    cached = _analyze_jd_cached(clean)
+    return {
+        "raw_text": cached["raw_text"],
+        "basic": dict(cached["basic"]),
+        "skills": cached["skills"].copy(),
+        "category": cached["category"],
+        "category_scores": dict(cached["category_scores"]),
+        "category_meta": dict(cached.get("category_meta", {})),
+        "value": dict(cached["value"]),
     }
 
 
@@ -2101,14 +2378,16 @@ def resume_strengths(resume_text: str, profile_text: str | None = None) -> list[
 
 
 RESUME_ACTION_EVIDENCE_TERMS = [
-    "负责", "主导", "搭建", "开发", "分析", "设计", "推进", "优化", "落地", "交付", "复盘", "协同",
+    "负责", "主导", "参与", "搭建", "开发", "分析", "研究", "整理", "输出", "设计", "推进", "优化", "落地", "交付", "复盘", "协同",
 ]
 RESUME_RESULT_EVIDENCE_TERMS = [
-    "提升", "降低", "增长", "完成", "产出", "上线", "节省", "缩短", "沉淀", "转化", "准确率", "效率",
+    "提升", "降低", "增长", "完成", "产出", "输出", "上线", "节省", "缩短", "沉淀", "转化", "准确率", "效率", "报告", "摘要", "清单", "风险清单",
 ]
 ENGLISH_REQUIREMENT_TERMS = ["英语", "英文", "English", "口语", "CET-6", "六级", "英文汇报", "英语沟通"]
 ENGLISH_EVIDENCE_TERMS = ["英语", "英文", "English", "六级", "CET-6", "雅思", "托福", "英文汇报", "presentation"]
-HARD_TOOL_SKILLS = {"Python", "SQL", "SimaPro", "GaBi", "openLCA", "Excel"}
+HARD_TOOL_SKILLS: set[str] = set()
+RESUME_PROJECT_EVIDENCE_SECTIONS = {"实习/工作经历", "项目经历", "科研/论文", "获奖/校园"}
+RESUME_SKILL_LIST_SECTIONS = {"技能", "证书/语言"}
 
 
 def resume_evidence_search_lines(resume_text: str) -> list[str]:
@@ -2122,12 +2401,41 @@ def resume_evidence_search_lines(resume_text: str) -> list[str]:
     return lines
 
 
+def sectioned_resume_evidence_lines(resume_text: str) -> list[tuple[str, str]]:
+    sections = parse_resume_sections(resume_text)
+    ordered_sections = ["实习/工作经历", "项目经历", "科研/论文", "获奖/校园", "技能", "证书/语言"]
+    lines: list[tuple[str, str]] = []
+    for section in ordered_sections:
+        lines.extend((section, line) for line in sections.get(section, []))
+    if not lines:
+        lines = [("全文", line) for line in normalize_resume_lines(resume_text)]
+    return lines
+
+
 def skill_evidence_lines(resume_text: str, skill: str, limit: int = 3) -> list[str]:
     aliases = expanded_aliases(skill, SKILL_ALIASES.get(skill, [skill]))
     hits: list[str] = []
     for line in resume_evidence_search_lines(resume_text):
         if any(text_contains(line, alias) for alias in aliases):
             hits.append(line)
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def skill_section_evidence_lines(
+    resume_text: str,
+    skill: str,
+    aliases: list[str],
+    *,
+    direct_only: bool = False,
+    limit: int = 4,
+) -> list[tuple[str, str]]:
+    search_aliases = split_preference_items([skill] + list(aliases)) if direct_only else expanded_aliases(skill, aliases)
+    hits: list[tuple[str, str]] = []
+    for section, line in sectioned_resume_evidence_lines(resume_text):
+        if any(text_contains(line, alias) for alias in search_aliases):
+            hits.append((section, line))
         if len(hits) >= limit:
             break
     return hits
@@ -2215,35 +2523,18 @@ def score_resume_hard_requirements(
         return 20, ["简历正文过少，无法判断硬门槛适配度"]
 
     notes: list[str] = []
-    score = 72
-    engineering_required = jd_has_engineering_requirement(jd_text, jd_analysis, required_skills, jd_skill_list(jd_analysis))
-    if engineering_required:
-        if resume_has_engineering_evidence(clean):
-            score += 14
-            notes.append("工程硬要求已看到代码或系统项目证据")
-        else:
-            score -= 34
-            notes.append("工程岗缺少代码、系统实现或部署类证据")
+    if not required_skills:
+        return 72, notes
 
-    english_required = any(text_contains(jd_text, term) for term in ENGLISH_REQUIREMENT_TERMS)
-    if english_required:
-        if any(text_contains(clean, term) for term in ENGLISH_EVIDENCE_TERMS):
-            score += 8
-            notes.append("英文要求已有简历证据")
-        else:
-            score -= 18
-            notes.append("JD 提到英文要求，但简历里缺少明确英文证据")
-
-    hard_tool_missing = [
-        skill for skill in required_skills
-        if skill in HARD_TOOL_SKILLS and skill not in matched_skills and skill not in related_skills
-    ]
-    if hard_tool_missing:
-        score -= min(18, len(hard_tool_missing) * 6)
-        notes.append("工具硬要求待补：" + " / ".join(hard_tool_missing[:3]))
-    elif any(skill in HARD_TOOL_SKILLS for skill in required_skills):
-        score += 6
-        notes.append("关键工具要求已覆盖")
+    required = set(required_skills)
+    covered = required & set(matched_skills)
+    related = (required - covered) & set(related_skills)
+    score = 40 + (len(covered) / max(len(required), 1)) * 48 + (len(related) / max(len(required), 1)) * 24
+    missing_count = len(required - covered - related)
+    if missing_count:
+        notes.append(f"JD 明确要求中仍有 {missing_count} 项缺少直接或相关证据")
+    else:
+        notes.append("JD 明确要求已看到直接或相关证据")
 
     return int(np.clip(round(score), 0, 100)), notes[:4]
 
@@ -2270,19 +2561,30 @@ def classify_skill_gap_type(
     related_hits: list[str],
 ) -> str:
     evidence_lines = skill_evidence_lines(resume_text, skill, limit=3)
-    strong_line_count = sum(1 for line in evidence_lines if line_has_strong_evidence(line))
-    direct_evidence_lines = [
-        line for line in evidence_lines
-        if any(text_contains(line, alias) for alias in aliases)
+    direct_section_lines = skill_section_evidence_lines(resume_text, skill, aliases, direct_only=True, limit=4)
+    related_section_lines = skill_section_evidence_lines(resume_text, skill, aliases, direct_only=False, limit=4)
+    project_direct_lines = [
+        line for section, line in direct_section_lines
+        if section in RESUME_PROJECT_EVIDENCE_SECTIONS or section == "全文"
     ]
-    direct_strong_line_count = sum(1 for line in direct_evidence_lines if line_has_strong_evidence(line))
-    if direct_hits and direct_strong_line_count >= 1:
+    skill_list_direct_lines = [
+        line for section, line in direct_section_lines
+        if section in RESUME_SKILL_LIST_SECTIONS
+    ]
+    project_related_lines = [
+        line for section, line in related_section_lines
+        if section in RESUME_PROJECT_EVIDENCE_SECTIONS or section == "全文"
+    ]
+    project_direct_strong_count = sum(1 for line in project_direct_lines if line_has_strong_evidence(line))
+    if direct_hits and project_direct_strong_count >= 1:
         return "covered"
-    if direct_hits and evidence_lines:
+    if direct_hits and project_direct_lines:
         return "evidence_gap"
+    if direct_hits and skill_list_direct_lines:
+        return "skill_list_gap"
     if direct_hits:
         return "evidence_gap"
-    if related_hits and strong_line_count >= 1:
+    if related_hits and any(line_has_strong_evidence(line) for line in project_related_lines):
         return "expression_gap"
     if related_hits or evidence_lines:
         return "expression_gap"
@@ -2294,19 +2596,19 @@ def sentence_split(text: str) -> list[str]:
     return [part.strip(" -:：\t") for part in parts if len(part.strip()) >= 4]
 
 
-def match_resume_to_jd(
+def legacy_skill_coverage_match_impl(
     jd_analysis: dict[str, Any],
     resume_text: str,
     profile_text: str | None = None,
     preferences: dict[str, Any] | None = None,
     fast: bool = False,
 ) -> dict[str, Any]:
+    """LEGACY ONLY: compatibility scorer for old saved records and old display fields."""
     profile_text = effective_profile_text(profile_text)
     profile_text, profile_duplicate_count = remove_duplicate_information(profile_text)
     resume_only, resume_duplicate_count = remove_duplicate_information(resume_text)
-    candidate_text = normalize_text(profile_text + "\n" + resume_only)
+    candidate_text = normalize_text(resume_only)
     jd_text, jd_duplicate_count = remove_duplicate_information(jd_analysis.get("raw_text", ""))
-    preferences = load_target_preferences() if preferences is None else preferences
 
     required_skills = jd_skill_list(jd_analysis)
     if not required_skills:
@@ -2322,8 +2624,10 @@ def match_resume_to_jd(
     missing: list[str] = []
     hard_skill_gaps: list[str] = []
     evidence_skill_gaps: list[str] = []
+    skill_list_only_gaps: list[str] = []
     expression_skill_gaps: list[str] = []
     evidence: list[str] = []
+    jd_weight_reasons: list[str] = []
     total_weight = 0.0
     direct_weight = 0.0
     related_weight = 0.0
@@ -2332,13 +2636,9 @@ def match_resume_to_jd(
     for skill in required_skills:
         aliases = SKILL_ALIASES.get(skill, [skill])
         weight = 10
-        if skill in ["产品能力", "业务分析", "机器学习/AI", "后端", "前端", "LCA", "ISO14067", "EPD", "CBAM", "SimaPro", "GaBi", "openLCA"]:
-            weight = 14
-        elif skill in ["英文能力", "Python", "SQL", "数据分析", "项目管理", "运营", "供应链管理", "供应链碳管理"]:
-            weight = 9
-        weight, _weight_reason = contextual_profile_group_weight(
-            skill, aliases, weight, profile_text, resume_only, preferences
-        )
+        weight, jd_weight_reason = jd_capability_context_weight(jd_analysis, skill, aliases, weight)
+        if jd_weight_reason:
+            jd_weight_reasons.append(jd_weight_reason)
         skill_weights[skill] = weight
         total_weight += weight
         hits = alias_hits(candidate_text, aliases)
@@ -2348,26 +2648,36 @@ def match_resume_to_jd(
             matched.append(skill)
             direct_matched.append(skill)
             direct_weight += weight
-            evidence.append(f"{skill}：{', '.join(hits[:3])}")
+            snippet_lines = skill_evidence_lines(resume_only, skill, limit=1)
+            snippet = f"；证据句：{snippet_lines[0][:80]}" if snippet_lines else ""
+            evidence.append(f"{skill}：直接命中 {', '.join(hits[:3])}{snippet}")
         elif gap_type == "expression_gap":
             expression_skill_gaps.append(skill)
             if related_hits:
                 matched.append(skill)
                 related_matched.append(skill)
                 related_weight += weight
-                evidence.append(f"{skill}相关：{', '.join(related_hits[:3])}")
+                evidence.append(f"{skill}：仅相关命中 {', '.join(related_hits[:3])}，需要改成 JD 语言")
             else:
                 missing.append(skill)
         elif gap_type == "evidence_gap":
             evidence_skill_gaps.append(skill)
             matched.append(skill)
             direct_matched.append(skill)
-            direct_weight += weight * 0.82
+            direct_weight += weight * 0.72
             snippet_lines = skill_evidence_lines(resume_only, skill, limit=2)
             if snippet_lines:
                 evidence.append(f"{skill}证据偏弱：{' / '.join(snippet_lines[:2])[:90]}")
             else:
                 evidence.append(f"{skill}：简历里提到过，但缺少项目结果或量化细节")
+        elif gap_type == "skill_list_gap":
+            skill_list_only_gaps.append(skill)
+            evidence_skill_gaps.append(skill)
+            matched.append(skill)
+            direct_weight += weight * 0.45
+            snippet_lines = skill_evidence_lines(resume_only, skill, limit=1)
+            snippet = f"：{snippet_lines[0][:80]}" if snippet_lines else ""
+            evidence.append(f"{skill}：主要停留在技能栏罗列{snippet}，需要补项目动作和结果")
         else:
             missing.append(skill)
             hard_skill_gaps.append(skill)
@@ -2392,10 +2702,13 @@ def match_resume_to_jd(
         list(dict.fromkeys(hard_skill_gaps)),
     )
     avg_weight = total_weight / max(len(required_skills), 1) if required_skills else 0
+    core_hard_gaps = [
+        skill for skill in hard_skill_gaps
+        if skill_weights.get(skill, 0) >= avg_weight * 1.12
+    ]
     core_missing_weight = sum(
         skill_weights.get(skill, 0)
-        for skill in hard_skill_gaps
-        if skill_weights.get(skill, 0) >= avg_weight * 1.12
+        for skill in core_hard_gaps
     )
     core_gap_penalty = core_missing_weight / max(total_weight, 1) * 22 if total_weight else 6
     evidence_gap_penalty = sum(skill_weights.get(skill, 0) for skill in evidence_skill_gaps) / max(total_weight, 1) * 8 if total_weight else 0
@@ -2406,14 +2719,32 @@ def match_resume_to_jd(
     score -= evidence_gap_penalty
     score -= expression_gap_penalty
     score += anchor_delta
-    if jd_analysis.get("value", {}).get("is_generic_esg"):
-        score -= 8
-    if any(skill in hard_skill_gaps for skill in ["SimaPro", "GaBi", "openLCA"]):
-        score -= 6
-    if any(skill in matched for skill in ["LCA", "ISO14067", "PEF", "Python", "数据分析"]):
+    hard_tool_gap_weight = sum(skill_weights.get(skill, 0) for skill in hard_skill_gaps if skill in HARD_TOOL_SKILLS)
+    if hard_tool_gap_weight:
+        score -= min(6, hard_tool_gap_weight / max(total_weight, 1) * 14)
+    direct_match_ratio = sum(skill_weights.get(skill, 0) for skill in direct_matched) / max(total_weight, 1)
+    if direct_match_ratio >= 0.45:
         score += 3
-    if required_skills and not direct_matched:
-        score -= 6
+    if required_skills and not direct_matched and not skill_list_only_gaps:
+        score = min(score - 6, 50)
+    elif required_skills and direct_match_ratio < 0.25:
+        score = min(score, 68)
+    score_ceiling_reasons: list[str] = []
+    if len(hard_skill_gaps) >= 3:
+        score = min(score, 58)
+        score_ceiling_reasons.append(f"有 {len(hard_skill_gaps)} 项关键要求还没有明确经历支撑")
+    if core_hard_gaps:
+        score = min(score, 62)
+        score_ceiling_reasons.append("最需要补强的核心要求：" + " / ".join(core_hard_gaps[:4]))
+    if evidence_score < 40:
+        score = min(score, 64)
+        score_ceiling_reasons.append("经历里项目动作、结果或交付物写得还不够具体")
+    elif evidence_score < 55:
+        score = min(score, 72)
+        score_ceiling_reasons.append("已有相关经历，但证据还需要写得更扎实")
+    if skill_list_only_gaps and not direct_matched:
+        score = min(score, 68)
+        score_ceiling_reasons.append("目前主要是技能栏提到，经历正文里还缺对应案例")
     score = int(np.clip(round(score), 0, 100))
 
     gap_examples = []
@@ -2429,16 +2760,8 @@ def match_resume_to_jd(
         gap_examples.append("工程实现、系统落地或代码项目证据不足")
     if any(skill in hard_skill_gaps for skill in ["财务分析", "法务合规", "人力资源", "供应链管理"]):
         gap_examples.append("专业方法、案例或行业语境积累不足")
-    if any(skill in hard_skill_gaps for skill in ["SimaPro", "GaBi"]):
-        gap_examples.append("SimaPro / GaBi 工具实操经验不足")
     if "英文能力" in hard_skill_gaps:
         gap_examples.append("英文沟通或英文汇报能力缺少明确证据")
-    if "EPD" in hard_skill_gaps:
-        gap_examples.append("EPD / PCR 项目经验不足")
-    if "CBAM" in hard_skill_gaps:
-        gap_examples.append("CBAM 行业案例分析不足")
-    if "供应链碳管理" in hard_skill_gaps:
-        gap_examples.append("供应链碳数据管理案例不足")
     if evidence_skill_gaps:
         gap_examples.append("部分关键词虽然提到过，但还缺项目动作、结果或量化细节")
     if expression_skill_gaps:
@@ -2470,18 +2793,41 @@ def match_resume_to_jd(
         gap_examples.append("需要把已有经历改写得更贴近岗位关键词")
     gap_examples = list(dict.fromkeys(gap_examples))
 
+    if evidence_score >= 70:
+        evidence_label = "经历证据比较扎实，能看到项目动作、结果或交付物"
+    elif evidence_score >= 55:
+        evidence_label = "经历有相关性，但量化结果和交付物还可以再补"
+    else:
+        evidence_label = "经历证据偏弱，建议把做了什么、产出什么写清楚"
+    if hard_requirement_score >= 75:
+        hard_label = "硬性门槛整体比较稳"
+    elif hard_requirement_score >= 55:
+        hard_label = "硬性门槛有一定基础，但还需要补强几个关键点"
+    else:
+        hard_label = "硬性门槛风险较高，投递前建议先补证据"
+    hard_gap_summary = (
+        f"还没看到明确证据的关键要求有 {len(hard_skill_gaps)} 类：" + " / ".join(hard_skill_gaps[:4])
+        if hard_skill_gaps
+        else "暂时没看到明显硬缺口。"
+    )
     score_breakdown = [
-        f"核心技能覆盖 {int(round(coverage_score))}/100，权重 44%",
-        f"经历证据质量 {evidence_score}/100，权重 24%",
-        f"岗位语义贴合 {int(round(semantic_score))}/100，权重 14%",
-        f"硬门槛适配 {hard_requirement_score}/100，权重 18%",
+        f"岗位主要看 {len(required_skills)} 类能力；简历已明确覆盖 {len(direct_matched)} 类，另有 {len(related_matched)} 类比较相关。",
+        hard_gap_summary,
+        evidence_label,
+        hard_label,
     ]
+    if jd_weight_reasons:
+        score_breakdown.append("这条岗位更看重：" + "；".join(list(dict.fromkeys(jd_weight_reasons))[:4]))
     if core_gap_penalty > 0:
-        score_breakdown.append(f"核心缺口扣分 {int(round(core_gap_penalty))}")
+        score_breakdown.append("核心要求还缺证据，会明显影响推荐程度")
     if evidence_gap_penalty > 0:
-        score_breakdown.append(f"证据弱项扣分 {int(round(evidence_gap_penalty))}")
+        score_breakdown.append("有些能力只是提到过，还需要放进具体项目或成果里")
+    if skill_list_only_gaps:
+        score_breakdown.append("这些能力目前更像技能清单，建议补案例：" + " / ".join(skill_list_only_gaps[:4]))
+    if score_ceiling_reasons:
+        score_breakdown.append("谨慎原因：" + "；".join(score_ceiling_reasons[:4]))
     if expression_gap_penalty > 0:
-        score_breakdown.append(f"表达偏差扣分 {int(round(expression_gap_penalty))}")
+        score_breakdown.append("部分经历方向相关，但表达还不够贴近这条 JD")
 
     return {
         "score": score,
@@ -2491,6 +2837,7 @@ def match_resume_to_jd(
         "missing_skills": missing,
         "hard_skill_gaps": hard_skill_gaps,
         "evidence_skill_gaps": evidence_skill_gaps,
+        "skill_list_only_gaps": skill_list_only_gaps,
         "expression_skill_gaps": expression_skill_gaps,
         "strengths": resume_strengths(resume_only, profile_text),
         "gap_examples": gap_examples,
@@ -2499,11 +2846,970 @@ def match_resume_to_jd(
         "evidence_score": evidence_score,
         "hard_requirement_score": hard_requirement_score,
         "core_gap_penalty": int(round(core_gap_penalty)),
+        "score_ceiling_reasons": score_ceiling_reasons,
         "score_breakdown": score_breakdown,
         "evidence": evidence[:8] + evidence_lines[:4],
         "hard_requirement_notes": hard_requirement_notes,
         "anchor_groups": anchor_groups,
         "duplicate_removed": resume_duplicate_count + profile_duplicate_count + jd_duplicate_count,
+    }
+
+
+SUPPORTED_MATCH_JOB_FAMILIES = {
+    "data_analysis",
+    "product_management",
+    "operations",
+    "consulting",
+    "finance",
+    "marketing",
+    "software_engineering",
+    "sustainability_esg",
+    "design",
+    "sales",
+    "general",
+}
+
+JOB_FAMILY_CATEGORY_MAP = {
+    "数据/商业分析岗": "data_analysis",
+    "产品岗": "product_management",
+    "运营岗": "operations",
+    "市场/销售岗": "marketing",
+    "咨询/项目岗": "consulting",
+    "咨询岗": "consulting",
+    "研发/工程岗": "software_engineering",
+    "设计岗": "design",
+    "财务/金融岗": "finance",
+    "法务/合规岗": "consulting",
+    "人力/行政岗": "operations",
+    "供应链/采购岗": "operations",
+    "LCA技术岗": "sustainability_esg",
+    "产品碳足迹岗": "sustainability_esg",
+    "ESG岗": "sustainability_esg",
+    "碳核算岗": "sustainability_esg",
+    "CBAM/出海合规岗": "sustainability_esg",
+    "泛运营岗": "operations",
+}
+
+JOB_FAMILY_RULES = {
+    "data_analysis": ["数据分析", "商业分析", "经营分析", "BI", "SQL", "Python", "指标", "看板", "Tableau", "Power BI"],
+    "product_management": ["产品经理", "产品助理", "需求分析", "PRD", "原型", "用户研究", "竞品分析", "路线图"],
+    "operations": ["运营", "用户运营", "内容运营", "活动运营", "社群运营", "增长", "拉新", "留存", "转化"],
+    "consulting": ["咨询", "顾问", "项目交付", "解决方案", "客户访谈", "尽调", "研究报告", "PMO"],
+    "finance": ["财务", "金融", "投研", "审计", "预算", "成本", "估值", "风控", "报表"],
+    "marketing": ["市场", "营销", "品牌", "投放", "渠道", "Campaign", "SEO", "SEM", "传播"],
+    "software_engineering": ["开发", "工程师", "前端", "后端", "Java", "Go", "React", "API", "算法", "测试"],
+    "sustainability_esg": ["ESG", "碳", "LCA", "生命周期", "碳足迹", "碳核算", "CBAM", "可持续", "GHG", "EPD"],
+    "design": ["设计", "UI", "UX", "交互", "视觉", "Figma", "用户体验", "作品集"],
+    "sales": ["销售", "商务", "BD", "客户开发", "商机", "线索", "续约", "大客户"],
+}
+
+JOB_FAMILY_TEMPLATES = {
+    "data_analysis": {
+        "responsibilities": ["指标拆解与业务分析", "数据清洗、建模或看板建设", "输出数据结论并推动业务动作"],
+        "skills": ["数据分析", "业务分析", "SQL", "Python", "Excel", "Power BI"],
+        "hidden": ["需要能把业务问题转成可验证指标", "需要有数据口径、异常定位和结论表达能力"],
+    },
+    "product_management": {
+        "responsibilities": ["需求分析与用户研究", "竞品分析、PRD 或原型输出", "跨部门推进产品方案落地"],
+        "skills": ["产品能力", "用户研究", "项目管理", "沟通协作"],
+        "hidden": ["需要证明不是只懂术语，而是真做过需求判断和方案取舍"],
+    },
+    "operations": {
+        "responsibilities": ["活动、内容、社群或用户运营执行", "围绕拉新、转化、留存做复盘优化", "沉淀运营策略和可量化结果"],
+        "skills": ["运营", "数据分析", "沟通协作", "项目管理"],
+        "hidden": ["需要有指标意识和复盘闭环，不能只有执行描述"],
+    },
+    "consulting": {
+        "responsibilities": ["信息收集、行业研究或客户访谈", "结构化分析并输出报告/方案", "推进项目交付与沟通汇报"],
+        "skills": ["项目管理", "业务分析", "沟通协作"],
+        "hidden": ["需要体现结构化拆解、客户语境和交付物质量"],
+    },
+    "finance": {
+        "responsibilities": ["财务、预算、投研或风控分析", "使用数据和报表支持判断", "输出结论、模型或管理建议"],
+        "skills": ["财务分析", "Excel", "业务分析"],
+        "hidden": ["需要严谨的数据口径和财务/金融基础"],
+    },
+    "marketing": {
+        "responsibilities": ["市场调研、品牌传播或渠道投放", "分析用户和竞品并设计触达策略", "复盘 Campaign 或增长效果"],
+        "skills": ["市场营销", "数据分析", "用户研究"],
+        "hidden": ["需要把创意、渠道和数据结果连接起来"],
+    },
+    "software_engineering": {
+        "responsibilities": ["完成模块、接口、前后端或算法实现", "参与测试、部署和问题排查", "用工程结果支撑业务需求"],
+        "skills": ["前端", "后端", "机器学习/AI", "Python"],
+        "hidden": ["需要真实代码项目、技术选型和可运行结果"],
+    },
+    "sustainability_esg": {
+        "responsibilities": ["碳核算、LCA、ESG 或合规资料整理", "基于标准/政策输出模型、清单或报告", "支持企业减碳、披露或合规交付"],
+        "skills": ["LCA", "ISO14067", "GHG Protocol", "CBAM", "供应链碳管理", "英文能力"],
+        "hidden": ["需要能说清标准、边界、数据来源和交付物"],
+    },
+    "design": {
+        "responsibilities": ["用户体验或视觉问题定义", "原型、界面或设计规范输出", "基于反馈迭代设计方案"],
+        "skills": ["设计", "用户研究", "产品能力"],
+        "hidden": ["需要作品集、设计过程和验证结果"],
+    },
+    "sales": {
+        "responsibilities": ["客户开发、需求识别和商机推进", "维护客户关系并推动转化/续约", "整理销售过程和结果数据"],
+        "skills": ["销售/商务", "沟通协作", "市场营销"],
+        "hidden": ["需要能证明客户沟通、推进节奏和转化结果"],
+    },
+    "general": {
+        "responsibilities": ["理解岗位任务并拆解执行", "跨角色沟通协作", "输出可检查的交付物"],
+        "skills": ["项目管理", "沟通协作", "业务分析"],
+        "hidden": ["需要把泛泛职责改写成具体动作和结果"],
+    },
+}
+
+MATCH_TOOL_ALIASES = {
+    "SQL": ["SQL", "数据库", "MySQL", "PostgreSQL", "Hive"],
+    "Python": ["Python", "pandas", "numpy", "sklearn", "爬虫"],
+    "Excel": ["Excel", "VLOOKUP", "Power Query", "数据透视表"],
+    "Power BI": ["Power BI", "Tableau", "BI", "FineBI"],
+    "Axure": ["Axure", "原型"],
+    "Figma": ["Figma"],
+    "Java": ["Java", "Spring", "Spring Boot"],
+    "JavaScript": ["JavaScript", "TypeScript", "React", "Vue", "Node.js"],
+    "openLCA": ["openLCA", "open LCA"],
+    "SimaPro": ["SimaPro"],
+    "GaBi": ["GaBi"],
+}
+
+HARD_REQUIREMENT_PATTERNS = [
+    ("education", r"(本科|硕士|研究生|博士|大专|学历)[^。；;\n]{0,30}"),
+    ("experience", r"(\d+\s*[-~至到]?\s*\d*\s*年(?:以上)?(?:工作)?经验|经验不限|应届|校招|实习)[^。；;\n]{0,24}"),
+    ("language", r"(英语|英文|English|CET-6|六级|雅思|托福|口语)[^。；;\n]{0,30}"),
+    ("location", r"(base|Base|工作地点|办公地点|地点|城市|驻场|到岗)[^。；;\n]{0,40}"),
+    ("certificate", r"(证书|资格|CPA|CFA|FRM|基金从业|证券从业|法律职业资格|法考)[^。；;\n]{0,35}"),
+    ("availability", r"(每周\s*\d\s*天|至少\s*\d+\s*个?月|实习\s*\d+\s*个?月|尽快到岗|可到岗)[^。；;\n]{0,35}"),
+]
+
+
+def _match_unique(items: list[Any], limit: int | None = None) -> list[Any]:
+    output: list[Any] = []
+    seen: set[str] = set()
+    for item in items:
+        if item is None:
+            continue
+        key = normalize_text(str(item))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+        if limit and len(output) >= limit:
+            break
+    return output
+
+
+def _match_sentence_split(text: str) -> list[str]:
+    normalized = normalize_multiline_text(text)
+    parts = re.split(r"[\n\r]+|(?<=[。！？；;])", normalized)
+    sentences = []
+    for part in parts:
+        clean = normalize_text(part).strip(" -:：;；,，")
+        if 4 <= len(clean) <= 360:
+            sentences.append(clean)
+    if not sentences and normalized:
+        sentences = [normalize_text(normalized)[:360]]
+    return _match_unique(sentences, 80)
+
+
+def _keyword_aliases(keyword: str) -> list[str]:
+    clean = normalize_text(keyword)
+    aliases = [clean]
+    if clean in SKILL_ALIASES:
+        aliases.extend(expanded_aliases(clean, SKILL_ALIASES.get(clean, [])))
+    if clean in MATCH_TOOL_ALIASES:
+        aliases.extend(MATCH_TOOL_ALIASES[clean])
+    for skill, skill_aliases in SKILL_ALIASES.items():
+        if clean == skill or clean in split_preference_items(skill_aliases):
+            aliases.extend(expanded_aliases(skill, skill_aliases))
+    for tool, tool_aliases in MATCH_TOOL_ALIASES.items():
+        if clean == tool or clean in split_preference_items(tool_aliases):
+            aliases.extend(tool_aliases)
+    return _match_unique(split_preference_items(aliases), 24)
+
+
+def _direct_keyword_aliases(keyword: str) -> list[str]:
+    clean = normalize_text(keyword)
+    aliases = [clean]
+    if clean in SKILL_ALIASES:
+        aliases.extend(SKILL_ALIASES.get(clean, []))
+    if clean in MATCH_TOOL_ALIASES:
+        aliases.extend(MATCH_TOOL_ALIASES[clean])
+    for skill, skill_aliases in SKILL_ALIASES.items():
+        if clean == skill or clean in split_preference_items(skill_aliases):
+            aliases.extend([skill] + skill_aliases)
+            break
+    for tool, tool_aliases in MATCH_TOOL_ALIASES.items():
+        if clean == tool or clean in split_preference_items(tool_aliases):
+            aliases.extend([tool] + tool_aliases)
+            break
+    return _match_unique(split_preference_items(aliases), 16)
+
+
+def _infer_match_job_family(jd_analysis: dict[str, Any], optional_job_family: str | None = None) -> str:
+    optional = normalize_text(optional_job_family or "")
+    if optional in SUPPORTED_MATCH_JOB_FAMILIES:
+        return optional
+    category = str(jd_analysis.get("category", "") or "")
+    if category in JOB_FAMILY_CATEGORY_MAP:
+        return JOB_FAMILY_CATEGORY_MAP[category]
+    text = normalize_text((jd_analysis.get("basic", {}) or {}).get("岗位名", "") + " " + jd_analysis.get("raw_text", ""))
+    scores = {
+        family: score_keywords(text, split_preference_items(words))
+        for family, words in JOB_FAMILY_RULES.items()
+    }
+    best = max(scores, key=scores.get) if scores else "general"
+    return best if scores.get(best, 0) > 0 else "general"
+
+
+def _extract_match_tools(text: str) -> list[str]:
+    clean = normalize_text(text)
+    tools = []
+    for tool, aliases in MATCH_TOOL_ALIASES.items():
+        if any(text_contains(clean, alias) for alias in aliases):
+            tools.append(tool)
+    return _match_unique(tools)
+
+
+def _extract_match_industries(text: str) -> list[str]:
+    keywords = [
+        "互联网", "电商", "金融", "银行", "证券", "咨询", "制造", "新能源", "汽车", "快消", "零售", "教育",
+        "医疗", "医药", "SaaS", "ToB", "ToC", "供应链", "物流", "ESG", "可持续", "碳", "出海", "欧盟",
+    ]
+    clean = normalize_text(text)
+    return [item for item in keywords if text_contains(clean, item)]
+
+
+def _extract_match_soft_skills(text: str) -> list[str]:
+    soft_map = {
+        "沟通协作": ["沟通", "协作", "跨部门", "汇报", "推动", "协调"],
+        "结构化表达": ["结构化", "报告", "PPT", "presentation", "表达"],
+        "学习能力": ["学习能力", "自驱", "快速学习", "主动"],
+        "抗压执行": ["抗压", "执行力", "细致", "责任心", "高强度"],
+    }
+    clean = normalize_text(text)
+    return [label for label, aliases in soft_map.items() if any(text_contains(clean, alias) for alias in aliases)]
+
+
+def _extract_jd_hard_requirements(text: str, basic: dict[str, Any]) -> list[dict[str, str]]:
+    requirements: list[dict[str, str]] = []
+    for req_type, pattern in HARD_REQUIREMENT_PATTERNS:
+        for match in re.finditer(pattern, text, flags=re.I):
+            requirements.append({"type": req_type, "text": normalize_text(match.group(0))})
+    if basic.get("学历要求") and basic.get("学历要求") != "未识别":
+        requirements.append({"type": "education", "text": f"学历要求：{basic.get('学历要求')}"})
+    if basic.get("经验要求") and basic.get("经验要求") != "未识别":
+        requirements.append({"type": "experience", "text": f"经验要求：{basic.get('经验要求')}"})
+    if basic.get("地点") and basic.get("地点") != "未识别":
+        requirements.append({"type": "location", "text": f"工作地点：{basic.get('地点')}"})
+    return _match_unique(requirements, 14)
+
+
+def build_structured_jd(jd_analysis: dict[str, Any], optional_job_family: str | None = None) -> dict[str, Any]:
+    text = normalize_text(jd_analysis.get("raw_text", ""))
+    basic = jd_analysis.get("basic", {}) or {}
+    job_family = _infer_match_job_family(jd_analysis, optional_job_family)
+    template = JOB_FAMILY_TEMPLATES.get(job_family, JOB_FAMILY_TEMPLATES["general"])
+    sentences = _match_sentence_split(text)
+    title = str(basic.get("岗位名") or extract_job_title(text) or "")
+    seniority = "intern" if re.search(r"实习|校招|应届|intern", text, flags=re.I) else "experienced" if re.search(r"\d+\s*年|社招|资深|高级", text) else "unspecified"
+
+    responsibility_markers = ["负责", "参与", "支持", "搭建", "分析", "推进", "输出", "交付", "制定", "优化", "设计", "维护"]
+    core_responsibilities = [
+        sentence for sentence in sentences
+        if any(marker in sentence for marker in responsibility_markers)
+        and not re.match(r"^(任职要求|岗位要求|要求|资格)", sentence)
+    ]
+    if len(core_responsibilities) < 2:
+        core_responsibilities.extend(template["responsibilities"])
+
+    hard_requirements = _extract_jd_hard_requirements(text, basic)
+    exact_jd_skills = [
+        skill for skill in jd_skill_list(jd_analysis)
+        if any(text_contains(text, alias) for alias in SKILL_ALIASES.get(skill, [skill]))
+    ]
+    skills = _match_unique(exact_jd_skills + template["skills"], 18)
+    tools = _extract_match_tools(text)
+    industry_background = _extract_match_industries(text)
+    project_experience = [
+        sentence for sentence in sentences
+        if any(marker in sentence for marker in ["项目", "案例", "经验", "经历", "落地", "交付", "报告", "看板", "模型", "系统"])
+    ][:10]
+    soft_skills = _extract_match_soft_skills(text)
+    bonus_requirements = [
+        sentence for sentence in sentences
+        if any(marker in sentence for marker in ["优先", "加分", "plus", "preferred", "bonus"])
+    ][:8]
+    hidden_requirements = list(template["hidden"])
+    keywords = _match_unique(
+        skills
+        + tools
+        + soft_skills
+        + industry_background
+        + [item for item in JOB_FAMILY_RULES.get(job_family, []) if text_contains(text, item)]
+        + [req["text"] for req in hard_requirements[:4]],
+        36,
+    )
+    return {
+        "job_title": title,
+        "job_family": job_family,
+        "seniority": seniority,
+        "core_responsibilities": _match_unique(core_responsibilities, 12),
+        "hard_requirements": hard_requirements,
+        "skills": skills,
+        "tools": tools,
+        "industry_background": industry_background,
+        "project_experience": _match_unique(project_experience, 10),
+        "soft_skills": soft_skills,
+        "bonus_requirements": bonus_requirements,
+        "hidden_requirements": hidden_requirements,
+        "keywords": keywords,
+    }
+
+
+def _line_capability(line: str) -> str:
+    group_hits = capability_group_hits(line)
+    if group_hits:
+        return max(group_hits, key=lambda group: len(group_hits[group]))
+    for skill, aliases in SKILL_ALIASES.items():
+        if any(text_contains(line, alias) for alias in aliases):
+            return skill
+    return "通用项目执行"
+
+
+def _evidence_strength(line: str, section: str = "") -> float:
+    clean = normalize_text(line)
+    has_action = any(text_contains(clean, term) for term in RESUME_ACTION_EVIDENCE_TERMS)
+    has_result = any(text_contains(clean, term) for term in RESUME_RESULT_EVIDENCE_TERMS)
+    has_quant = bool(re.search(r"\d+(?:\.\d+)?\s*(?:%|人|次|个|份|天|周|月|年|万|千|k|K|元|小时|h|H|分)", clean))
+    has_tool = bool(_extract_match_tools(clean))
+    has_capability = bool(capability_group_hits(clean))
+    in_project_section = section in RESUME_PROJECT_EVIDENCE_SECTIONS or section == "全文"
+    score = 0.12
+    score += 0.22 if in_project_section else 0.08
+    score += 0.20 if has_action else 0
+    score += 0.16 if has_result else 0
+    score += 0.18 if has_quant else 0
+    score += 0.10 if has_tool else 0
+    score += 0.08 if has_capability else 0
+    if len(clean) >= 48:
+        score += 0.06
+    return float(np.clip(score, 0.05, 1.0))
+
+
+def build_structured_resume(resume_text: str) -> dict[str, Any]:
+    sections = parse_resume_sections(resume_text)
+    all_lines = normalize_resume_lines(resume_text)
+    sectioned_lines = sectioned_resume_evidence_lines(resume_text)
+    evidence_items = []
+    for section, line in sectioned_lines:
+        clean = normalize_text(line)
+        if len(clean) < 8:
+            continue
+        strength = _evidence_strength(clean, section)
+        if strength < 0.28 and section in RESUME_SKILL_LIST_SECTIONS:
+            continue
+        tools = _extract_match_tools(clean)
+        action = clean if any(text_contains(clean, term) for term in RESUME_ACTION_EVIDENCE_TERMS) else ""
+        result = clean if any(text_contains(clean, term) for term in RESUME_RESULT_EVIDENCE_TERMS) or re.search(r"\d", clean) else ""
+        evidence_items.append(
+            {
+                "source_text": clean,
+                "normalized_capability": _line_capability(clean),
+                "tools_used": tools,
+                "scenario": section,
+                "action": action,
+                "result": result,
+                "strength": round(strength, 2),
+            }
+        )
+    education = sections.get("教育背景", []) or _first_matching_lines(all_lines, ["本科", "硕士", "研究生", "博士", "大学", "学院"])
+    work_experience = sections.get("实习/工作经历", []) or _first_matching_lines(all_lines, ["实习", "工作", "公司", "负责", "参与"])
+    project_experience = sections.get("项目经历", []) + sections.get("科研/论文", [])
+    certifications = _first_matching_lines(all_lines, ["证书", "CET", "六级", "雅思", "托福", "CPA", "CFA", "FRM", "法考"])
+    return {
+        "education": education[:8],
+        "work_experience": work_experience[:12],
+        "project_experience": project_experience[:14],
+        "skills": resume_skill_hits(resume_text),
+        "tools": _extract_match_tools(resume_text),
+        "certifications": certifications[:8],
+        "industry_experience": _extract_match_industries(resume_text),
+        "achievements": [line for line in all_lines if re.search(r"\d+(?:\.\d+)?\s*(?:%|人|次|个|份|万|千|元)", line)][:12],
+        "evidence_items": evidence_items[:40],
+    }
+
+
+def _requirement_best_evidence(requirement: str, evidence_items: list[dict[str, Any]], fast: bool = True) -> tuple[dict[str, Any] | None, float, str]:
+    if not evidence_items:
+        return None, 0.0, "MISSING"
+    req = normalize_text(requirement)
+    req_aliases = _direct_keyword_aliases(req)
+    best_item: dict[str, Any] | None = None
+    best_score = 0.0
+    best_type = "MISSING"
+    semantic_fn = semantic_similarity_fast if fast else semantic_similarity
+    req_groups = set(capability_group_hits(req)) | set(semantic_groups_for_terms(req, req_aliases))
+    for item in evidence_items:
+        line = str(item.get("source_text", ""))
+        direct = any(text_contains(line, alias) for alias in req_aliases if len(alias) >= 2)
+        line_groups = set(capability_group_hits(line))
+        group_overlap = bool(req_groups and line_groups and req_groups & line_groups)
+        similarity = semantic_fn(req, line)
+        strength = float(item.get("strength", 0))
+        score = similarity * 0.52 + strength * 0.34 + (0.18 if direct else 0) + (0.12 if group_overlap else 0)
+        if score > best_score:
+            best_score = float(np.clip(score, 0, 1))
+            best_item = item
+            best_type = "EXACT_MATCH" if direct else "SEMANTIC_MATCH" if group_overlap or similarity >= 0.22 else "EVIDENCE_MATCH" if strength >= 0.62 else "MISSING"
+    if best_score < 0.24:
+        best_type = "MISSING"
+    return best_item, best_score, best_type
+
+
+def _score_hard_requirements(
+    jd_structured: dict[str, Any],
+    resume_structured: dict[str, Any],
+    resume_text: str,
+) -> tuple[int, list[dict[str, str]], list[dict[str, str]], list[str]]:
+    requirements = jd_structured.get("hard_requirements", [])
+    if not requirements:
+        return 78, [], [], []
+    clean_resume = normalize_text(resume_text)
+    results = []
+    missing = []
+    ceilings = []
+    for req in requirements:
+        req_type = req.get("type", "general")
+        text = req.get("text", "")
+        score = 75
+        reason = "简历未清晰写出，但也未看到明显冲突。"
+        if req_type == "education":
+            if "博士" in text:
+                ok = any(term in clean_resume for term in ["博士", "PhD"])
+            elif "硕士" in text or "研究生" in text:
+                ok = any(term in clean_resume for term in ["硕士", "研究生", "博士", "master", "phd"])
+            elif "本科" in text:
+                ok = any(term in clean_resume for term in ["本科", "学士", "硕士", "研究生", "博士", "bachelor", "master"])
+            else:
+                ok = any(term in clean_resume for term in ["本科", "硕士", "研究生", "博士", "大专"])
+            score = 100 if ok else 30
+            reason = "学历线索匹配。" if ok else "没有看到对应学历线索。"
+            if not ok:
+                ceilings.append("学历要求明显不满足或未写清，overall_score 最多 70")
+        elif req_type == "experience":
+            years = [int(x) for x in re.findall(r"\d+", text)]
+            has_work_or_project = bool(resume_structured.get("work_experience") or resume_structured.get("project_experience"))
+            if "经验不限" in text or "应届" in text or "校招" in text or "实习" in text:
+                score = 90 if has_work_or_project else 75
+                reason = "岗位接受学生/早期经历，项目或实习可替代。"
+            elif years and max(years) <= 3 and has_work_or_project:
+                score = 75
+                reason = "工作年限要求不高，实习/项目经历可部分替代，但建议写清时长和角色。"
+            elif years and max(years) >= 4 and not text_contains(clean_resume, "年"):
+                score = 35
+                reason = "工作年限要求较高，简历中没有足够替代证据。"
+                ceilings.append("工作年限差距过大且无替代经历，overall_score 最多 65")
+            else:
+                score = 60 if has_work_or_project else 35
+                reason = "有经历基础，但年限或成熟度表达不清。"
+        elif req_type == "language":
+            ok = any(text_contains(clean_resume, term) for term in ENGLISH_EVIDENCE_TERMS)
+            score = 100 if ok else 20
+            reason = "有英文/语言证据。" if ok else "JD 明确提到语言要求，但简历未看到证据。"
+            if not ok:
+                ceilings.append("语言等强限制不满足，overall_score 最多 60")
+        elif req_type == "certificate":
+            aliases = re.findall(r"CPA|CFA|FRM|基金从业|证券从业|法考|法律职业资格|证书|资格", text, flags=re.I)
+            ok = any(text_contains(clean_resume, alias) for alias in aliases)
+            score = 100 if ok else 20
+            reason = "证书/资格线索匹配。" if ok else "JD 明确要求证书或资格，简历未看到。"
+            if not ok and any(marker in text for marker in ["必须", "需", "要求", "持有"]):
+                ceilings.append("关键证书缺失且 JD 明确必须，overall_score 最多 70")
+        elif req_type == "location":
+            score = 75
+            reason = "地点通常需要人工确认；简历未写清时按不确定处理。"
+        elif req_type == "availability":
+            ok = bool(re.search(r"每周\s*\d\s*天|到岗|实习|个月", clean_resume))
+            score = 90 if ok else 55
+            reason = "可到岗/实习时长有线索。" if ok else "实习时长或到岗时间未写清。"
+        result = {"requirement": text, "type": req_type, "score": str(int(score)), "reason": reason}
+        results.append(result)
+        if score < 55:
+            missing.append(result)
+    average = sum(int(item["score"]) for item in results) / max(len(results), 1)
+    return int(np.clip(round(average), 0, 100)), missing, [item for item in results if int(item["score"]) < 80], ceilings
+
+
+def _score_requirement_list(
+    requirements: list[str],
+    evidence_items: list[dict[str, Any]],
+    *,
+    fast: bool,
+) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    if not requirements:
+        return 70, [], [], []
+    scores = []
+    matched = []
+    missing = []
+    weak = []
+    for req in requirements:
+        item, strength, match_type = _requirement_best_evidence(req, evidence_items, fast=fast)
+        if match_type == "EXACT_MATCH" and strength >= 0.68:
+            score = 100
+        elif match_type in {"SEMANTIC_MATCH", "EVIDENCE_MATCH"} and strength >= 0.56:
+            score = 75
+        elif match_type != "MISSING" and strength >= 0.38:
+            score = 50
+        elif match_type != "MISSING":
+            score = 30
+        else:
+            score = 0
+        scores.append(score)
+        if score >= 55 and item:
+            matched.append(
+                {
+                    "jd_requirement": req,
+                    "resume_evidence": item.get("source_text", ""),
+                    "match_type": match_type,
+                    "strength": round(float(np.clip(strength, 0, 1)), 2),
+                    "explanation": "有简历原文证据支撑该要求。" if score >= 75 else "方向相关，但证据还不够完整。",
+                }
+            )
+        elif item and score > 0:
+            weak.append(
+                {
+                    "requirement": req,
+                    "current_evidence": item.get("source_text", ""),
+                    "problem": "有相关表达，但缺少明确场景、动作、工具或结果。",
+                    "rewrite_suggestion": f"把这段经历改成：围绕「{req}」，说明任务背景、你采取的动作、使用的方法/工具和量化结果。",
+                }
+            )
+        else:
+            missing.append(
+                {
+                    "requirement": req,
+                    "importance": "HIGH",
+                    "reason": "没有找到能直接支撑该 JD 要求的简历证据。",
+                    "improvement_suggestion": f"补充一条真实经历，明确写出与「{req}」相关的任务、动作、交付物和结果。",
+                }
+            )
+    return int(np.clip(round(sum(scores) / max(len(scores), 1)), 0, 100)), matched, missing, weak
+
+
+def _classify_keyword_coverage(keyword: str, resume_text: str, evidence_items: list[dict[str, Any]], fast: bool) -> tuple[str, str]:
+    aliases = _direct_keyword_aliases(keyword)
+    clean_resume = normalize_text(resume_text)
+    direct = [alias for alias in aliases if text_contains(clean_resume, alias)]
+    if direct:
+        return "EXACT_MATCH", direct[0]
+    if normalize_text(keyword) in MATCH_TOOL_ALIASES:
+        return "MISSING", ""
+    item, strength, match_type = _requirement_best_evidence(keyword, evidence_items, fast=fast)
+    if match_type == "SEMANTIC_MATCH" and strength >= 0.46:
+        return "SEMANTIC_MATCH", item.get("source_text", "") if item else ""
+    if match_type == "EVIDENCE_MATCH" and strength >= 0.56:
+        return "EVIDENCE_MATCH", item.get("source_text", "") if item else ""
+    return "MISSING", ""
+
+
+def build_keyword_coverage(
+    jd_structured: dict[str, Any],
+    resume_text: str,
+    evidence_items: list[dict[str, Any]],
+    *,
+    fast: bool,
+) -> dict[str, Any]:
+    must_have = []
+    jd_text = " ".join(jd_structured.get("keywords", [])) + " " + " ".join(req.get("text", "") for req in jd_structured.get("hard_requirements", []))
+    for keyword in jd_structured.get("skills", []) + jd_structured.get("tools", []):
+        aliases = _keyword_aliases(keyword)
+        if any(re.search(rf"(必须|熟练|精通|掌握|要求)[^。；;\n]{{0,24}}{re.escape(alias)}", jd_text) for alias in aliases):
+            must_have.append(keyword)
+    if not must_have:
+        must_have = list(jd_structured.get("skills", [])[:4])
+    must_have = _match_unique(must_have, 18)
+    important = _match_unique([item for item in jd_structured.get("skills", []) + jd_structured.get("tools", []) if item not in must_have], 24)
+    nice = _match_unique([item for item in jd_structured.get("soft_skills", []) + jd_structured.get("industry_background", []) if item not in must_have and item not in important], 18)
+    ordered_keywords = _match_unique(must_have + important + nice, 36)
+    exact_matches = []
+    semantic_matches = []
+    evidence_matches = []
+    missing_keywords = []
+    for keyword in ordered_keywords:
+        status, evidence = _classify_keyword_coverage(keyword, resume_text, evidence_items, fast)
+        payload = {"keyword": keyword, "evidence": evidence}
+        if status == "EXACT_MATCH":
+            exact_matches.append(payload)
+        elif status == "SEMANTIC_MATCH":
+            semantic_matches.append(payload)
+        elif status == "EVIDENCE_MATCH":
+            evidence_matches.append(payload)
+        else:
+            missing_keywords.append(keyword)
+    covered_count = len(exact_matches) + len(semantic_matches) + len(evidence_matches)
+    return {
+        "coverage_rate": round(covered_count / max(len(ordered_keywords), 1), 2),
+        "must_have_keywords": must_have,
+        "important_keywords": important,
+        "nice_to_have_keywords": nice,
+        "exact_matches": exact_matches,
+        "semantic_matches": semantic_matches,
+        "evidence_matches": evidence_matches,
+        "missing_keywords": missing_keywords,
+    }
+
+
+def _score_skill_tools(
+    jd_structured: dict[str, Any],
+    resume_text: str,
+    evidence_items: list[dict[str, Any]],
+    keyword_coverage: dict[str, Any],
+    *,
+    fast: bool,
+) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    requirements = _match_unique(jd_structured.get("skills", []) + jd_structured.get("tools", []), 20)
+    if not requirements:
+        return 68, [], [], []
+    exact_keywords = {item["keyword"] for item in keyword_coverage.get("exact_matches", [])}
+    semantic_keywords = {item["keyword"] for item in keyword_coverage.get("semantic_matches", [])}
+    evidence_keywords = {item["keyword"] for item in keyword_coverage.get("evidence_matches", [])}
+    scores = []
+    matched = []
+    missing = []
+    weak = []
+    for keyword in requirements:
+        item, strength, match_type = _requirement_best_evidence(keyword, evidence_items, fast=fast)
+        is_tool_requirement = normalize_text(keyword) in MATCH_TOOL_ALIASES
+        if keyword in exact_keywords and item and float(item.get("strength", 0)) >= 0.55:
+            score = 100
+        elif is_tool_requirement:
+            score = 0
+        elif keyword in semantic_keywords or keyword in evidence_keywords:
+            score = 80 if item and float(item.get("strength", 0)) >= 0.48 else 65
+        elif keyword in exact_keywords:
+            score = 50
+        else:
+            score = 0
+        scores.append(score)
+        if score >= 70 and item:
+            matched.append(
+                {
+                    "jd_requirement": keyword,
+                    "resume_evidence": item.get("source_text", ""),
+                    "match_type": match_type if match_type != "MISSING" else "EVIDENCE_MATCH",
+                    "strength": round(float(np.clip(strength, 0, 1)), 2),
+                    "explanation": "技能/工具不仅出现，还能在经历中看到使用场景。",
+                }
+            )
+        elif score > 0:
+            weak.append(
+                {
+                    "requirement": keyword,
+                    "current_evidence": item.get("source_text", "") if item else "技能栏或简历文本中提到过，但缺少使用场景。",
+                    "problem": "关键词有覆盖，但项目证据不足。",
+                    "rewrite_suggestion": f"补一条使用 {keyword} 完成任务、产出结果的经历句。",
+                }
+            )
+        else:
+            missing.append(
+                {
+                    "requirement": keyword,
+                    "importance": "HIGH" if keyword in keyword_coverage.get("must_have_keywords", []) else "MEDIUM",
+                    "reason": "没有找到直接或语义等价的能力证据。",
+                    "improvement_suggestion": f"如果真实具备 {keyword}，请把它写进项目动作和交付结果，而不是只放在技能清单。",
+                }
+            )
+    return int(np.clip(round(sum(scores) / max(len(scores), 1)), 0, 100)), matched, missing, weak
+
+
+def _score_project_experience(
+    jd_structured: dict[str, Any],
+    resume_structured: dict[str, Any],
+    *,
+    fast: bool,
+) -> int:
+    evidence_items = resume_structured.get("evidence_items", [])
+    project_like = [
+        item for item in evidence_items
+        if item.get("scenario") in RESUME_PROJECT_EVIDENCE_SECTIONS
+        or "项目" in str(item.get("source_text", ""))
+        or "实习" in str(item.get("source_text", ""))
+        or ("负责" in str(item.get("source_text", "")) and float(item.get("strength", 0)) >= 0.55)
+    ]
+    if not project_like:
+        return 20 if evidence_items else 8
+    requirements = jd_structured.get("core_responsibilities", []) + jd_structured.get("project_experience", [])
+    strong_related = 0
+    related = 0
+    strong_sources: set[str] = set()
+    related_sources: set[str] = set()
+    for req in requirements[:10]:
+        item, strength, _match_type = _requirement_best_evidence(req, project_like, fast=fast)
+        if item and strength >= 0.62:
+            strong_related += 1
+            strong_sources.add(str(item.get("source_text", "")))
+        elif item and strength >= 0.38:
+            related += 1
+            related_sources.add(str(item.get("source_text", "")))
+    quantified = sum(1 for item in project_like if re.search(r"\d", str(item.get("source_text", ""))))
+    has_result = any(any(text_contains(str(item.get("source_text", "")), term) for term in RESUME_RESULT_EVIDENCE_TERMS) for item in project_like)
+    if strong_related >= 2 and len(strong_sources) >= 2:
+        base = 92
+    elif strong_related >= 1:
+        base = 82 if quantified or has_result else 64
+    elif related and len(related_sources) >= 2:
+        base = 66
+    elif related:
+        base = 62
+    else:
+        base = 38
+    if quantified:
+        base += min(8, quantified * 3)
+    return int(np.clip(base, 0, 100))
+
+
+def _score_industry_background(jd_structured: dict[str, Any], resume_structured: dict[str, Any], resume_text: str) -> int:
+    jd_industries = jd_structured.get("industry_background", [])
+    if not jd_industries:
+        return 72
+    resume_industries = resume_structured.get("industry_experience", [])
+    if set(jd_industries) & set(resume_industries):
+        return 94
+    jd_text = " ".join(jd_industries)
+    if any(capability_overlap_similarity(jd_text, item) >= 0.4 for item in resume_industries):
+        return 76
+    if any(text_contains(resume_text, item) for item in jd_industries):
+        return 70
+    if resume_structured.get("project_experience"):
+        return 52
+    return 18
+
+
+def _score_evidence_quality(resume_structured: dict[str, Any]) -> int:
+    evidence_items = resume_structured.get("evidence_items", [])
+    if not evidence_items:
+        return 10
+    strengths = [float(item.get("strength", 0)) for item in evidence_items]
+    strong = sum(1 for value in strengths if value >= 0.72)
+    quantified = len(resume_structured.get("achievements", []))
+    score = np.mean(strengths[:12]) * 82 + min(strong * 4, 12) + min(quantified * 3, 12)
+    return int(np.clip(round(score), 0, 100))
+
+
+def _recommendation_level(score: int) -> str:
+    if score >= 85:
+        return "STRONG_APPLY"
+    if score >= 70:
+        return "APPLY_WITH_REVISION"
+    if score >= 55:
+        return "LOW_PRIORITY"
+    return "NOT_RECOMMENDED"
+
+
+def _rewrite_suggestions(weak: list[dict[str, Any]], missing: list[dict[str, Any]]) -> list[dict[str, str]]:
+    suggestions = []
+    for item in weak[:4]:
+        suggestions.append(
+            {
+                "target_requirement": item.get("requirement", ""),
+                "original_text": item.get("current_evidence", ""),
+                "suggested_text": item.get("rewrite_suggestion", ""),
+                "reason": item.get("problem", ""),
+            }
+        )
+    for item in missing[:3]:
+        req = item.get("requirement", "")
+        suggestions.append(
+            {
+                "target_requirement": req,
+                "original_text": "",
+                "suggested_text": f"新增一条真实经历：在什么场景下，你围绕「{req}」采取了什么动作，使用什么工具/方法，产出了什么结果。",
+                "reason": item.get("reason", ""),
+            }
+        )
+    return suggestions[:7]
+
+
+def _interview_focus(
+    jd_structured: dict[str, Any],
+    missing: list[dict[str, Any]],
+    weak: list[dict[str, Any]],
+    matched: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    focus = []
+    for item in (missing[:4] + weak[:3]):
+        req = item.get("requirement", "")
+        if not req:
+            continue
+        focus.append(
+            {
+                "topic": req,
+                "why_likely_asked": "这是 JD 明确要求但当前简历证据不足的点，面试中容易被追问是否真的做过。",
+                "prep_suggestion": f"准备 1 个真实案例，按背景、任务、动作、工具/方法、结果复盘来讲清「{req}」。",
+            }
+        )
+    for item in matched[:2]:
+        req = item.get("jd_requirement", "")
+        focus.append(
+            {
+                "topic": req,
+                "why_likely_asked": "这是你和岗位较匹配的证据点，面试官可能要求展开细节。",
+                "prep_suggestion": "准备项目细节、关键决策、量化结果和如果重做会如何优化。",
+            }
+        )
+    if not focus:
+        for req in jd_structured.get("core_responsibilities", [])[:3]:
+            focus.append(
+                {
+                    "topic": req,
+                    "why_likely_asked": "该职责属于岗位核心任务。",
+                    "prep_suggestion": "准备一段最接近的项目经历，并说明你的个人贡献和结果。",
+                }
+            )
+    return focus[:7]
+
+
+def _apply_hard_ceilings(score: int, ceiling_reasons: list[str]) -> int:
+    ceiling = 100
+    for reason in ceiling_reasons:
+        if "最多 60" in reason:
+            ceiling = min(ceiling, 60)
+        elif "最多 65" in reason:
+            ceiling = min(ceiling, 65)
+        elif "最多 70" in reason:
+            ceiling = min(ceiling, 70)
+    return min(score, ceiling)
+
+
+def _match_confidence(jd_text: str, resume_text: str, evidence_items: list[dict[str, Any]], matched_count: int) -> float:
+    value = 0.35
+    value += min(len(normalize_text(jd_text)) / 1200, 1) * 0.18
+    value += min(len(normalize_text(resume_text)) / 1600, 1) * 0.18
+    value += min(len(evidence_items) / 12, 1) * 0.17
+    value += min(matched_count / 8, 1) * 0.12
+    return round(float(np.clip(value, 0.25, 0.95)), 2)
+
+
+def matching_services() -> MatchingServices:
+    return MatchingServices(
+        normalize_text=normalize_text,
+        normalize_multiline_text=normalize_multiline_text,
+        text_contains=text_contains,
+        score_keywords=score_keywords,
+        split_preference_items=split_preference_items,
+        jd_skill_list=jd_skill_list,
+        extract_job_title=extract_job_title,
+        parse_resume_sections=parse_resume_sections,
+        normalize_resume_lines=normalize_resume_lines,
+        sectioned_resume_evidence_lines=sectioned_resume_evidence_lines,
+        first_matching_lines=_first_matching_lines,
+        resume_skill_hits=resume_skill_hits,
+        capability_group_hits=capability_group_hits,
+        semantic_groups_for_terms=semantic_groups_for_terms,
+        semantic_similarity_fast=semantic_similarity_fast,
+        semantic_similarity=semantic_similarity,
+        capability_overlap_similarity=capability_overlap_similarity,
+        remove_duplicate_information=remove_duplicate_information,
+        legacy_matcher=legacy_skill_coverage_match_impl,
+        skill_aliases=SKILL_ALIASES,
+        semantic_capability_groups=SEMANTIC_CAPABILITY_GROUPS,
+        resume_action_terms=RESUME_ACTION_EVIDENCE_TERMS,
+        resume_result_terms=RESUME_RESULT_EVIDENCE_TERMS,
+        english_evidence_terms=ENGLISH_EVIDENCE_TERMS,
+        resume_project_sections=RESUME_PROJECT_EVIDENCE_SECTIONS,
+        resume_skill_list_sections=RESUME_SKILL_LIST_SECTIONS,
+    )
+
+
+def match_resume_to_jd(
+    jd_analysis: dict[str, Any],
+    resume_text: str,
+    profile_text: str | None = None,
+    preferences: dict[str, Any] | None = None,
+    optional_job_family: str | None = None,
+    fast: bool = False,
+) -> dict[str, Any]:
+    return generate_match_report(
+        jd_analysis,
+        resume_text,
+        matching_services(),
+        profile_text=profile_text,
+        preferences=preferences,
+        optional_job_family=optional_job_family,
+        fast=fast,
+    )
+
+
+def interview_readiness_profile(
+    clean: str,
+    extracted: dict[str, list[str]],
+    buckets: dict[str, list[str]],
+    jd_skills: list[str],
+    experience_summary: dict[str, list[str]] | None = None,
+    source_count: int = 1,
+) -> dict[str, Any]:
+    extracted_count = sum(len(items) for items in extracted.values())
+    history_count = sum(len(items) for items in buckets.values())
+    covered_categories = [
+        category
+        for category in INTERVIEW_CATEGORIES
+        if extracted.get(category) or buckets.get(category)
+    ]
+    real_question_score = min(extracted_count * 8, 32)
+    coverage_score = min(len(covered_categories) * 7, 24)
+    jd_alignment_score = 16 if jd_skills else 4
+    source_quality_score = 0
+    source_quality_score += 7 if len(clean) >= 500 else 4 if len(clean) >= 250 else 1 if len(clean) >= 100 else 0
+    source_quality_score += min(max(source_count - 1, 0) * 3, 9)
+    actionable_terms = ["追问", "流程", "复盘", "结果", "难点", "项目", "面试官", "自我介绍", "反问", "英文"]
+    actionability_score = min(sum(1 for term in actionable_terms if text_contains(clean, term)) * 2, 12)
+    if experience_summary:
+        actionability_score += min(sum(len(items) for items in experience_summary.values()), 6)
+    actionability_score = min(actionability_score, 18)
+    readiness_score = int(
+        np.clip(
+            real_question_score + coverage_score + jd_alignment_score + source_quality_score + actionability_score,
+            0,
+            100,
+        )
+    )
+    if readiness_score >= 78:
+        readiness_label = "可进入模拟面试"
+    elif readiness_score >= 55:
+        readiness_label = "可先准备重点题"
+    elif readiness_score >= 32:
+        readiness_label = "题目线索不足，先补面经"
+    else:
+        readiness_label = "暂不适合生成完整准备包"
+    preparation_focus = []
+    if extracted_count < 3:
+        preparation_focus.append("继续补 2-3 份同岗位面经，优先找真实问题而不是经验帖摘要。")
+    if not jd_skills:
+        preparation_focus.append("先完成目标 JD 分析，让面试题能对齐岗位关键词。")
+    missing_categories = [category for category in ["技术问题", "行为面问题", "反问问题"] if category not in covered_categories]
+    if missing_categories:
+        preparation_focus.append("补齐这些题型：" + " / ".join(missing_categories))
+    if source_count < 2 and readiness_score < 78:
+        preparation_focus.append("再补至少 1 份同类岗位面经，避免只被单一来源带偏。")
+    if len(clean) < 300:
+        preparation_focus.append("面经文本偏短，建议补充流程、追问、面试官关注点和自己的复盘。")
+    if not preparation_focus:
+        preparation_focus.append("按 JD 技能顺序准备 3 个项目故事，每个故事要能讲清任务、动作、交付物和结果。")
+    return {
+        "readiness_score": readiness_score,
+        "readiness_label": readiness_label,
+        "covered_categories": covered_categories,
+        "preparation_focus": humanize_advice_list(preparation_focus),
+        "readiness_breakdown": {
+            "真实问题": real_question_score,
+            "题型覆盖": coverage_score,
+            "JD对齐": jd_alignment_score,
+            "来源质量": source_quality_score,
+            "可行动信息": actionability_score,
+        },
     }
 
 
@@ -2520,13 +3826,17 @@ def analyze_interview(text: str, jd_analysis: dict[str, Any] | None = None) -> d
     if jd_analysis and not jd_analysis.get("skills", pd.DataFrame()).empty:
         jd_skills = jd_analysis["skills"]["技能"].head(8).tolist()
     generated = generate_interview_questions(jd_skills)
+    extracted = extract_interview_questions_v2(text, jd_skills)
+    experience_summary = summarize_interview_experience_v2(text)
+    readiness = interview_readiness_profile(clean, extracted, buckets, jd_skills, experience_summary)
     return {
         "raw_text": clean,
         "buckets": buckets,
         "generated_questions": generated,
         "answer_templates": generate_interview_answer_templates(jd_skills),
-        "extracted_questions": extract_interview_questions_v2(text, jd_skills),
-        "experience_summary": summarize_interview_experience_v2(text),
+        "extracted_questions": extracted,
+        "experience_summary": experience_summary,
+        **readiness,
     }
 
 
@@ -2596,9 +3906,9 @@ def summarize_interview_experience_v2(text: str) -> dict[str, list[str]]:
 
 def infer_question_target_skill_v2(question: str, jd_skills: list[str], resume_match: dict[str, Any] | None = None) -> str:
     ordered_skills = list(dict.fromkeys(
-        (resume_match.get("hard_skill_gaps", []) if resume_match else [])
-        + (resume_match.get("evidence_skill_gaps", []) if resume_match else [])
-        + (resume_match.get("expression_skill_gaps", []) if resume_match else [])
+        resume_hard_gap_names(resume_match)
+        + resume_evidence_gap_names(resume_match)
+        + resume_expression_gap_names(resume_match)
         + list(jd_skills or [])
     ))
     for skill in ordered_skills:
@@ -2623,9 +3933,9 @@ def personalized_answer_for_question_v2(
     evidence_lines = skill_evidence_lines(resume_text, skill, limit=2) if skill else []
     original_line = evidence_lines[0].strip() if evidence_lines else ""
     signal = resume_gap_signal_v2(evidence_lines) if skill and "resume_gap_signal_v2" in globals() else (original_line or "当前简历里未识别到明确相关经历句。")
-    hard_gaps = set(resume_match.get("hard_skill_gaps", []))
-    evidence_gaps = set(resume_match.get("evidence_skill_gaps", []))
-    expression_gaps = set(resume_match.get("expression_skill_gaps", []))
+    hard_gaps = set(resume_hard_gap_names(resume_match))
+    evidence_gaps = set(resume_evidence_gap_names(resume_match))
+    expression_gaps = set(resume_expression_gap_names(resume_match))
     if skill in hard_gaps:
         gap_type = "hard"
     elif skill in evidence_gaps:
@@ -2709,6 +4019,19 @@ def analyze_interview_sources_v2(
         )
     analysis["source_count"] = len(valid_items)
     analysis["source_summaries"] = per_source
+    jd_skills = []
+    if jd_analysis and not jd_analysis.get("skills", pd.DataFrame()).empty:
+        jd_skills = jd_analysis["skills"]["技能"].head(8).tolist()
+    analysis.update(
+        interview_readiness_profile(
+            analysis.get("raw_text", ""),
+            analysis.get("extracted_questions", {}),
+            analysis.get("buckets", {}),
+            jd_skills,
+            analysis.get("experience_summary", {}),
+            source_count=max(len(valid_items), 1),
+        )
+    )
     return analysis
 
 
@@ -2722,38 +4045,43 @@ def generate_interview_answer_templates(skills: list[str]) -> list[str]:
     ]
 
 
+def interview_question_for_skill(skill: str) -> str:
+    skill_text = normalize_text(skill)
+    families = [
+        (["供应链", "采购", "物流", "库存", "供应商"], f"请讲一次你处理 {skill} 相关问题的经历：你如何平衡交期、质量、成本和风险？"),
+        (["产品", "用户", "需求", "体验"], f"请讲一个你围绕 {skill} 完成用户问题判断、方案设计和结果验证的例子。"),
+        (["运营", "增长", "市场", "内容", "活动"], f"请讲一个你用 {skill} 改善拉新、转化、留存、复购或品牌触达指标的案例。"),
+        (["销售", "商务", "BD", "客户", "渠道"], f"请讲一次你围绕 {skill} 推进客户需求判断、异议处理和转化跟进的过程。"),
+        (["项目", "沟通", "协作", "PMO", "交付"], f"请讲一次 {skill} 相关项目出现卡点时，你如何同步风险、协调资源并推动交付。"),
+        (["财务", "会计", "审计", "预算", "成本"], f"请讲一个 {skill} 场景：你如何确认口径、定位异常、解释影响并给出管理动作。"),
+        (["法务", "合规", "合同", "风控"], f"请讲一次 {skill} 相关判断：你如何识别风险等级、沟通约束并给出可执行建议。"),
+        (["招聘", "人力", "HR", "培训", "绩效"], f"请讲一次你处理 {skill} 相关流程的经历：对象是谁、规则是什么、动作和结果如何验证。"),
+        (["设计", "UI", "UX", "视觉", "交互", "Figma", "作品集"], f"请讲一个 {skill} 案例：你如何定义用户目标、做取舍、验证设计效果并沉淀作品集证据。"),
+        (["前端", "后端", "开发", "工程", "算法", "模型", "机器学习", "AI", "Java", "C++"], f"请讲一个 {skill} 项目：问题定义、技术选型、关键实现、测试验证和上线结果分别是什么。"),
+        (["数据", "分析", "SQL", "Python", "Excel", "Tableau", "Power BI"], f"如果一个核心指标异常，你会如何使用 {skill} 拆解口径、定位原因、验证假设并输出行动建议？"),
+        (["英文", "英语", "English"], "Please introduce one project in English, covering the business problem, your role, actions, measurable result, and reflection."),
+    ]
+    for aliases, question in families:
+        if any(text_contains(skill_text, alias) for alias in aliases):
+            return question
+    return f"请结合一段真实经历说明你如何使用或体现 {skill}：当时的任务是什么、你做了什么、交付了什么、结果如何验证？"
+
+
 def generate_interview_questions(skills: list[str]) -> dict[str, list[str]]:
-    technical = []
-    for skill in skills[:6]:
-        if skill == "LCA":
-            technical.append("用你做过的项目说明：评价目标是什么、功能单位怎么定、系统边界包括哪些环节、清单数据从哪里来。")
-        elif skill == "CBAM":
-            technical.append("如果一家制造企业要应对 CBAM，你会先要哪些活动数据、排放因子、产品编码和供应商资料？")
-        elif skill == "ISO14067":
-            technical.append("请用 1 分钟讲清 ISO14067 与 PEF 在边界、分配、数据质量和结果解释上的差异。")
-        elif skill == "EPD":
-            technical.append("EPD 项目里 PCR 为什么重要？如果没有合适 PCR，你会怎么判断报告边界和数据口径？")
-        elif skill in ["SimaPro", "GaBi", "openLCA"]:
-            technical.append(f"请描述一次 {skill} 建模流程：建过程、选数据库、设分配规则、看贡献分析、导出结果。")
-        elif skill == "供应链碳管理":
-            technical.append("供应商数据质量不一致时，你会怎么设计模板、校验规则、缺失值处理和追踪机制？")
-        elif skill in ["产品能力", "用户研究"]:
-            technical.append("请讲一个你从用户问题出发，完成需求判断、方案设计和结果验证的例子。")
-        elif skill in ["业务分析", "数据分析", "SQL"]:
-            technical.append("如果一个核心指标下降，你会如何拆解口径、定位原因、验证假设并给出行动建议？")
-        elif skill in ["运营", "市场营销"]:
-            technical.append("请讲一个你提升拉新、转化、留存或复购指标的方案，重点说动作、数据和复盘。")
-        elif skill in ["项目管理", "沟通协作"]:
-            technical.append("跨部门项目进度失控时，你会如何重排优先级、同步风险并推动交付？")
-        elif skill in ["前端", "后端", "机器学习/AI"]:
-            technical.append("请讲一个你做过的工程/模型项目：问题、技术选型、关键实现、测试方式和上线结果。")
-        elif skill == "Python":
-            technical.append("请举例说明你如何用 Python 清洗数据、检查异常值、生成分析结果，并把结论交付给业务或项目方。")
+    normalized_skills = [str(skill).strip() for skill in skills if str(skill).strip()]
+    technical = list(dict.fromkeys([interview_question_for_skill(skill) for skill in normalized_skills[:8]]))
 
     return {
         "技术问题": technical or ["请结合一个项目说明你如何定义问题、拆解任务、推进执行，并用结果验证价值。"],
-        "行为面问题": ["用 STAR 结构讲一个你把模糊任务拆成可执行步骤的项目。", "为什么选择这个岗位方向？请结合经历、能力证据和长期目标回答。"],
-        "英文面试问题": ["Please introduce one project that best demonstrates your fit for this role.", "How would you explain your project impact to a non-technical stakeholder?"],
+        "行为面问题": [
+            "用 STAR 结构讲一个你把模糊任务拆成可执行步骤的项目。",
+            "为什么选择这个岗位方向？请结合经历、能力证据和长期目标回答。",
+            "请讲一次你收到反馈后调整方法并改进结果的经历。",
+        ],
+        "英文面试问题": [
+            "Please introduce one project that best demonstrates your fit for this role.",
+            "How would you explain your project impact to a non-technical stakeholder?",
+        ],
         "案例分析题": ["如果业务负责人给你一个模糊目标，请按问题定义、信息收集、方案设计、执行协作、结果复盘五步拆解。"],
     }
 
@@ -2805,7 +4133,7 @@ def interview_priority_reason_v2(skill: str, jd_text: str, interview_hits: list[
     if jd_hits and interview_hits:
         return "因为 JD 已经点名这个能力，而且面经里也反复出现相关追问，属于简历筛选和面试追问都会卡住的点。"
     if jd_hits:
-        return f"因为 JD 已经明确写了 {skill}，即使面经原文里没完全命中，真实面试里也大概率会围绕这项能力展开。"
+        return f"因为 JD 已经明确写了 {skill}，即使面经里没完全命中，真实面试里也大概率会围绕这项能力展开。"
     if interview_hits:
         return "因为面经里已经出现了相关问题，说明这类岗位在实际面试中确实会考到。"
     return "因为这是你当前简历和目标岗位之间的真实缺口，越早补，后面的回答越不容易发虚。"
@@ -2843,9 +4171,9 @@ def build_interview_gap_rows_v2(
     seen: set[tuple[str, str]] = set()
 
     gap_groups = [
-        ("hard", "P1", resume_match.get("hard_skill_gaps", [])[:4]),
-        ("evidence", "P1", resume_match.get("evidence_skill_gaps", [])[:4]),
-        ("expression", "P2", resume_match.get("expression_skill_gaps", [])[:3]),
+        ("hard", "P1", resume_hard_gap_names(resume_match, 4)),
+        ("evidence", "P1", resume_evidence_gap_names(resume_match, 4)),
+        ("expression", "P2", resume_expression_gap_names(resume_match, 3)),
     ]
 
     for gap_type, level, skills in gap_groups:
@@ -2859,6 +4187,7 @@ def build_interview_gap_rows_v2(
             action_seed = targeted_gap_seed_v2(skill, category, jd_text) if "targeted_gap_seed_v2" in globals() else gap_action_for_item(skill, jd_text)
             interview_hits = collect_interview_hits_v2(interview_analysis, skill, limit=2)
             hit_text = " / ".join(interview_hits) if interview_hits else "当前导入的面经里没有直接命中这项技能，但按 JD 和岗位方向，这类问题大概率还是会被追问。"
+            prep_focus = interview_prep_focus_v2(skill, gap_type, action_seed, category, jd_text)
             rows.append(
                 {
                     "优先级": level,
@@ -2867,7 +4196,7 @@ def build_interview_gap_rows_v2(
                     "简历为什么吃亏": interview_gap_reason_v2(skill, gap_type, jd_text, signal),
                     "面经里怎么考": hit_text,
                     "为什么这题要优先准备": interview_priority_reason_v2(skill, jd_text, interview_hits),
-                    "建议准备重点": interview_prep_focus_v2(skill, gap_type, action_seed, category, jd_text),
+                    "建议准备重点": humanize_advice_text(prep_focus),
                 }
             )
 
@@ -2976,33 +4305,6 @@ def gap_action_for_item(item: str, jd_text: str = "") -> dict[str, str]:
             "简历可写": "独立实现核心模块，完成接口/组件/模型开发、测试验证和结果复盘。",
             "面试说法": "我会从问题定义、技术选型、核心实现、测试验证和上线结果五步讲这个项目。",
         }
-    if any(text_contains(item_text, keyword) for keyword in ["SimaPro", "GaBi", "openLCA"]):
-        return {
-            "短板": "LCA 软件建模证据不足",
-            "优先级": "P1",
-            "今天就做": "用 openLCA 或任一公开案例跑通一个简单产品系统，记录功能单位、边界、数据库和贡献分析截图。",
-            "交付物": "1 页项目复盘 + 3 张截图：模型结构、贡献分析、结果表。",
-            "简历可写": "使用 openLCA/SimaPro 建立产品生命周期模型，完成系统边界、数据库选择、贡献分析和结果解释。",
-            "面试说法": "我不只看软件按钮，而是按功能单位、边界、清单、数据库、分配规则、结果解释这条线复盘建模过程。",
-        }
-    if any(text_contains(item_text, keyword) for keyword in ["ISO14067", "PEF", "EPD", "PCR"]):
-        return {
-            "短板": "标准/报告方法学表达不够硬",
-            "优先级": "P1",
-            "今天就做": "整理 ISO14067、PEF、EPD/PCR 的差异表，各写 3 条边界、数据质量和结果解释差异。",
-            "交付物": "一张方法学对比表 + 一段 90 秒口述稿。",
-            "简历可写": "梳理 ISO14067、PEF 与 EPD/PCR 方法要求，归纳边界设定、数据质量和报告解释差异。",
-            "面试说法": "我会先确认报告目的和适用标准，再反推边界、数据口径、PCR/方法学依据和结果呈现方式。",
-        }
-    if text_contains(item_text, "CBAM"):
-        return {
-            "短板": "CBAM 案例和数据清单证据不足",
-            "优先级": "P1",
-            "今天就做": "选钢铁、铝或电池材料做一个 CBAM 数据收集模板，列出产品、产量、能源、工艺排放、供应商证明和默认值风险。",
-            "交付物": "一份 CBAM 数据收集表 + 5 条申报风险提示。",
-            "简历可写": "跟踪 CBAM 出海合规要求，拆解企业活动数据、排放因子、默认值使用和申报风险。",
-            "面试说法": "我会从产品范围、活动数据、直接/间接排放、默认值、供应商证明和申报节奏六块拆解项目。",
-        }
     if any(text_contains(item_text, keyword) for keyword in ["英文", "英语", "English", "汇报"]):
         return {
             "短板": "英文汇报证据不足",
@@ -3022,22 +4324,13 @@ def gap_action_for_item(item: str, jd_text: str = "") -> dict[str, str]:
             "面试说法": "我的数据处理习惯是先统一口径和指标定义，再清洗异常值，最后把结论转成业务动作。",
         }
     if text_contains(item_text, "供应链"):
-        if not text_contains(item_text, "碳"):
-            return {
-                "短板": "供应链/采购场景证据不足",
-                "优先级": "P2",
-                "今天就做": "设计一份供应商评估表，字段包括价格、交期、质量、风险、历史表现和备选方案。",
-                "交付物": "供应商评估模板 + 一段采购/供应链面试案例。",
-                "简历可写": "参与供应商信息整理与评估，围绕交期、质量、成本和风险建立对比模板。",
-                "面试说法": "供应链工作不只是催进度，我会把供应商、交期、质量、成本和风险放在同一张表里管理。",
-            }
         return {
-            "短板": "供应链碳数据管理案例不足",
+            "短板": "供应链/采购场景证据不足",
             "优先级": "P2",
-            "今天就做": "设计供应商碳数据收集模板，字段包括活动数据、单位、时间范围、数据来源、证明材料和置信度。",
-            "交付物": "一份供应商数据模板 + 校验规则。",
-            "简历可写": "设计供应链碳数据收集与校验模板，支持供应商活动数据追踪、质量分级和缺失项补充。",
-            "面试说法": "供应链数据的关键不是只催数，而是把字段、单位、证明材料和质量分级规则提前设计清楚。",
+            "今天就做": "设计一份供应商评估表，字段包括价格、交期、质量、风险、历史表现和备选方案。",
+            "交付物": "供应商评估模板 + 一段采购/供应链面试案例。",
+            "简历可写": "参与供应商信息整理与评估，围绕交期、质量、成本和风险建立对比模板。",
+            "面试说法": "供应链工作不只是催进度，我会把供应商、交期、质量、成本和风险放在同一张表里管理。",
         }
     return {
         "短板": item_text or "岗位证据表达不足",
@@ -3062,24 +4355,6 @@ def concrete_gap_row(row: dict[str, str], category: str, jd_text: str = "") -> d
                 "交付物": "一张表：字段=指标口径、数据来源、处理步骤、异常发现、结论、建议动作。",
                 "简历可写": "使用【Excel/Python/SQL】处理【数据来源/样本量】数据，统一【指标口径】，定位【具体问题】，输出【表格/看板/报告】并提出【1-2条建议】。",
                 "面试说法": "这个分析我先确认【指标定义】，再用【工具】处理【数据】，发现【问题】，最后给出【建议动作】。",
-            }
-        )
-    elif any(text_contains(shortcoming, key) for key in ["LCA", "碳", "ISO14067", "EPD", "PCR", "SimaPro", "GaBi", "openLCA"]):
-        concrete.update(
-            {
-                "今天就做": "补一个可展示的 LCA/碳核算案例：产品、功能单位、系统边界、数据来源、排放因子/数据库、结果热点。",
-                "交付物": "1 页案例说明 + 3 张证据图：边界图、清单数据表、热点/贡献分析结果。",
-                "简历可写": "围绕【产品/材料】建立【LCA/碳核算】案例，设定功能单位【填写】，梳理【原料/能源/运输】清单数据，使用【工具/数据库】完成热点分析并形成【报告/截图】。",
-                "面试说法": "这个案例我会按目标、功能单位、边界、清单数据、数据库/因子、热点结果六步讲清楚。",
-            }
-        )
-    elif text_contains(shortcoming, "CBAM"):
-        concrete.update(
-            {
-                "今天就做": "做一份 CBAM 数据清单，不要只看政策摘要；必须列产品编码、产量、直接排放、间接排放、供应商证明、默认值风险。",
-                "交付物": "CBAM 数据收集表 + 5 条申报风险提示。",
-                "简历可写": "拆解【钢铁/铝/电池等产品】CBAM 申报数据，整理产量、能源消耗、直接/间接排放、供应商证明和默认值使用风险，形成【数据清单/风险表】。",
-                "面试说法": "我会从产品范围、活动数据、排放边界、供应商证明、默认值和申报节奏拆这个问题。",
             }
         )
     elif any(text_contains(shortcoming, key) for key in ["产品", "用户", "需求"]):
@@ -3145,8 +4420,8 @@ def build_gap_analysis(
     interview_analysis: dict[str, Any] | None,
 ) -> dict[str, Any]:
     jd_text = jd_analysis.get("raw_text", "") if jd_analysis else ""
-    missing = resume_match.get("missing_skills", []) if resume_match else []
-    score = resume_match.get("score", 0) if resume_match else 0
+    missing = resume_missing_requirement_names(resume_match)
+    score = resume_match_overall_score(resume_match)
     category = jd_analysis.get("category", "目标岗位") if jd_analysis else "目标岗位"
 
     skill_order = [
@@ -3266,6 +4541,19 @@ def build_gap_analysis(
     if interview_gap_rows:
         interview_focus = [f"{row['短缺项']}：{row['为什么这题要优先准备']}" for row in interview_gap_rows[:5]]
 
+    summary = humanize_advice_text(summary)
+    for index, row in enumerate(action_rows):
+        if "今天就做" in row:
+            row["今天就做"] = humanize_advice_text(row["今天就做"], index)
+        row["温和提醒"] = SUPPORTIVE_ADVICE_TAILS[index % len(SUPPORTIVE_ADVICE_TAILS)]
+    weekly_plan = [
+        {
+            **row,
+            "任务": humanize_advice_text(row.get("任务", ""), index),
+        }
+        for index, row in enumerate(weekly_plan)
+    ]
+
     return {
         "summary": summary,
         "current_gaps": {
@@ -3366,21 +4654,118 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
     master_resume = normalize_text(master_resume)
     jd_text = jd_analysis.get("raw_text", "") if jd_analysis else ""
     category = jd_analysis.get("category", "目标岗位") if jd_analysis else "目标岗位"
+    if jd_analysis:
+        match_result = match_resume_to_jd(jd_analysis, master_resume, profile_text=profile_text, fast=True)
+        parsed_jd = match_result.get("parsed_jd", {}) or {}
+        parsed_resume = match_result.get("parsed_resume", {}) or {}
+        keyword_coverage = match_result.get("keyword_coverage", {}) or {}
+        requirement_evidence_map = match_result.get("requirement_evidence_map", []) or []
+        targeted_revision = generate_targeted_resume_revision(
+            parsed_jd,
+            parsed_resume,
+            requirement_evidence_map,
+            keyword_coverage=keyword_coverage,
+            match_result=match_result,
+        )
+        company = ""
+        job_title = parsed_jd.get("job_title") or category
+        skills_revision = targeted_revision.get("skills_section_revision", {}) or {}
+        evidence_supported_skills = list(skills_revision.get("skills_to_keep", []) or [])
+        weak_skills = list(skills_revision.get("skills_to_add_if_true", []) or [])
+        unsupported_skills = list(skills_revision.get("skills_to_remove_or_deemphasize", []) or [])
+        evidence_supported_skills = list(dict.fromkeys(item for item in evidence_supported_skills if item))
+        weak_skills = list(dict.fromkeys(item for item in weak_skills if item))
+        unsupported_skills = list(dict.fromkeys(item for item in unsupported_skills if item))
+        keyword_suggestions = targeted_revision.get("keyword_insertion_suggestions", []) or []
+        safe_keywords = [item.get("keyword", "") for item in keyword_suggestions if item.get("safe_to_add")]
+        keyword_line = " / ".join(list(dict.fromkeys(evidence_supported_skills + weak_skills + safe_keywords))[:12]) or " / ".join((parsed_jd.get("keywords", []) or [])[:8])
+        summary_revision = targeted_revision.get("summary_revision", {}) or {}
+        summary_lines = [
+            targeted_revision.get("target_positioning", ""),
+            targeted_revision.get("revision_strategy", ""),
+            summary_revision.get("suggested_text", ""),
+        ]
+        summary_lines = [line for line in summary_lines if line]
+        skills_section = [
+            format_skill_group("Evidence supported", evidence_supported_skills[:6]),
+            format_skill_group("Add only if true", weak_skills[:6]),
+            format_skill_group("Do not overstate", unsupported_skills[:6]),
+        ]
+        bullet_rows = targeted_revision.get("experience_bullet_rewrites", []) or []
+        bullets = [
+            row.get("suggested_bullet") or row.get("risk_warning") or row.get("reason", "")
+            for row in bullet_rows
+            if row.get("suggested_bullet") or row.get("risk_warning") or row.get("reason")
+        ][:7]
+        evidence_lines = [row.get("original_bullet", "") for row in bullet_rows if row.get("original_bullet")][:8]
+        project_rewrite = [
+            f"{row.get('target_requirement', '')}: {row.get('suggested_bullet') or row.get('risk_warning')}"
+            for row in bullet_rows[:4]
+            if row.get("target_requirement")
+        ]
+        risk_notes = [
+            item.get("warning", "")
+            for item in targeted_revision.get("missing_experience_warnings", [])[:5]
+            if item.get("warning")
+        ] or [
+            item.get("risk_reason", "")
+            for item in targeted_revision.get("interview_risk_points", [])[:5]
+            if item.get("risk_reason")
+        ]
+        ready_resume_text = "\n".join(
+            [
+                "Target Summary",
+                *[f"- {line}" for line in summary_lines],
+                "",
+                "Core Skills",
+                *[f"- {line}" for line in skills_section],
+                "",
+                "Experience Revision Suggestions",
+                *[f"- {line}" for line in bullets],
+                "",
+                "Risk Notes",
+                *[f"- {line}" for line in risk_notes],
+            ]
+        )
+        return {
+            "company": company,
+            "job_title": job_title,
+            "category": category,
+            "keyword_line": keyword_line,
+            "evidence_supported_skills": evidence_supported_skills,
+            "unsupported_skills": unsupported_skills,
+            "summary": "\n".join(summary_lines),
+            "summary_lines": summary_lines,
+            "skills_section": skills_section,
+            "bullets": bullets,
+            "experience_bullets": bullets,
+            "project_rewrite": project_rewrite,
+            "evidence_lines": evidence_lines,
+            "application_pitch": targeted_revision.get("target_positioning", ""),
+            "ready_resume_text": ready_resume_text,
+            "risk_notes": risk_notes,
+            "targeted_resume_revision": targeted_revision,
+            "parsed_jd": parsed_jd,
+            "parsed_resume": parsed_resume,
+            "keyword_coverage": keyword_coverage,
+            "requirement_evidence_map": requirement_evidence_map,
+            "match_result": match_result,
+        }
     skills = jd_skill_list(jd_analysis)
-    matched_skills = []
-    missing_skills = []
+    evidence_supported_skills = []
+    unsupported_skills = []
 
     combined_candidate_text = normalize_text(profile_text + "\n" + master_resume)
     for skill in skills:
         aliases = SKILL_ALIASES.get(skill, [skill])
-        if count_alias_hits(combined_candidate_text, aliases):
-            matched_skills.append(skill)
+        if alias_hits(combined_candidate_text, aliases) or related_alias_hits(combined_candidate_text, skill, aliases):
+            evidence_supported_skills.append(skill)
         else:
-            missing_skills.append(skill)
+            unsupported_skills.append(skill)
 
     company = jd_basic_value(jd_analysis, "公司名")
     job_title = jd_basic_value(jd_analysis, "岗位名") or category
-    keyword_line = " / ".join((matched_skills + missing_skills)[:12]) or "数据分析 / 项目管理 / 产品运营 / 沟通协作"
+    keyword_line = " / ".join((evidence_supported_skills + unsupported_skills)[:12]) or "数据分析 / 项目管理 / 产品运营 / 沟通协作"
 
     role_terms = [
         skill
@@ -3404,17 +4789,17 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
             "产品碳足迹",
             "碳核算",
         ]
-        if skill in matched_skills or skill in skills or text_contains(combined_candidate_text, skill)
+        if skill in evidence_supported_skills or skill in skills
     ]
     tool_terms = [
         skill
         for skill in ["Python", "SQL", "Excel", "Power BI", "Tableau", "pandas", "Stata", "MATLAB", "数据分析"]
-        if text_contains(combined_candidate_text, skill) or skill in matched_skills or skill in skills
+        if skill in evidence_supported_skills or skill in skills or text_contains(jd_text, skill)
     ]
     delivery_terms = [
         skill
         for skill in ["英文能力", "沟通协作", "项目交付", "报告写作", "客户沟通", "行业研究", "复盘"]
-        if skill in matched_skills or text_contains(combined_candidate_text, skill) or text_contains(jd_text, skill)
+        if skill in evidence_supported_skills or text_contains(jd_text, skill)
     ]
     if not role_terms:
         role_terms = skills[:5] or [category]
@@ -3427,11 +4812,13 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
     evidence_lines = pick_resume_evidence_lines(master_resume + "\n" + profile_text, evidence_keywords, limit=8)
 
     target_direction = job_title if job_title and job_title != "未识别" else category
+    matched_line = " / ".join(evidence_supported_skills[:6]) if evidence_supported_skills else "暂未识别到直接证据"
+    missing_line = " / ".join(unsupported_skills[:6]) if unsupported_skills else "暂无明显 JD 关键词缺口"
     summary_lines = [
-        f"目标方向为{target_direction}，已积累 {' / '.join(role_terms[:5])} 相关经历或能力证据。",
-        f"具备 {format_skill_group('', tool_terms).lstrip('：')} 能力，可支持信息整理、数据处理、指标判断和结果输出。",
+        f"目标方向为{target_direction}，JD 明确强调 {' / '.join(skills[:8]) or category}。",
+        f"当前简历可直接对齐的证据：{matched_line}；待补充能力或需谨慎表达的点：{missing_line}。",
     ]
-    summary_lines.append(f"能够围绕岗位目标推进任务拆解、过程协作、交付物沉淀和复盘改进，重点匹配 {' / '.join((skills or role_terms)[:5])}。")
+    summary_lines.append(f"投递版应优先围绕 {' / '.join((skills or role_terms)[:5])} 写真实项目动作、交付物和结果。")
 
     skills_section = [
         format_skill_group("岗位核心能力", role_terms[:6]),
@@ -3452,7 +4839,7 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         bullets.append("参与功能模块、接口、组件或模型开发，完成关键逻辑实现、测试验证和问题复盘。")
     if tool_terms:
         bullets.append(f"使用 {' / '.join(tool_terms[:4])} 处理项目或业务数据，完成清洗、匹配、指标构建和可视化输出。")
-    if "ISO14067" in skills or "PEF" in skills or text_contains(combined_candidate_text, "ISO14067") or text_contains(combined_candidate_text, "PEF"):
+    if "ISO14067" in skills or "PEF" in skills or text_contains(jd_text, "ISO14067") or text_contains(jd_text, "PEF"):
         bullets.append("围绕 ISO14067 与 PEF 方法差异整理研究材料，对边界设定、分配规则、数据质量和结果解释进行对比。")
     if "CBAM" in skills or text_contains(jd_text, "CBAM"):
         bullets.append("跟踪欧盟 CBAM 要求，拆解企业活动数据、排放因子、默认值使用和申报风险，沉淀资料清单。")
@@ -3460,7 +4847,7 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         bullets.append("整理 EPD/PCR 与产品碳足迹报告相关材料，归纳方法学依据、数据质量说明和报告核心章节。")
     if "英文能力" in skills or any(text_contains(jd_text, word) for word in ["英文", "英语", "English"]):
         bullets.append("阅读英文资料、客户材料或项目文档，提炼关键要求，并准备中英文项目说明。")
-    bullets = list(dict.fromkeys(bullets))[:7] or generate_resume_bullets(jd_analysis, {"matched_skills": matched_skills})
+    bullets = list(dict.fromkeys(bullets))[:7]
 
     project_rewrite = [
         f"项目名称：{target_direction}相关项目 / 业务分析与交付复盘",
@@ -3469,10 +4856,16 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         "项目产出：形成分析表、方案文档、结果图表、流程模板或复盘结论，为业务判断或后续执行提供依据。",
     ]
 
-    application_pitch = (
-        f"我对{target_direction}方向比较匹配，核心优势是{' / '.join(role_terms[:4])}和{' / '.join(tool_terms[:3])}。"
-        f"如果岗位涉及{' / '.join(skills[:4]) or '业务拆解、数据处理和项目交付'}，可以较快进入资料整理、执行推进、结果输出和复盘改进工作。"
-    )
+    if evidence_supported_skills:
+        application_pitch = (
+            f"我对{target_direction}方向的匹配点主要集中在{' / '.join(evidence_supported_skills[:4])}。"
+            f"投递材料会优先围绕{' / '.join(skills[:4]) or '岗位核心任务'}补充真实项目动作、交付物和结果。"
+        )
+    else:
+        application_pitch = (
+            f"{target_direction}的 JD 要求与当前简历直接证据还不够贴合。"
+            "投递前应先补出可验证的项目、报告、截图或作品，再生成正式投递版。"
+        )
 
     ready_resume_text = "\n".join(
         [
@@ -3490,9 +4883,9 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         ]
     )
 
-    if missing_skills:
+    if unsupported_skills:
         risk_notes = [
-            f"JD 明确提到但当前简历证据不足：{' / '.join(missing_skills[:8])}。",
+            f"JD 明确提到但当前简历证据不足：{' / '.join(unsupported_skills[:8])}。",
             "没有实际做过的工具、项目或标准不要写成熟练掌握；可以先补课程项目、独立案例或作品截图。"
         ]
     else:
@@ -3503,8 +4896,8 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         "job_title": job_title,
         "category": category,
         "keyword_line": keyword_line,
-        "matched_skills": matched_skills,
-        "missing_skills": missing_skills,
+        "evidence_supported_skills": evidence_supported_skills,
+        "unsupported_skills": unsupported_skills,
         "summary": "\n".join(summary_lines),
         "summary_lines": summary_lines,
         "skills_section": skills_section,
@@ -3548,7 +4941,7 @@ def build_resume_shortcoming_rows(
             }
         )
 
-    for skill in resume_match.get("hard_skill_gaps", [])[:5]:
+    for skill in resume_hard_gap_names(resume_match, 5):
         add_row(
             "P1",
             "硬缺口",
@@ -3558,7 +4951,7 @@ def build_resume_shortcoming_rows(
             f"简历中至少出现 1 条与 {skill} 直接相关的真实经历句，且能在面试里展开讲 60 秒。",
         )
 
-    for skill in resume_match.get("evidence_skill_gaps", [])[:5]:
+    for skill in resume_evidence_gap_names(resume_match, 5):
         add_row(
             "P1",
             "证据弱",
@@ -3568,7 +4961,7 @@ def build_resume_shortcoming_rows(
             f"{skill} 对应的经历至少补齐 2 项：工具/方法、交付物、结果、数字。",
         )
 
-    for skill in resume_match.get("expression_skill_gaps", [])[:5]:
+    for skill in resume_expression_gap_names(resume_match, 5):
         add_row(
             "P2",
             "表达偏差",
@@ -3609,8 +5002,9 @@ def build_resume_shortcoming_rows(
             "简历中能看到至少 1 条英文证据，例如英文汇报、英文材料整理、考试成绩或英文项目沟通。",
         )
 
-    if not rows and resume_match.get("gap_examples"):
-        for item in resume_match.get("gap_examples", [])[:4]:
+    gap_examples = resume_gap_example_texts(resume_match, 4)
+    if not rows and gap_examples:
+        for item in gap_examples:
             add_row(
                 "P2",
                 "综合优化",
@@ -3632,11 +5026,48 @@ def build_custom_resume_revision_rows(
     if not custom_resume:
         return []
 
-    matched = custom_resume.get("matched_skills", []) or []
-    missing = custom_resume.get("missing_skills", []) or []
-    evidence_gaps = resume_match.get("evidence_skill_gaps", []) if resume_match else []
-    expression_gaps = resume_match.get("expression_skill_gaps", []) if resume_match else []
-    hard_gaps = resume_match.get("hard_skill_gaps", []) if resume_match else []
+    targeted = custom_resume.get("targeted_resume_revision") or {}
+    if targeted:
+        rows: list[dict[str, str]] = []
+        for item in targeted.get("experience_bullet_rewrites", [])[:8]:
+            rows.append(
+                {
+                    "\u6a21\u5757": "targeted_experience",
+                    "\u539f\u53e5": item.get("original_bullet", ""),
+                    "\u5efa\u8bae\u6210\u7a3f": item.get("suggested_bullet") or item.get("risk_warning", ""),
+                    "\u5efa\u8bae\u600e\u4e48\u6539": item.get("reason", ""),
+                    "\u5bf9\u5e94\u9879": item.get("target_requirement", ""),
+                }
+            )
+        for item in targeted.get("keyword_insertion_suggestions", [])[:6]:
+            if item.get("safe_to_add"):
+                rows.append(
+                    {
+                        "\u6a21\u5757": "keyword_insertion",
+                        "\u539f\u53e5": item.get("keyword", ""),
+                        "\u5efa\u8bae\u6210\u7a3f": f"{item.get('insertion_location', '')}: {item.get('keyword', '')}",
+                        "\u5efa\u8bae\u600e\u4e48\u6539": item.get("reason", ""),
+                        "\u5bf9\u5e94\u9879": item.get("keyword", ""),
+                    }
+                )
+        for item in targeted.get("missing_experience_warnings", [])[:5]:
+            rows.append(
+                {
+                    "\u6a21\u5757": "risk_warning",
+                    "\u539f\u53e5": item.get("requirement", ""),
+                    "\u5efa\u8bae\u6210\u7a3f": "",
+                    "\u5efa\u8bae\u600e\u4e48\u6539": item.get("warning", ""),
+                    "\u5bf9\u5e94\u9879": item.get("requirement", ""),
+                }
+            )
+        if rows:
+            return rows[:12]
+
+    matched = custom_resume.get("evidence_supported_skills", []) or []
+    missing = custom_resume.get("unsupported_skills", []) or []
+    evidence_gaps = resume_evidence_gap_names(resume_match)
+    expression_gaps = resume_expression_gap_names(resume_match)
+    hard_gaps = resume_hard_gap_names(resume_match)
     category = custom_resume.get("category") or (jd_analysis.get("category", "目标岗位") if jd_analysis else "目标岗位")
 
     rows: list[dict[str, str]] = []
@@ -3654,7 +5085,7 @@ def build_custom_resume_revision_rows(
             {
                 "模块": "核心能力/技能",
                 "当前问题": "技能模块容易出现两种问题：要么太泛，要么把没做过的词也写进去。",
-                "建议怎么改": f"保留已覆盖关键词：{' / '.join(matched[:6]) or '暂无明显命中'}；对缺口词 {' / '.join(missing[:4]) or '暂无'}，只有在你有真实证据时才补进技能或经历。",
+                "建议怎么改": f"保留已覆盖能力：{' / '.join(matched[:6]) or '暂无明显覆盖'}；对待补充能力 {' / '.join(missing[:4]) or '暂无'}，只有在你有真实证据时才补进技能或经历。",
                 "这一版要做到": "技能模块按岗位相关性排序，优先写真实使用过的工具、方法、场景，不写虚高熟练度。",
             }
         )
@@ -4024,13 +5455,13 @@ def build_resume_shortcoming_rows_v2(
             gap_done_text_v2(skill, gap_type, action_seed, signal),
         )
 
-    for skill in resume_match.get("hard_skill_gaps", [])[:5]:
+    for skill in resume_hard_gap_names(resume_match, 5):
         add_skill_gap(skill, "硬缺口", "P1")
 
-    for skill in resume_match.get("evidence_skill_gaps", [])[:5]:
+    for skill in resume_evidence_gap_names(resume_match, 5):
         add_skill_gap(skill, "证据弱", "P1")
 
-    for skill in resume_match.get("expression_skill_gaps", [])[:5]:
+    for skill in resume_expression_gap_names(resume_match, 5):
         add_skill_gap(skill, "表达偏差", "P2")
 
     if not sections.get("项目经历") and not sections.get("实习/工作经历"):
@@ -4076,8 +5507,9 @@ def build_resume_shortcoming_rows_v2(
             "简历中能看到至少 1 条英文证据，例如英文汇报、英文材料整理、考试成绩或英文项目沟通。",
         )
 
-    if not rows and resume_match.get("gap_examples"):
-        for item in resume_match.get("gap_examples", [])[:4]:
+    gap_examples = resume_gap_example_texts(resume_match, 4)
+    if not rows and gap_examples:
+        for item in gap_examples:
             action_seed = targeted_gap_seed_v2(item, category, jd_text)
             add_row(
                 "P2",
@@ -4104,11 +5536,48 @@ def build_custom_resume_revision_rows_v2(
     if not custom_resume:
         return []
 
-    matched = custom_resume.get("matched_skills", []) or []
-    missing = custom_resume.get("missing_skills", []) or []
-    evidence_gaps = resume_match.get("evidence_skill_gaps", []) if resume_match else []
-    expression_gaps = resume_match.get("expression_skill_gaps", []) if resume_match else []
-    hard_gaps = resume_match.get("hard_skill_gaps", []) if resume_match else []
+    targeted = custom_resume.get("targeted_resume_revision") or {}
+    if targeted:
+        rows: list[dict[str, str]] = []
+        for item in targeted.get("experience_bullet_rewrites", [])[:8]:
+            rows.append(
+                {
+                    "\u6a21\u5757": "targeted_experience",
+                    "\u539f\u53e5": item.get("original_bullet", ""),
+                    "\u5efa\u8bae\u6210\u7a3f": item.get("suggested_bullet") or item.get("risk_warning", ""),
+                    "\u5efa\u8bae\u600e\u4e48\u6539": item.get("reason", ""),
+                    "\u5bf9\u5e94\u9879": item.get("target_requirement", ""),
+                }
+            )
+        for item in targeted.get("keyword_insertion_suggestions", [])[:6]:
+            if item.get("safe_to_add"):
+                rows.append(
+                    {
+                        "\u6a21\u5757": "keyword_insertion",
+                        "\u539f\u53e5": item.get("keyword", ""),
+                        "\u5efa\u8bae\u6210\u7a3f": f"{item.get('insertion_location', '')}: {item.get('keyword', '')}",
+                        "\u5efa\u8bae\u600e\u4e48\u6539": item.get("reason", ""),
+                        "\u5bf9\u5e94\u9879": item.get("keyword", ""),
+                    }
+                )
+        for item in targeted.get("missing_experience_warnings", [])[:5]:
+            rows.append(
+                {
+                    "\u6a21\u5757": "risk_warning",
+                    "\u539f\u53e5": item.get("requirement", ""),
+                    "\u5efa\u8bae\u6210\u7a3f": "",
+                    "\u5efa\u8bae\u600e\u4e48\u6539": item.get("warning", ""),
+                    "\u5bf9\u5e94\u9879": item.get("requirement", ""),
+                }
+            )
+        if rows:
+            return rows[:12]
+
+    matched = custom_resume.get("evidence_supported_skills", []) or []
+    missing = custom_resume.get("unsupported_skills", []) or []
+    evidence_gaps = resume_evidence_gap_names(resume_match)
+    expression_gaps = resume_expression_gap_names(resume_match)
+    hard_gaps = resume_hard_gap_names(resume_match)
     category = custom_resume.get("category") or (jd_analysis.get("category", "目标岗位") if jd_analysis else "目标岗位")
     jd_text = jd_analysis.get("raw_text", "") if jd_analysis else ""
     jd_skills = jd_skill_list(jd_analysis)[:6] if jd_analysis else []
@@ -4217,24 +5686,8 @@ INTERNSHIP_DIMENSIONS = {
             "法务",
             "人力",
             "供应链",
-            "LCA",
-            "生命周期",
-            "产品碳足迹",
-            "CFP",
-            "ISO14067",
-            "ISO 14067",
-            "PEF",
-            "EPD",
-            "PCR",
-            "CBAM",
-            "碳核算",
-            "碳盘查",
-            "碳核查",
-            "GHG",
-            "排放因子",
-            "SimaPro",
-            "GaBi",
-            "openLCA",
+            "可持续",
+            "合规",
         ],
     },
     "项目含金量": {
@@ -4321,22 +5774,111 @@ INTERNSHIP_DIMENSIONS = {
     },
 }
 
+INTERNSHIP_DIMENSION_EXTENSIONS = {
+    "岗位相关度": [
+        "测试", "质量", "采购", "物流", "库存", "计划", "招聘", "培训", "绩效", "会计", "审计",
+        "合同", "风控", "UI", "UX", "视觉", "交互", "内容", "品牌", "渠道", "商务", "BD",
+    ],
+    "项目含金量": [
+        "上线", "验收", "复盘", "A/B", "实验", "增长", "漏斗", "预算", "成本", "合同",
+        "风控", "流程优化", "质量检查", "库存分析", "招聘漏斗", "作品集", "原型", "组件",
+    ],
+    "目标行业匹配": [
+        "电商", "教育", "游戏", "广告", "物流", "零售", "SaaS", "软件", "硬件", "地产",
+        "政企", "公共服务", "文化传媒", "半导体", "医药", "快消",
+    ],
+    "可迁移技能": [
+        "Notion", "飞书", "CRM", "Figma", "Axure", "SPSS", "R", "PowerPoint", "文案",
+        "竞品分析", "流程梳理", "问题定位", "风险识别", "优先级判断",
+    ],
+    "简历信号": [
+        "验收", "落地", "闭环", "上线", "优化", "提升", "降低", "节省", "沉淀", "复用",
+        "标准化", "自动化", "可视化", "SOP", "作品集",
+    ],
+}
+
+for _dimension, _extra_keywords in INTERNSHIP_DIMENSION_EXTENSIONS.items():
+    if _dimension in INTERNSHIP_DIMENSIONS:
+        INTERNSHIP_DIMENSIONS[_dimension]["keywords"] = list(
+            dict.fromkeys(INTERNSHIP_DIMENSIONS[_dimension]["keywords"] + _extra_keywords)
+        )
+
 INTERNSHIP_RISK_KEYWORDS = [
-    "ESG报告",
-    "ESG 报告",
-    "CSR",
-    "公众号",
-    "推文",
-    "活动策划",
-    "行政",
     "会议组织",
     "材料整理",
-    "翻译",
     "打杂",
-    "品牌传播",
-    "披露",
-    "评级问卷",
+    "纯执行",
+    "只做排版",
+    "只做整理",
+    "无培训",
+    "无成长",
+    "无导师",
+    "服从安排",
+    "临时安排",
 ]
+
+
+GENERAL_HIGH_VALUE_INTERNSHIP_SIGNALS = [
+    "真实项目", "核心项目", "项目交付", "独立负责", "主导", "需求", "数据", "指标",
+    "代码", "开发", "模型", "分析", "调研", "用户", "客户", "供应商", "方案",
+    "报告", "看板", "流程", "测试", "上线", "复盘", "交付物", "成果",
+]
+
+CAREER_FAMILY_SIGNAL_TERMS = {
+    "技术/研发": ["研发", "前端", "后端", "算法", "工程", "代码", "系统", "测试", "上线", "Git", "Java", "Python", "C++"],
+    "产品/运营": ["产品", "运营", "用户", "需求", "转化", "留存", "增长", "活动", "内容", "策略"],
+    "数据/分析": ["数据", "指标", "SQL", "Python", "Excel", "看板", "模型", "分析", "A/B", "可视化"],
+    "市场/销售/商务": ["市场", "销售", "商务", "客户", "渠道", "线索", "转化", "大客户", "解决方案"],
+    "咨询/项目": ["咨询", "项目", "交付", "访谈", "调研", "方案", "PMO", "汇报", "行业研究"],
+    "财务/法务/人力": ["财务", "会计", "审计", "预算", "法务", "合同", "合规", "招聘", "培训", "绩效"],
+    "供应链/制造": ["供应链", "采购", "生产", "计划", "库存", "供应商", "质量", "制造", "物流"],
+    "设计/内容": ["设计", "视觉", "交互", "作品集", "文案", "内容", "品牌", "排版", "剪辑"],
+    "可持续/ESG": ["ESG", "可持续", "LCA", "碳", "CBAM", "EPD", "碳核算", "合规", "披露"],
+}
+
+
+def career_family_hits(text: str, *, profile_text: str = "") -> dict[str, list[str]]:
+    combined = normalize_text("\n".join([text, profile_text]))
+    return {
+        family: [term for term in terms if text_contains(combined, term)]
+        for family, terms in CAREER_FAMILY_SIGNAL_TERMS.items()
+        if any(text_contains(combined, term) for term in terms)
+    }
+
+
+def dominant_career_families(text: str, *, profile_text: str = "", limit: int = 3) -> list[str]:
+    hits = career_family_hits(text, profile_text=profile_text)
+    ordered = sorted(hits.items(), key=lambda item: len(item[1]), reverse=True)
+    return [family for family, _terms in ordered[:limit]]
+
+
+def internship_signal_profile(internship_text: str, profile_text: str = "") -> dict[str, Any]:
+    full_text = normalize_text("\n".join([internship_text, profile_text]))
+    internship_only_text = normalize_text(internship_text)
+    project_signals = GENERAL_HIGH_VALUE_INTERNSHIP_SIGNALS + ["客户项目", "报告核心章节", "现场"]
+    mentor_signals = ["导师", "mentor", "带教", "反馈", "培训", "复盘", "review"]
+    output_signals = [
+        "交付物", "报告", "表格", "看板", "代码", "截图", "模板", "文档",
+        "方案", "模型", "PPT", "复盘", "成果",
+    ]
+    constraint_signals = ["每周", "到岗", "远程", "现场", "转正", "留用", "薪资", "补贴", "周期"]
+    low_value_signals = INTERNSHIP_RISK_KEYWORDS + ["只做", "辅助", "支持性", "重复性", "基础整理"]
+    hard_warning_signals = ["纯行政", "销售性质", "无导师", "无转正", "长期无薪", "没有项目", "只招免费劳动力"]
+
+    def hits(keywords: list[str], source: str = internship_only_text) -> list[str]:
+        return [keyword for keyword in keywords if text_contains(source, keyword)]
+
+    family_hits = career_family_hits(internship_only_text, profile_text=profile_text)
+    return {
+        "project_hits": hits(project_signals, internship_only_text),
+        "mentor_hits": hits(mentor_signals, internship_only_text),
+        "output_hits": hits(output_signals, internship_only_text),
+        "constraint_hits": hits(constraint_signals, internship_only_text),
+        "low_value_hits": hits(low_value_signals, internship_only_text),
+        "hard_warning_hits": hits(hard_warning_signals, internship_only_text),
+        "target_hits": list(dict.fromkeys(term for terms in family_hits.values() for term in terms)),
+        "career_families": dominant_career_families(full_text, profile_text=profile_text),
+    }
 
 
 def analyze_internship(
@@ -4368,51 +5910,101 @@ def analyze_internship(
             }
         )
 
-    high_hits = [keyword for keyword in HIGH_VALUE_KEYWORDS if text_contains(internship_only_text, keyword)]
+    high_hits = list(
+        dict.fromkeys(
+            [keyword for keyword in GENERAL_HIGH_VALUE_INTERNSHIP_SIGNALS if text_contains(internship_only_text, keyword)]
+            + [keyword for keyword in HIGH_VALUE_KEYWORDS if text_contains(internship_only_text, keyword)]
+        )
+    )
     low_hits = [keyword for keyword in INTERNSHIP_RISK_KEYWORDS if text_contains(internship_only_text, keyword)]
-    target_hits = []
-    for keyword in ["技术", "产品", "运营", "数据", "研发", "咨询", "金融", "制造", "供应链", "合规", "项目", "客户", "LCA", "CBAM", "EPD"]:
-        if text_contains(text, keyword):
-            target_hits.append(keyword)
+    signals = internship_signal_profile(internship_only_text, profile_text)
+    target_hits = signals["target_hits"]
 
-    bonus = min(len(high_hits) * 2, 10) + min(len(target_hits), 6)
-    penalty = min(len(low_hits) * 4, 18)
-    final_score = int(np.clip(round(total_score + bonus - penalty), 0, 100))
+    project_strength = min(len(signals["project_hits"]) * 4, 18)
+    mentor_strength = min(len(signals["mentor_hits"]) * 3, 9)
+    output_strength = min(len(signals["output_hits"]) * 3, 15)
+    target_strength = min(len(target_hits) * 2, 10)
+    ambiguity_penalty = 0
+    if not signals["project_hits"]:
+        ambiguity_penalty += 8
+    if not signals["output_hits"]:
+        ambiguity_penalty += 6
+    if not signals["mentor_hits"]:
+        ambiguity_penalty += 4
+    risk_penalty = min(len(low_hits) * 5, 25) + min(len(signals["hard_warning_hits"]) * 9, 24)
+    bonus = min(len(high_hits) * 2, 10) + project_strength + mentor_strength + output_strength + target_strength
+    final_score = int(np.clip(round(total_score + bonus - risk_penalty - ambiguity_penalty), 0, 100))
+
+    if signals["hard_warning_hits"] and not signals["project_hits"]:
+        final_score = min(final_score, 48)
+    elif low_hits and len(low_hits) >= 3 and len(signals["project_hits"]) < 2:
+        final_score = min(final_score, 58)
+    if len(signals["project_hits"]) >= 3 and len(signals["output_hits"]) >= 2 and len(signals["mentor_hits"]) >= 1:
+        final_score = max(final_score, 72)
+    elif len(signals["project_hits"]) >= 2 and len(signals["output_hits"]) >= 2:
+        final_score = max(final_score, 64)
+    elif len(signals["project_hits"]) >= 2 and len(signals["mentor_hits"]) >= 1:
+        final_score = max(final_score, 58)
+    elif len(high_hits) >= 2 and len(target_hits) >= 2 and not low_hits:
+        final_score = max(final_score, 68)
+
+    evidence_ceiling = 92
+    if not signals["output_hits"]:
+        evidence_ceiling = 68
+    elif not signals["mentor_hits"]:
+        evidence_ceiling = 86
+    elif len(signals["project_hits"]) < 3:
+        evidence_ceiling = 88
+    if low_hits and len(signals["project_hits"]) < 2:
+        evidence_ceiling = min(evidence_ceiling, 52)
+    if signals["hard_warning_hits"]:
+        evidence_ceiling = min(evidence_ceiling, 48)
+    final_score = min(final_score, evidence_ceiling)
+    if low_hits and not signals["project_hits"]:
+        final_score = max(final_score, 24)
 
     if final_score >= 82:
         verdict = "非常有利，建议优先争取"
-        decision = "如果薪资、导师和时间安排可接受，可以作为后续全职投递的重要跳板。"
+        decision = "可以优先争取，但前提是确认导师、真实项目和可沉淀产出都能落地。"
     elif final_score >= 68:
         verdict = "比较有利，值得考虑"
         decision = "适合去，但入职前要确认能接触真实项目、数据和可写进简历的产出。"
     elif final_score >= 52:
         verdict = "中等价值，需要谈清楚工作内容"
-        decision = "不要只看公司名，重点确认是否能接触真实项目、核心任务和可量化产出。"
+        decision = "先别只看公司名或 title，必须把真实任务、导师反馈、可展示产出和时间成本谈清楚。"
     else:
         verdict = "帮助有限，谨慎选择"
-        decision = "如果主要是行政、宣传、披露材料整理，除非没有更好选择，否则不建议作为核心实习。"
+        decision = "如果主要是行政、宣传、披露材料整理，除非短期必须补履历，否则不建议作为核心实习。"
 
     reasons = []
     if high_hits:
-        reasons.append("命中了高价值岗位关键词：" + " / ".join(high_hits[:8]))
-    if any(keyword in internship_only_text for keyword in ["SimaPro", "GaBi", "openLCA"]):
-        reasons.append("有机会补齐 LCA 软件建模证据，这是后续投递技术岗的强信号。")
+        reasons.append("出现优先关注岗位信号：" + " / ".join(high_hits[:8]))
+    if signals["project_hits"]:
+        reasons.append("真实项目/核心任务信号：" + " / ".join(signals["project_hits"][:8]))
+    if signals["output_hits"]:
+        reasons.append("可沉淀产出信号：" + " / ".join(signals["output_hits"][:8]))
+    if signals["mentor_hits"]:
+        reasons.append("带教或反馈信号：" + " / ".join(signals["mentor_hits"][:6]))
     if any(text_contains(internship_only_text, keyword) for keyword in ["客户", "项目交付", "报告", "现场", "供应商"]):
         reasons.append("包含真实项目交付、客户沟通或供应链场景，简历可讲性较强。")
     if any(text_contains(internship_only_text, keyword) for keyword in ["产品", "运营", "数据", "研发", "财务", "法务", "人力", "供应链"]):
         reasons.append("岗位职能较明确，便于沉淀可迁移的项目证据。")
-    if any(text_contains(internship_only_text, keyword) for keyword in ["CBAM", "出海", "欧盟", "合规"]):
-        reasons.append("出海合规属性明确，符合 CBAM/海外合规方向的差异化定位。")
+    if signals.get("career_families"):
+        reasons.append("识别到职业方向：" + " / ".join(signals["career_families"][:3]))
     if not reasons:
         reasons.append("目前描述里的岗位证据不够明确，需要补充具体任务后再判断。")
 
     risks = []
     if low_hits:
         risks.append("存在低价值/杂务风险词：" + " / ".join(low_hits[:8]))
+    if signals["hard_warning_hits"]:
+        risks.append("存在硬风险信号：" + " / ".join(signals["hard_warning_hits"][:6]))
     if not any(text_contains(internship_only_text, keyword) for keyword in ["数据", "指标", "需求", "开发", "运营", "客户", "报告", "项目"]):
         risks.append("没有看到清晰的数据、需求、开发、运营或项目交付任务，可能难以转化为简历卖点。")
-    if text_contains(internship_only_text, "ESG") and not high_hits:
-        risks.append("如果只做披露、问卷或材料整理，对后续求职帮助有限。")
+    if not signals["mentor_hits"]:
+        risks.append("没有看到导师、带教或反馈机制，入职前需要确认谁负责指导和验收产出。")
+    if not signals["output_hits"]:
+        risks.append("没有看到明确可沉淀产出，容易做完以后只剩“协助/支持”这类弱表述。")
     if not risks:
         risks.append("主要风险是实习中拿不到可量化成果，需要主动争取项目产出。")
 
@@ -4421,18 +6013,14 @@ def analyze_internship(
         "保留可脱敏展示的表格、看板、代码截图、需求文档、流程模板或报告目录。",
         "把实习内容改写成岗位关键词和业务结果，而不是泛泛写“协助”“支持”。",
     ]
-    if any(text_contains(internship_only_text, keyword) for keyword in ["SimaPro", "GaBi", "openLCA", "LCA"]):
-        recommended_outputs.append("争取完整跑通一次建模流程：功能单位、系统边界、数据库选择、分配规则、结果解释。")
-    if any(text_contains(internship_only_text, keyword) for keyword in ["CBAM", "出海", "欧盟"]):
-        recommended_outputs.append("争取完成一个行业 CBAM 数据收集表或申报逻辑拆解案例。")
     if any(text_contains(internship_only_text, keyword) for keyword in ["英文", "英语", "海外", "欧盟"]):
         recommended_outputs.append("争取做一次英文材料整理或英文汇报，补强英文面试证据。")
 
     questions_to_ask = [
-        "我是否能参与真实客户项目，还是主要做资料整理？",
-        "是否能接触数据、需求、客户、开发、运营或报告核心章节？",
-        "实习结束前能否产出一个可脱敏复盘的项目案例？",
-        "导师是否能给我反馈方法、交付物和沟通上的问题？",
+        "前三周最重要的具体交付物是什么？是报告章节、数据表、需求文档、代码模块，还是资料整理？",
+        "我是否能参与真实客户/业务/研发/运营项目，还是主要做行政和材料支持？",
+        "谁会验收我的工作？每周是否有反馈和复盘？",
+        "实习结束前能否沉淀一个可脱敏复盘的项目案例或作品证据？",
     ]
     negotiation_script = [
         "我希望实习期间能参与至少一个真实项目的数据、需求、执行或报告核心环节，这样可以更快理解业务流程。",
@@ -4452,17 +6040,18 @@ def analyze_internship(
     return {
         "score": final_score,
         "verdict": verdict,
-        "decision": decision,
+        "decision": humanize_advice_text(decision),
         "dimension_scores": pd.DataFrame(dimension_rows),
         "high_hits": high_hits,
         "low_hits": low_hits,
         "target_hits": target_hits,
+        "signal_profile": signals,
         "reasons": reasons,
-        "risks": risks,
-        "recommended_outputs": recommended_outputs,
+        "risks": humanize_advice_list(risks),
+        "recommended_outputs": humanize_advice_list(recommended_outputs),
         "questions_to_ask": questions_to_ask,
         "negotiation_script": negotiation_script,
-        "first_week_plan": first_week_plan,
+        "first_week_plan": humanize_advice_list(first_week_plan),
         "resume_bullets": resume_bullets,
     }
 
@@ -4516,7 +6105,8 @@ def parse_recruitment_record(text: str, source: str = "") -> dict[str, Any]:
         "学历要求": education,
         "经验要求": experience,
         "公司层级": infer_company_tier(company, text),
-        "岗位分类": jd.get("category", "待判断"),
+        "岗位分类": category_display_label(jd),
+        "岗位方向依据": jd.get("category_meta", {}).get("source", ""),
         "高价值岗位": "是" if jd.get("value", {}).get("is_high_value") else "否",
         "低价值风险": "是" if jd.get("value", {}).get("is_generic_esg") else "否",
         "技能关键词": " / ".join(skills[:10]),
@@ -4633,8 +6223,8 @@ def load_recruitment_posts() -> pd.DataFrame:
 def count_shortcomings(resume_match: dict[str, Any] | None, gap_analysis: dict[str, Any] | None) -> int:
     count = 0
     if resume_match:
-        count += len(resume_match.get("missing_skills", []))
-        count += len(resume_match.get("gap_examples", []))
+        count += len(resume_missing_requirement_names(resume_match))
+        count += len(resume_gap_example_texts(resume_match))
     if gap_analysis:
         for items in gap_analysis.get("current_gaps", {}).values():
             count += len(items)
@@ -4663,6 +6253,148 @@ def historical_rates() -> dict[str, float]:
     }
 
 
+def offer_prediction_context(
+    jd_analysis: dict[str, Any] | None,
+    resume_match: dict[str, Any] | None,
+    gap_analysis: dict[str, Any] | None,
+    company_tier: str,
+    education_fit: str,
+    english_level: str,
+) -> dict[str, Any]:
+    match_score = resume_match_overall_score(resume_match) if resume_match else 55
+    jd_text = jd_analysis.get("raw_text", "") if jd_analysis else ""
+    jd_value = jd_analysis.get("value", {}) if jd_analysis else {}
+    role_category = jd_analysis.get("category", "待判断") if jd_analysis else "待判断"
+    career_families = dominant_career_families(jd_text, limit=3) if jd_text else []
+    resume_scope_note = (
+        "本次预测只代表当前简历版本与这条 JD 的匹配度，不代表候选人的职业上限。"
+        if resume_match
+        else "当前缺少简历匹配结果，预测仅能按 JD 和默认漏斗粗略估算。"
+    )
+    english_required = any(text_contains(jd_text, keyword) for keyword in ["英文", "英语", "English", "口语", "CET-6", "六级"])
+    hard_gaps = resume_hard_gap_names(resume_match)
+    evidence_gaps = resume_evidence_gap_names(resume_match)
+    expression_gaps = resume_expression_gap_names(resume_match)
+    missing = resume_missing_requirement_names(resume_match)
+    evidence_score = int(resume_match.get("evidence_score", match_score) if resume_match else 45)
+    coverage_score = int(resume_match.get("coverage_score", match_score) if resume_match else 45)
+    hard_requirement_score = int(resume_match.get("hard_requirement_score", 70) if resume_match else 55)
+    shortcomings = count_shortcomings(resume_match, gap_analysis)
+    risk_flags = []
+    if jd_value.get("is_generic_esg"):
+        risk_flags.append("岗位职责可能偏泛或低价值")
+    if hard_gaps:
+        risk_flags.append("当前简历版本存在硬技能缺口")
+    if evidence_gaps:
+        risk_flags.append("当前简历版本证据支撑不足")
+    if education_fit == "低于要求":
+        risk_flags.append("学历/硬门槛低于要求")
+    if english_required and english_level != "强":
+        risk_flags.append("英文要求未完全匹配")
+
+    if education_fit == "低于要求":
+        bottleneck = "硬门槛"
+    elif hard_gaps:
+        bottleneck = "核心能力"
+    elif evidence_gaps:
+        bottleneck = "证据质量"
+    elif expression_gaps or missing:
+        bottleneck = "表达贴合"
+    elif company_tier == "头部/知名机构" and match_score < 82:
+        bottleneck = "竞争强度"
+    else:
+        bottleneck = "投递节奏"
+
+    confidence_points = 0
+    confidence_points += 2 if jd_analysis else 0
+    confidence_points += 2 if resume_match else 0
+    confidence_points += 1 if gap_analysis else 0
+    confidence_points += 1 if company_tier != "未知" else 0
+    confidence_points += 1 if education_fit != "不确定" else 0
+    confidence_label = "高" if confidence_points >= 6 else "中" if confidence_points >= 4 else "低"
+
+    return {
+        "match_score": match_score,
+        "english_required": english_required,
+        "shortcomings": shortcomings,
+        "hard_gaps": hard_gaps,
+        "evidence_gaps": evidence_gaps,
+        "expression_gaps": expression_gaps,
+        "missing": missing,
+        "evidence_score": evidence_score,
+        "coverage_score": coverage_score,
+        "hard_requirement_score": hard_requirement_score,
+        "risk_flags": risk_flags,
+        "bottleneck": bottleneck,
+        "confidence_label": confidence_label,
+        "role_category": role_category,
+        "career_families": career_families,
+        "resume_scope_note": resume_scope_note,
+        "jd_value": jd_value,
+    }
+
+
+def offer_stage_diagnostics(context: dict[str, Any], company_tier: str, education_fit: str) -> dict[str, Any]:
+    match_score = int(context.get("match_score", 55))
+    evidence_score = int(context.get("evidence_score", 45))
+    coverage_score = int(context.get("coverage_score", 45))
+    hard_requirement_score = int(context.get("hard_requirement_score", 55))
+    hard_gap_count = len(context.get("hard_gaps", []))
+    evidence_gap_count = len(context.get("evidence_gaps", []))
+    missing_count = len(context.get("missing", []))
+
+    screening_score = round(
+        coverage_score * 0.42
+        + evidence_score * 0.28
+        + hard_requirement_score * 0.2
+        + match_score * 0.1
+        - hard_gap_count * 7
+        - evidence_gap_count * 3,
+        1,
+    )
+    interview_story_score = round(
+        evidence_score * 0.5
+        + match_score * 0.25
+        + min(100, (8 - missing_count) * 10) * 0.15
+        + min(100, (6 - evidence_gap_count) * 14) * 0.1,
+        1,
+    )
+    competition_penalty = {"头部/知名机构": 16, "中高层级": 8, "普通公司": 2, "小公司/冷门岗位": -4}.get(company_tier, 4)
+    strategy_score = round(match_score * 0.45 + evidence_score * 0.28 + hard_requirement_score * 0.17 - competition_penalty, 1)
+    if education_fit == "低于要求":
+        screening_score = min(screening_score, 42)
+        strategy_score = min(strategy_score, 38)
+    if hard_gap_count >= 3:
+        screening_score = min(screening_score, 48)
+        interview_story_score = min(interview_story_score, 52)
+
+    stage_scores = {
+        "材料筛选": int(np.clip(round(screening_score), 0, 100)),
+        "面试可讲性": int(np.clip(round(interview_story_score), 0, 100)),
+        "竞争策略": int(np.clip(round(strategy_score), 0, 100)),
+    }
+    weakest_stage = min(stage_scores, key=stage_scores.get)
+    if stage_scores[weakest_stage] >= 78:
+        stage_label = "推进条件较完整"
+        stage_next = "可以进入投递节奏管理，重点控制投递批次、复盘反馈和面试准备。"
+    elif weakest_stage == "材料筛选":
+        stage_label = "先补筛选材料"
+        stage_next = "优先改摘要、最近经历和技能区，让 JD 核心词在当前简历版本里形成证据链。"
+    elif weakest_stage == "面试可讲性":
+        stage_label = "先补可讲案例"
+        stage_next = "先准备 2-3 个可展开的项目故事，再投容易被追问的岗位。"
+    else:
+        stage_label = "先调投递策略"
+        stage_next = "把头部/强竞争岗位和普通岗位分批投递，用反馈决定是否继续加码。"
+
+    return {
+        "stage_scores": stage_scores,
+        "weakest_stage": weakest_stage,
+        "stage_label": stage_label,
+        "stage_next": stage_next,
+    }
+
+
 def predict_offer_probabilities(
     jd_analysis: dict[str, Any] | None,
     resume_match: dict[str, Any] | None,
@@ -4671,21 +6403,22 @@ def predict_offer_probabilities(
     education_fit: str,
     english_level: str,
 ) -> dict[str, Any]:
-    match_score = int(resume_match.get("score", 55) if resume_match else 55)
-    jd_text = jd_analysis.get("raw_text", "") if jd_analysis else ""
-    english_required = any(text_contains(jd_text, keyword) for keyword in ["英文", "英语", "English", "口语", "CET-6", "六级"])
-    shortcomings = count_shortcomings(resume_match, gap_analysis)
+    context = offer_prediction_context(jd_analysis, resume_match, gap_analysis, company_tier, education_fit, english_level)
+    stage_diagnostics = offer_stage_diagnostics(context, company_tier, education_fit)
+    match_score = context["match_score"]
+    english_required = context["english_required"]
+    shortcomings = context["shortcomings"]
     history = historical_rates()
 
-    pass_rate = 18 + match_score * 0.62
-    interview_rate = 8 + match_score * 0.42
-    offer_rate = 2 + match_score * 0.22
+    pass_rate = 14 + match_score * 0.66
+    interview_rate = 6 + match_score * 0.43
+    offer_rate = 1.5 + match_score * 0.19
 
     tier_adjust = {
-        "头部/知名机构": -10,
-        "中高层级": -4,
+        "头部/知名机构": -12,
+        "中高层级": -5,
         "普通公司": 4,
-        "小公司/冷门岗位": 10,
+        "小公司/冷门岗位": 8,
         "未知": 0,
     }.get(company_tier, 0)
     pass_rate += tier_adjust
@@ -4719,49 +6452,118 @@ def predict_offer_probabilities(
             interview_rate -= 9
             offer_rate -= 7
 
-    pass_rate -= shortcomings * 2.0
-    interview_rate -= shortcomings * 1.6
-    offer_rate -= shortcomings * 0.9
+    pass_rate -= shortcomings * 1.5
+    interview_rate -= shortcomings * 1.25
+    offer_rate -= shortcomings * 0.75
+
+    pass_rate -= len(context["hard_gaps"]) * 3.5
+    interview_rate -= len(context["hard_gaps"]) * 3.0
+    offer_rate -= len(context["hard_gaps"]) * 1.8
+    pass_rate -= len(context["evidence_gaps"]) * 1.8
+    interview_rate -= len(context["evidence_gaps"]) * 1.6
+    offer_rate -= len(context["evidence_gaps"]) * 1.0
+
+    if context["jd_value"].get("is_generic_esg"):
+        pass_rate -= 4
+        interview_rate -= 5
+        offer_rate -= 4
+    if context["jd_value"].get("is_high_value"):
+        pass_rate += 3
+        interview_rate += 3
+        offer_rate += 2
 
     if history["sample"] >= 5:
         pass_rate = pass_rate * 0.75 + history["pass_rate"] * 100 * 0.25
         interview_rate = interview_rate * 0.75 + history["interview_rate"] * 100 * 0.25
         offer_rate = offer_rate * 0.8 + history["offer_rate"] * 100 * 0.2
 
-    pass_rate = float(np.clip(round(pass_rate, 1), 3, 95))
-    interview_rate = float(np.clip(round(min(interview_rate, pass_rate * 0.92), 1), 2, 85))
-    offer_rate = float(np.clip(round(min(offer_rate, interview_rate * 0.65), 1), 1, 60))
+    if education_fit == "低于要求":
+        pass_rate = min(pass_rate, 45)
+        interview_rate = min(interview_rate, 28)
+        offer_rate = min(offer_rate, 12)
+    if context["hard_gaps"] and match_score < 72:
+        interview_rate = min(interview_rate, 32)
+        offer_rate = min(offer_rate, 14)
+    if company_tier == "头部/知名机构" and match_score < 78:
+        offer_rate = min(offer_rate, 18)
+    if not resume_match:
+        pass_rate = min(pass_rate, 58)
+        interview_rate = min(interview_rate, 32)
+        offer_rate = min(offer_rate, 12)
+
+    pass_rate = float(np.clip(round(pass_rate, 1), 3, 92))
+    interview_rate = float(np.clip(round(min(interview_rate, pass_rate * 0.88), 1), 2, 78))
+    offer_rate = float(np.clip(round(min(offer_rate, interview_rate * 0.58), 1), 1, 48))
+
+    if offer_rate >= 28 and interview_rate >= 42 and not context["hard_gaps"]:
+        decision_tier = "优先推进"
+    elif interview_rate >= 32 and pass_rate >= 45:
+        decision_tier = "可投递，先补证据"
+    elif pass_rate >= 32:
+        decision_tier = "低成本试投"
+    else:
+        decision_tier = "暂缓，先补门槛"
+    if stage_diagnostics["weakest_stage"] == "材料筛选" and stage_diagnostics["stage_scores"]["材料筛选"] < 45:
+        decision_tier = "暂缓，先补材料"
+    elif stage_diagnostics["weakest_stage"] == "面试可讲性" and offer_rate >= 18:
+        decision_tier = "可投递，先补面试故事"
 
     drivers = [
+        context["resume_scope_note"],
         f"岗位匹配度：{match_score}/100",
         f"公司层级：{company_tier}",
-        f"短板数量：{shortcomings}",
+        f"待补充项数：{shortcomings}",
+        f"主要瓶颈：{context['bottleneck']}",
+        f"最弱阶段：{stage_diagnostics['weakest_stage']}（{stage_diagnostics['stage_scores'][stage_diagnostics['weakest_stage']]}/100）",
+        f"可信度：{context['confidence_label']}",
         f"历史投递样本：{history['sample']} 条",
     ]
+    if context["career_families"]:
+        drivers.append("识别到岗位族：" + " / ".join(context["career_families"][:3]))
+    if context["risk_flags"]:
+        drivers.append("风险因素：" + " / ".join(context["risk_flags"][:5]))
     if english_required:
         drivers.append(f"JD 有英文要求，当前英文判断：{english_level}")
     if jd_analysis:
-        drivers.append(f"岗位分类：{jd_analysis.get('category', '待判断')}")
+        drivers.append(f"岗位方向：{jd_analysis.get('category', '待判断')}")
 
     actions = []
-    if resume_match and resume_match.get("missing_skills"):
-        missing_line = " / ".join(resume_match["missing_skills"][:6])
+    if context["bottleneck"] == "硬门槛":
+        actions.append("先确认学历、年级、到岗时间、城市和硬性资格是否真的卡死；如果低于要求，不要把它作为主投。")
+    if context["hard_gaps"]:
+        actions.append("投递前先补当前简历版本的硬缺口证据：" + " / ".join(context["hard_gaps"][:4]) + "。至少准备一段真实项目、课程作品、实习任务或小作品再投。")
+    if context["evidence_gaps"]:
+        actions.append("把当前简历里已有经历改成可验证证据：" + " / ".join(context["evidence_gaps"][:4]) + "。每项都要能说出任务、动作、交付物和结果。")
+    missing_requirements = resume_missing_requirement_names(resume_match, 6)
+    if missing_requirements:
+        missing_line = " / ".join(missing_requirements)
         actions.append(f"投递前把简历摘要和最近一段项目经历补上这些词：{missing_line}。每个词至少对应一句真实证据。")
     if english_required and english_level != "强":
         actions.append("今天准备两段英文材料：45 秒自我介绍 + 90 秒目标岗位相关项目复盘，明天录音复盘一次。")
     if company_tier == "头部/知名机构":
         actions.append("头部公司投递版简历必须出现 3 类证据：项目交付物、工具/数据处理、可复核的结果或报告产出。")
+    actions.append(stage_diagnostics["stage_next"])
     actions.append("投递后第 3 天记录状态；第 5 天若无反馈，补投 3 个同方向但竞争稍低的岗位。")
     application_steps = [
-        "投递前：用定制简历页生成投递版，把摘要、核心能力和项目 bullet 替换进简历。",
-        "投递当天：保存 JD、投递版本和投递渠道，避免后续面试时找不到原岗位。",
-        "投递后 3-5 天：若无反馈，做一次轻量跟进，同时复盘这个岗位还能投哪些相邻公司。",
+        f"投递前：先处理当前简历版本的瓶颈（{context['bottleneck']}），再用定制简历页生成投递版。",
+        "投递当天：保存 JD、投递版本、投递渠道和岗位链接，避免后续面试时找不到原岗位。",
+        "投递后 3 天：记录状态；第 5 天仍无反馈时，补投 3 个同方向但竞争略低的岗位。",
     ]
 
     return {
         "简历通过率": pass_rate,
         "进入面试概率": interview_rate,
         "拿 offer 概率": offer_rate,
+        "decision_tier": decision_tier,
+        "bottleneck": context["bottleneck"],
+        "confidence": context["confidence_label"],
+        "risk_flags": context["risk_flags"],
+        "career_families": context["career_families"],
+        "scope_note": context["resume_scope_note"],
+        "stage_scores": stage_diagnostics["stage_scores"],
+        "weakest_stage": stage_diagnostics["weakest_stage"],
+        "stage_label": stage_diagnostics["stage_label"],
+        "stage_next": stage_diagnostics["stage_next"],
         "drivers": drivers,
         "actions": actions,
         "application_steps": application_steps,
@@ -4775,9 +6577,11 @@ def generate_resume_bullets(jd_analysis: dict[str, Any] | None, resume_match: di
         return []
     skills = []
     if resume_match:
-        skills = resume_match.get("matched_skills", [])[:5]
-    if not skills and not jd_analysis.get("skills", pd.DataFrame()).empty:
+        skills = resume_matched_requirement_names(resume_match, 5)
+    if not skills and not resume_match and not jd_analysis.get("skills", pd.DataFrame()).empty:
         skills = jd_analysis["skills"]["技能"].head(5).tolist()
+    if resume_match and not skills:
+        return []
 
     bullets = []
     category = jd_analysis.get("category", "")
@@ -5450,10 +7254,10 @@ def render_global_resume_status(active_resume: dict[str, Any]) -> None:
     st.caption(f"当前简历：{active_resume.get('name', '未命名')}｜更新：{active_resume.get('updated_at', '') or '未知'}")
     cols = st.columns(3)
     cols[0].metric("有效行数", len(parsed.get("lines", [])))
-    cols[1].metric("识别板块", len(parsed.get("sections", {})))
+    cols[1].metric("简历栏目数", len(parsed.get("sections", {})))
     cols[2].metric("质量", quality["label"])
     if parsed.get("skills"):
-        st.caption("技能命中：" + " / ".join(parsed["skills"][:8]))
+        st.caption("已识别技能：" + " / ".join(parsed["skills"][:8]))
     st.caption(str(quality["detail"]))
 
 
@@ -5638,18 +7442,15 @@ def job_card_score(text: str) -> int:
         "工作地点",
         "职责",
         "要求",
-        "会计",
-        "财务",
         "专员",
         "助理",
         "顾问",
         "分析师",
-        "LCA",
-        "ESG",
-        "CBAM",
-        "EPD",
-        "ISO",
-        "Python",
+        "经理",
+        "工程师",
+        "Intern",
+        "Analyst",
+        "Consultant",
     ]
     score = sum(1 for keyword in keywords if text_contains(clean, keyword))
     if extract_salary(clean) != "未识别":
@@ -6181,10 +7982,11 @@ def records_from_html_tables(soup: Any, page_url: str) -> list[dict[str, str]]:
             if table_records:
                 record = table_records[0]
             else:
-                record = {"source": page_url, "title": likely_title_from_row_values(values), "url": page_url, "text": "\n".join(values)}
+                record = {"source": page_url, "title": likely_title_from_row_values(values), "url": "", "text": "\n".join(values)}
+            record["url"] = preferred_jd_record_url(record)
             anchor = row.select_one("a[href]")
             if anchor and anchor.get("href"):
-                record["url"] = normalize_url(urljoin(page_url, str(anchor.get("href"))))
+                record["url"] = valid_captured_job_url(urljoin(page_url, str(anchor.get("href"))))
             if job_card_score(record.get("text", "")) >= 5:
                 records.append(record)
     return dedupe_jd_records(records)
@@ -6271,9 +8073,7 @@ def extract_job_card_records_from_html(raw_html: str, page_url: str) -> list[dic
         link = ""
         anchor = node.select_one("a[href]")
         if anchor and anchor.get("href"):
-            link = normalize_url(urljoin(page_url, str(anchor.get("href"))))
-        if not link:
-            link = page_url
+            link = valid_captured_job_url(urljoin(page_url, str(anchor.get("href"))))
         record = {
             "source": page_url,
             "title": title[:100] if title else "网页岗位",
@@ -6338,6 +8138,9 @@ def crawl_records_to_text(records: list[dict[str, Any]], source_url: str = "") -
     for index, record in enumerate(records, start=1):
         if not isinstance(record, dict):
             continue
+        link = valid_captured_job_url(record.get("url"))
+        if not link and len(records) == 1:
+            link = valid_captured_job_url(source_url)
         detail_lines = [
             f"岗位：{normalize_text(str(record.get('title') or f'岗位{index}'))}",
             f"公司：{normalize_text(str(record.get('company') or ''))}" if record.get("company") else "",
@@ -6345,7 +8148,7 @@ def crawl_records_to_text(records: list[dict[str, Any]], source_url: str = "") -
             f"地点：{normalize_text(str(record.get('location') or ''))}" if record.get("location") else "",
             f"学历：{normalize_text(str(record.get('education') or ''))}" if record.get("education") else "",
             f"经验：{normalize_text(str(record.get('experience') or ''))}" if record.get("experience") else "",
-            f"链接：{normalize_url(str(record.get('url') or source_url))}" if (record.get("url") or source_url) else "",
+            f"链接：{link}" if link else "",
             normalize_multiline_text(str(record.get("text") or "")),
         ]
         chunk = normalize_multiline_text("\n".join(line for line in detail_lines if line))
@@ -6421,10 +8224,30 @@ def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False) -> dict
                     return result
         else:
             result["records"] = extract_job_card_records_from_html(response.text, normalized)
-            text = html_to_text(response.text)
             structured_text = crawl_records_to_text(result["records"], normalized)
+            if use_dynamic and result["records"]:
+                structured_records = records_from_crawl_result(
+                    {
+                        "ok": True,
+                        "url": normalized,
+                        "records": result["records"],
+                        "text": structured_text,
+                    }
+                )
+                enriched_records = enrich_records_with_detail_pages(
+                    structured_records,
+                    limit=min(8, max(0, len(structured_records))),
+                )
+                if enriched_records:
+                    result["records"] = enriched_records
+                    structured_text = crawl_records_to_text(enriched_records, normalized)
+            text = html_to_text(response.text)
             if len(normalize_text(text)) < 80 and structured_text:
                 text = structured_text
+            elif structured_text and len(result["records"]) >= 2:
+                text = normalize_multiline_text(
+                    f"{structured_text}\n\n页面原文：\n{text[:8000]}"
+                )
 
         if len(text) < 80:
             if use_dynamic:
@@ -6482,10 +8305,19 @@ def detail_url_is_usable(url: str, source_url: str = "") -> bool:
     return True
 
 
+_DETAIL_ENRICHMENT_CACHE: dict[str, dict[str, str]] = {}
+_DETAIL_ENRICHMENT_CACHE_LOCK = Lock()
+
+
 def fetch_detail_for_enrichment(url: str) -> dict[str, str]:
+    normalized_url = normalize_url(url)
+    with _DETAIL_ENRICHMENT_CACHE_LOCK:
+        cached = _DETAIL_ENRICHMENT_CACHE.get(normalized_url)
+    if cached:
+        return dict(cached)
     result = fetch_jd_url(url, timeout=10, use_dynamic=False)
     if not result.get("ok"):
-        return {"ok": "", "error": str(result.get("error") or ""), "url": normalize_url(url)}
+        return {"ok": "", "error": str(result.get("error") or ""), "url": normalized_url}
     text = normalize_multiline_text(str(result.get("text") or ""))
     fields = extract_detail_fields_from_text(url, text)
     if not fields:
@@ -6500,7 +8332,10 @@ def fetch_detail_for_enrichment(url: str) -> dict[str, str]:
                 "education": str(best.get("education") or ""),
                 "experience": str(best.get("experience") or ""),
             }
-    return {"ok": "1", "url": normalize_url(url), "text": text, **{key: value for key, value in fields.items() if value}}
+    detail = {"ok": "1", "url": normalized_url, "text": text, **{key: value for key, value in fields.items() if value}}
+    with _DETAIL_ENRICHMENT_CACHE_LOCK:
+        _DETAIL_ENRICHMENT_CACHE[normalized_url] = dict(detail)
+    return detail
 
 
 def merge_record_with_detail(record: dict[str, str], detail: dict[str, str]) -> dict[str, str]:
@@ -6531,18 +8366,34 @@ def merge_record_with_detail(record: dict[str, str], detail: dict[str, str]) -> 
 def enrich_records_with_detail_pages(records: list[dict[str, str]], limit: int = 60) -> list[dict[str, str]]:
     if not records:
         return []
-    enriched: list[dict[str, str]] = []
-    cache: dict[str, dict[str, str]] = {}
-    fetched = 0
+    normalized_urls: list[str] = []
     for record in records:
         url = str(record.get("url") or "")
         source = str(record.get("source") or "")
-        if fetched < limit and detail_url_is_usable(url, source):
+        if len(normalized_urls) < limit and detail_url_is_usable(url, source):
             normalized = normalize_url(url)
-            if normalized not in cache:
-                cache[normalized] = fetch_detail_for_enrichment(normalized)
-                fetched += 1
-            enriched.append(merge_record_with_detail(record, cache[normalized]))
+            if normalized and normalized not in normalized_urls:
+                normalized_urls.append(normalized)
+
+    detail_cache: dict[str, dict[str, str]] = {}
+    if normalized_urls:
+        workers = max(1, min(8, len(normalized_urls)))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(fetch_detail_for_enrichment, url): url for url in normalized_urls}
+            for future in as_completed(futures):
+                url = futures[future]
+                try:
+                    detail_cache[url] = future.result()
+                except Exception as exc:
+                    detail_cache[url] = {"ok": "", "error": str(exc), "url": url}
+
+    enriched: list[dict[str, str]] = []
+    for record in records:
+        url = str(record.get("url") or "")
+        source = str(record.get("source") or "")
+        normalized = normalize_url(url)
+        if detail_url_is_usable(url, source) and normalized in detail_cache:
+            enriched.append(merge_record_with_detail(record, detail_cache[normalized]))
         else:
             enriched.append(record)
     return dedupe_jd_records(enriched)
@@ -6566,10 +8417,21 @@ def read_exported_jd_file(path: Path) -> dict[str, str]:
             for index, job in enumerate(jobs, start=1):
                 if not isinstance(job, dict):
                     continue
-                job_title = str(job.get("title") or f"岗位{index}")
-                job_url = str(job.get("url") or "")
+                job_title = str(job.get("title") or job.get("detailTitle") or f"岗位{index}")
+                job_url = str(job.get("detailUrl") or job.get("url") or "")
+                detail_text = str(job.get("detailText") or job.get("detail_text") or "")
                 job_text = str(job.get("text") or "")
-                chunks.append(normalize_text(f"岗位{index}：{job_title} 链接：{job_url} {job_text}"))
+                structured_lines = [
+                    f"岗位{index}：{job_title}",
+                    f"公司：{job.get('company', '')}" if job.get("company") else "",
+                    f"薪资：{job.get('salary', '')}" if job.get("salary") else "",
+                    f"地点：{job.get('location', '')}" if job.get("location") else "",
+                    f"学历：{job.get('education', '')}" if job.get("education") else "",
+                    f"经验：{job.get('experience', '')}" if job.get("experience") else "",
+                    f"链接：{job_url}" if job_url else "",
+                    detail_text or job_text,
+                ]
+                chunks.append(normalize_multiline_text("\n".join(line for line in structured_lines if line)))
             text = "\n\n".join(chunks)
         else:
             text = str(data.get("text") or data.get("content") or data.get("body") or "")
@@ -6686,9 +8548,6 @@ def line_looks_like_job_title(line: str) -> bool:
         "法务",
         "合规",
         "供应链",
-        "LCA",
-        "ESG",
-        "CBAM",
         "Job",
         "Position",
         "Consultant",
@@ -6806,7 +8665,7 @@ def boss_title_line(value: str) -> bool:
     bad = {"首页", "职位", "公司", "校园", "海归", "推荐", "行业", "地图", "搜索", "工作区域", "职位类型", "求职类型", "薪资待遇", "工作经验", "学历要求", "公司行业", "公司规模", "融资阶段", "清空", "消息", "简历"}
     if text in bad or "添加求职期望" in text:
         return False
-    return any(word in text for word in ["ESG", "碳", "审计", "咨询", "分析师", "顾问", "专员", "助理", "管培生", "销售", "会计", "财务", "可持续", "低碳", "绿色", "市场", "项目", "经理"])
+    return any(word in text for word in ["审计", "咨询", "分析师", "顾问", "专员", "助理", "管培生", "销售", "会计", "财务", "市场", "项目", "经理", "工程师", "运营", "产品", "数据", "法务", "合规"])
 
 
 def boss_company_line(value: str) -> bool:
@@ -7288,7 +9147,6 @@ GENERIC_BAD_CARD_LINES = {
     "战略咨询",
     "合同签订",
     "cpa",
-    "ESG",
     "运营管理",
     "生物医药",
     "补充医疗保险",
@@ -7409,7 +9267,7 @@ def generic_title_line(value: str) -> bool:
         return False
     title_keywords = [
         "实习", "校招", "管培", "经理", "顾问", "专员", "助理", "工程师", "分析", "运营", "产品",
-        "销售", "审核", "认证", "研究", "项目", "数据", "咨询", "ESG", "LCA", "碳", "会计", "财务",
+        "销售", "审核", "认证", "研究", "项目", "数据", "咨询", "会计", "财务",
         "市场", "管理", "培训生", "岗", "主管", "总监", "Specialist", "Analyst", "Engineer", "Consultant",
     ]
     return any(keyword.lower() in text.lower() for keyword in title_keywords)
@@ -7630,7 +9488,7 @@ def captured_job_detail_url(job: dict[str, Any], base_url: str = "") -> str:
         valid_url = valid_captured_job_url(url)
         if valid_url:
             return valid_url
-    return valid_captured_job_url(base_url)
+    return ""
 
 
 def ordered_captured_detail_urls(jobs: list[Any], base_url: str = "") -> list[str]:
@@ -7669,7 +9527,9 @@ def attach_detail_urls_by_order(records: list[dict[str, str]], urls: list[str]) 
 
 
 def record_from_captured_job(job: dict[str, Any], source: str, base_title: str, base_url: str, index: int) -> dict[str, str] | None:
-    text = normalize_multiline_text(str(job.get("text") or ""))
+    detail_text = normalize_multiline_text(str(job.get("detailText") or job.get("detail_text") or ""))
+    captured_text = normalize_multiline_text(str(job.get("text") or ""))
+    text = detail_text or captured_text
     company = normalize_text(str(job.get("company") or ""))
     salary = normalize_text(str(job.get("salary") or ""))
     location = normalize_text(str(job.get("location") or ""))
@@ -7688,6 +9548,10 @@ def record_from_captured_job(job: dict[str, Any], source: str, base_title: str, 
     if not salary:
         return None
 
+    record_url = captured_job_detail_url(job, base_url)
+    if not record_url:
+        return None
+
     block_lines = [
         f"岗位：{title}",
         f"公司：{company}" if company else "",
@@ -7696,12 +9560,15 @@ def record_from_captured_job(job: dict[str, Any], source: str, base_title: str, 
         f"经验：{experience}" if experience else "",
         f"学历：{education}" if education else "",
     ]
-    record_url = captured_job_detail_url(job, base_url)
+    block_text = normalize_multiline_text("\n".join(line for line in block_lines if line))
+    record_text = block_text
+    if text:
+        record_text = normalize_multiline_text(f"{block_text}\n\nDetail page text:\n{text}")
     return {
         "source": source,
         "title": title or f"{base_title}-{index}",
         "url": record_url,
-        "text": "\n".join(line for line in block_lines if line),
+        "text": record_text,
         "company": company,
         "salary": salary,
         "location": location,
@@ -7720,13 +9587,12 @@ def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False,
         base_url = str(data.get("url") or "")
         jobs = data.get("jobs") or []
         if isinstance(jobs, list) and jobs:
-            detail_urls = ordered_captured_detail_urls(jobs, base_url)
             parsed_records: list[dict[str, str]] = []
             fallback_records: list[dict[str, str]] = []
             for index, job in enumerate(jobs, start=1):
                 if not isinstance(job, dict):
                     continue
-                text = normalize_multiline_text(str(job.get("text") or ""))
+                text = normalize_multiline_text(str(job.get("detailText") or job.get("detail_text") or job.get("text") or ""))
                 if len(text) < 20:
                     continue
                 record_page_index = str(job.get("pageIndex") or job.get("page_index") or "")
@@ -7736,6 +9602,25 @@ def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False,
                     if normalize_text(str(job.get(key) or ""))
                 )
                 captured_record = record_from_captured_job(job, path.name, base_title, base_url, index)
+                if record_url:
+                    if captured_record:
+                        parsed_records.append(captured_record)
+                    else:
+                        fallback_records.append(
+                            {
+                                "source": path.name,
+                                "title": str(job.get("title") or f"{base_title}-{index}"),
+                                "url": record_url,
+                                "text": text,
+                                "company": str(job.get("company") or ""),
+                                "salary": str(job.get("salary") or ""),
+                                "location": str(job.get("location") or ""),
+                                "education": str(job.get("education") or ""),
+                                "experience": str(job.get("experience") or ""),
+                                "page_index": record_page_index,
+                            }
+                        )
+                    continue
                 parsed_listing_records = site_specific_listing_records(
                     text,
                     source=path.name,
@@ -7780,14 +9665,13 @@ def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False,
                         "page_index": str(job.get("pageIndex") or job.get("page_index") or ""),
                     }
                 )
-            records.extend(attach_detail_urls_by_order(parsed_records + fallback_records, detail_urls))
+            records.extend(parsed_records + fallback_records)
         else:
             text = normalize_text(str(data.get("text") or data.get("content") or data.get("body") or ""))
             if len(text) >= 20:
                 records.append({"source": path.name, "title": base_title, "url": base_url, "text": text})
         records = dedupe_jd_records(records)
         if isinstance(jobs, list) and jobs:
-            records = attach_detail_urls_by_order(records, ordered_captured_detail_urls(jobs, base_url))
             records_with_detail_urls = [record for record in records if preferred_jd_record_url(record)]
             if records_with_detail_urls:
                 records = records_with_detail_urls
@@ -7995,6 +9879,9 @@ def records_from_crawl_result(item: dict[str, Any]) -> list[dict[str, str]]:
             text = normalize_multiline_text(str(record.get("text") or ""))
             if len(normalize_text(text)) < 20:
                 continue
+            record_url = preferred_jd_record_url({"url": str(record.get("url") or ""), "source": page_url})
+            if not record_url and len(structured_records) == 1 and detail_url_is_usable(page_url, ""):
+                record_url = valid_captured_job_url(page_url)
             title = str(record.get("title") or f"链接岗位{index}")
             company = str(record.get("company") or "")
             if not company:
@@ -8004,7 +9891,7 @@ def records_from_crawl_result(item: dict[str, Any]) -> list[dict[str, str]]:
                 {
                     "source": page_url or str(record.get("source") or "公开链接"),
                     "title": title,
-                    "url": str(record.get("url") or page_url),
+                    "url": record_url,
                     "text": text,
                     "company": company,
                     "salary": str(record.get("salary") or ""),
@@ -8019,11 +9906,12 @@ def records_from_crawl_result(item: dict[str, Any]) -> list[dict[str, str]]:
     text = normalize_multiline_text(str(item.get("text") or ""))
     fallback = []
     for index, record in enumerate(split_batch_jd_text(text), start=1):
+        record_url = valid_captured_job_url(page_url) if len(fallback) == 0 and detail_url_is_usable(page_url, "") else ""
         fallback.append(
             {
                 "source": page_url or "公开链接",
                 "title": record.get("title") or f"链接岗位{index}",
-                "url": page_url,
+                "url": record_url,
                 "text": record.get("text", ""),
             }
         )
@@ -8038,7 +9926,7 @@ def likely_title_from_row_values(values: list[str]) -> str:
             continue
         if re.search(r"https?://|www\.|@|有限公司|集团|公司|^\d+[\d,.\-~ 至到]*[kKwW万千元]", value):
             continue
-        if any(word in value for word in ["实习", "工程师", "顾问", "专员", "分析师", "经理", "助理", "管培生", "运营", "产品", "数据", "市场", "销售", "财务", "法务", "合规", "LCA", "ESG"]):
+        if any(word in value for word in ["实习", "工程师", "顾问", "专员", "分析师", "经理", "助理", "管培生", "运营", "产品", "数据", "市场", "销售", "财务", "法务", "合规"]):
             return value[:80]
     return values[0][:80] if values else ""
 
@@ -8224,7 +10112,7 @@ def record_preview_fields(record: dict[str, str]) -> dict[str, str]:
         "薪资": fields.get("salary", "") or "未识别",
         "地点": fields.get("location", "") or "未识别",
         "来源": normalize_text(str(record.get("source") or ""))[:80],
-        "链接": normalize_text(str(record.get("url") or ""))[:120],
+        "链接": preferred_jd_record_url(record),
     }
 
 
@@ -8528,25 +10416,49 @@ def detect_fresh_graduate_safe(text: str) -> str:
 
 
 PROFILE_MATCH_GROUPS = {
-    "数据分析": {"weight": 12, "aliases": ["数据分析", "SQL", "Python", "Excel", "Power BI", "Tableau", "pandas", "指标", "看板"]},
-    "业务/商业分析": {"weight": 12, "aliases": ["业务分析", "商业分析", "经营分析", "策略分析", "指标体系", "漏斗分析", "归因分析"]},
-    "产品能力": {"weight": 11, "aliases": ["产品经理", "产品助理", "需求分析", "PRD", "原型", "用户研究", "竞品分析"]},
+    "数据分析": {"weight": 10, "aliases": ["数据分析", "SQL", "Python", "Excel", "Power BI", "Tableau", "pandas", "指标", "看板"]},
+    "业务/商业分析": {"weight": 10, "aliases": ["业务分析", "商业分析", "经营分析", "策略分析", "指标体系", "漏斗分析", "归因分析"]},
+    "产品能力": {"weight": 10, "aliases": ["产品经理", "产品助理", "需求分析", "PRD", "原型", "用户研究", "竞品分析"]},
     "运营增长": {"weight": 10, "aliases": ["运营", "增长", "用户运营", "内容运营", "活动运营", "转化", "留存", "拉新"]},
     "项目管理": {"weight": 10, "aliases": ["项目管理", "项目推进", "项目交付", "跨部门", "PMO", "里程碑"]},
-    "研发工程": {"weight": 12, "aliases": ["前端", "后端", "Java", "Go", "C++", "React", "Vue", "算法", "机器学习"]},
-    "市场/销售": {"weight": 9, "aliases": ["市场", "营销", "投放", "渠道", "销售", "商务", "BD", "客户开发"]},
-    "财务/法务/人力": {"weight": 9, "aliases": ["财务", "审计", "预算", "法务", "合规", "合同", "招聘", "培训", "绩效"]},
-    "供应链/采购": {"weight": 9, "aliases": ["供应链", "采购", "物流", "库存", "供应商管理", "计划"]},
-    "LCA": {"weight": 14, "aliases": ["LCA", "生命周期评价", "生命周期评估"]},
-    "产品碳足迹": {"weight": 15, "aliases": ["产品碳足迹", "CFP", "ISO14067", "ISO 14067", "碳足迹"]},
-    "EPD/PCR": {"weight": 11, "aliases": ["EPD", "PCR", "环境产品声明", "产品环境声明"]},
-    "CBAM/出海合规": {"weight": 13, "aliases": ["CBAM", "碳边境", "出海合规", "欧盟", "海外合规", "电池法", "EUDR"]},
-    "碳核算/核查": {"weight": 11, "aliases": ["碳核算", "碳盘查", "碳核查", "GHG", "温室气体", "排放因子", "ISO14064"]},
-    "供应链碳管理": {"weight": 9, "aliases": ["供应链碳", "供应链碳数据", "供应商碳", "供应链碳管理", "活动数据"]},
-    "LCA软件": {"weight": 9, "aliases": ["SimaPro", "GaBi", "openLCA", "open LCA", "eFootprint"]},
-    "数据能力": {"weight": 9, "aliases": ["Python", "SQL", "数据分析", "pandas", "Stata", "MATLAB", "Excel", "Power BI"]},
-    "英文能力": {"weight": 7, "aliases": ["英文", "英语", "English", "CET-6", "六级", "口语", "presentation"]},
+    "研发工程": {"weight": 10, "aliases": ["前端", "后端", "Java", "Go", "C++", "React", "Vue", "算法", "机器学习"]},
+    "市场/销售": {"weight": 10, "aliases": ["市场", "营销", "投放", "渠道", "销售", "商务", "BD", "客户开发"]},
+    "财务/法务/人力": {"weight": 10, "aliases": ["财务", "审计", "预算", "法务", "合规", "合同", "招聘", "培训", "绩效"]},
+    "供应链/采购": {"weight": 10, "aliases": ["供应链", "采购", "物流", "库存", "供应商管理", "计划"]},
+    "LCA": {"weight": 10, "aliases": ["LCA", "生命周期评价", "生命周期评估"]},
+    "产品碳足迹": {"weight": 10, "aliases": ["产品碳足迹", "CFP", "ISO14067", "ISO 14067", "碳足迹"]},
+    "EPD/PCR": {"weight": 10, "aliases": ["EPD", "PCR", "环境产品声明", "产品环境声明"]},
+    "CBAM/出海合规": {"weight": 10, "aliases": ["CBAM", "碳边境", "出海合规", "欧盟", "海外合规", "电池法", "EUDR"]},
+    "碳核算/核查": {"weight": 10, "aliases": ["碳核算", "碳盘查", "碳核查", "GHG", "温室气体", "排放因子", "ISO14064"]},
+    "供应链碳管理": {"weight": 10, "aliases": ["供应链碳", "供应链碳数据", "供应商碳", "供应链碳管理", "活动数据"]},
+    "LCA软件": {"weight": 10, "aliases": ["SimaPro", "GaBi", "openLCA", "open LCA", "eFootprint"]},
+    "数据能力": {"weight": 10, "aliases": ["Python", "SQL", "数据分析", "pandas", "Stata", "MATLAB", "Excel", "Power BI"]},
+    "英文能力": {"weight": 10, "aliases": ["英文", "英语", "English", "CET-6", "六级", "口语", "presentation"]},
 }
+
+PROFILE_MATCH_GROUP_EXTENSIONS = {
+    "数据分析": ["数据清洗", "数据建模", "A/B测试", "Dashboard", "Hive", "Looker"],
+    "业务/商业分析": ["指标拆解", "专题分析", "经营看板", "收入分析", "成本分析"],
+    "产品能力": ["产品规划", "功能设计", "MVP", "Roadmap", "用户旅程"],
+    "运营增长": ["策略运营", "A/B测试", "私域运营", "复购", "生命周期运营"],
+    "项目管理": ["项目排期", "风险管理", "资源协调", "验收", "交付管理"],
+    "研发工程": ["FastAPI", "Django", "Flask", "MySQL", "PostgreSQL", "Redis", "部署"],
+    "市场/销售": ["CRM", "KA", "客户成功", "解决方案销售", "线索转化"],
+    "财务/法务/人力": ["管理会计", "内控", "合同审查", "隐私合规", "HRBP", "招聘漏斗"],
+    "供应链/采购": ["供应商开发", "履约", "采购分析", "成本优化", "产销协同"],
+    "LCA": ["系统边界", "功能单位", "清单分析", "影响评价", "敏感性分析"],
+    "产品碳足迹": ["碳足迹核算", "清单数据", "PEF", "EPD", "PCR"],
+    "CBAM/出海合规": ["CBAM申报", "电池法", "EUDR", "贸易合规", "海外合规"],
+    "碳核算/核查": ["Scope 1", "Scope 2", "Scope 3", "活动数据", "排放因子"],
+    "供应链碳管理": ["供应商碳数据", "活动数据", "供应链减排", "供应商盘查"],
+    "英文能力": ["英文报告", "英文邮件", "英语汇报", "商务英语", "海外客户"],
+}
+
+for group_name, aliases in PROFILE_MATCH_GROUP_EXTENSIONS.items():
+    if group_name in PROFILE_MATCH_GROUPS:
+        PROFILE_MATCH_GROUPS[group_name]["aliases"] = list(
+            dict.fromkeys(PROFILE_MATCH_GROUPS[group_name]["aliases"] + aliases)
+        )
 
 JOB_CATEGORY_PRIOR_GROUPS = {
     "数据": ["数据分析", "业务/商业分析", "数据能力"],
@@ -8563,6 +10475,26 @@ JOB_CATEGORY_PRIOR_GROUPS = {
     "法务": ["财务/法务/人力", "CBAM/出海合规"],
     "人力": ["财务/法务/人力", "项目管理"],
 }
+extend_rule_map(
+    JOB_CATEGORY_PRIOR_GROUPS,
+    {
+        "商业": ["业务/商业分析", "数据分析"],
+        "BI": ["数据分析", "数据能力"],
+        "看板": ["数据分析", "数据能力"],
+        "增长": ["运营增长", "数据分析"],
+        "用户": ["产品能力", "运营增长"],
+        "客户成功": ["市场/销售", "项目管理"],
+        "交付": ["项目管理", "业务/商业分析"],
+        "后端": ["研发工程"],
+        "前端": ["研发工程"],
+        "AI": ["研发工程", "数据分析"],
+        "电池法": ["CBAM/出海合规", "供应链碳管理"],
+        "EUDR": ["CBAM/出海合规", "供应链碳管理"],
+        "ESG": ["碳核算/核查", "CBAM/出海合规"],
+        "碳核算": ["碳核算/核查", "供应链碳管理"],
+        "采购": ["供应链/采购", "项目管理"],
+    },
+)
 
 ROLE_ANCHOR_SKILL_MAP = {
     "数据分析": ["数据分析", "SQL", "Python"],
@@ -8585,8 +10517,7 @@ ROLE_ANCHOR_SKILL_MAP = {
     "英文能力": ["英文能力"],
 }
 
-TARGET_INDUSTRY_WORDS = ["互联网", "制造", "金融", "咨询", "新能源", "医疗", "消费", "教育", "物流", "供应链", "专业服务", "研发", "产品", "数据", "运营", "合规", "ESG", "可持续", "双碳", "碳", "LCA", "碳核算", "碳足迹", "绿色"]
-GENERIC_ESG_RISK_WORDS = ["打杂", "纯执行", "无明确职责", "行政杂务", "公众号", "活动策划", "行政协同", "品牌传播", "宣传", "会议组织", "材料整理", "只做排版", "只做整理", "评级问卷", "公益", "销售任务"]
+GENERIC_LOW_VALUE_RISK_WORDS = ["打杂", "纯执行", "无明确职责", "职责不清", "职责模糊", "行政杂务", "会议组织", "材料整理", "只做排版", "只做整理", "无培训", "无成长", "无导师", "服从安排", "临时安排"]
 ENGINEERING_REQUIRED_GROUPS = {"研发工程", "前端", "后端", "机器学习/AI"}
 ENGINEERING_EVIDENCE_TERMS = [
     "前端", "后端", "全栈", "服务端", "Java", "Spring", "Go", "C++", "C#", "PHP",
@@ -8622,34 +10553,129 @@ def text_has_capability_group(text: str, group_names: list[str]) -> bool:
     return any(group in hits for group in group_names)
 
 
-def contextual_profile_group_weight(
+JD_REQUIREMENT_CONTEXT_TERMS = [
+    "必须", "必备", "硬性", "要求", "需要", "具备", "熟悉", "掌握", "精通", "能够", "负责",
+    "优先", "加分", "required", "must", "proficient", "familiar", "experience",
+]
+JD_HARD_REQUIREMENT_TERMS = [
+    "必须", "必备", "硬性", "强制", "任职资格", "岗位要求", "职位要求", "要求", "需要",
+    "具备", "掌握", "熟练", "精通", "proficient", "required", "must", "experience with",
+]
+JD_CORE_RESPONSIBILITY_TERMS = [
+    "负责", "职责", "主要", "核心", "独立", "主导", "搭建", "建设", "推进", "交付", "落地",
+    "产出", "完成", "develop", "deliver", "lead", "own",
+]
+JD_PREFERRED_REQUIREMENT_TERMS = [
+    "优先", "加分", "最好", "可选", "preferred", "nice to have", "bonus", "plus",
+]
+JD_WEAK_REQUIREMENT_TERMS = [
+    "了解", "接触", "协助", "支持", "参与", "配合", "辅助", "assist", "support",
+]
+
+
+def jd_context_text(jd_analysis: dict[str, Any]) -> str:
+    basic = jd_analysis.get("basic", {}) if jd_analysis else {}
+    return normalize_multiline_text(
+        "\n".join(
+            [
+                jd_analysis.get("category", "") if jd_analysis else "",
+                str(basic.get("岗位名", "")),
+                str(basic.get("职位名称", "")),
+                " ".join(jd_skill_list(jd_analysis)),
+                jd_analysis.get("raw_text", "") if jd_analysis else "",
+            ]
+        )
+    )
+
+
+def jd_requirement_sentences(text: str) -> list[str]:
+    sentences: list[str] = []
+    for line in normalize_multiline_text(text).splitlines():
+        parts = re.split(r"(?<!\d)[.!?](?!\d)|[;；]+", line)
+        sentences.extend(part.strip(" -:：\t") for part in parts if len(part.strip()) >= 2)
+    return sentences
+
+
+def alias_mention_count(text: str, aliases: list[str]) -> int:
+    clean = normalize_text(text).lower()
+    total = 0
+    for alias in split_preference_items(aliases):
+        if not alias:
+            continue
+        total += clean.count(alias.lower())
+    return total
+
+
+def jd_requirement_context_hit(jd_text: str, aliases: list[str]) -> bool:
+    for sentence in jd_requirement_sentences(jd_text):
+        if any(text_contains(sentence, alias) for alias in aliases) and any(
+            text_contains(sentence, term) for term in JD_REQUIREMENT_CONTEXT_TERMS
+        ):
+            return True
+    return False
+
+
+def jd_capability_context_weight(
+    jd_analysis: dict[str, Any],
     label: str,
     aliases: list[str],
     base_weight: float,
-    profile_text: str,
-    resume_text: str = "",
-    preferences: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
-    all_aliases = expanded_aliases(label, aliases)
-    target_text = normalize_text(profile_text + "\n" + preference_context_text(preferences))
-    resume_clean = normalize_text(resume_text)
-    target_hits = alias_hits(target_text, all_aliases) or related_alias_hits(target_text, label, aliases)
-    resume_hits = alias_hits(resume_clean, all_aliases) or related_alias_hits(resume_clean, label, aliases)
-    group_names = profile_group_names(label, aliases)
-    target_group_hit = text_has_capability_group(target_text, group_names)
-    resume_group_hit = text_has_capability_group(resume_clean, group_names)
+    jd_text = jd_context_text(jd_analysis)
+    if not jd_text:
+        return base_weight, ""
+
+    all_aliases = split_preference_items([label] + list(aliases))
+    matched_sentences = [
+        sentence for sentence in jd_requirement_sentences(jd_text)
+        if any(text_contains(sentence, alias) for alias in all_aliases)
+    ]
+    if not matched_sentences:
+        return base_weight, ""
+
     multiplier = 1.0
-    reason = ""
-    if (target_hits or target_group_hit) and (resume_hits or resume_group_hit):
-        multiplier = 1.65
-        reason = f"目标和简历共同强调：{label}"
-    elif target_hits or target_group_hit:
-        multiplier = 1.35
-        reason = f"目标意向加权：{label}"
-    elif resume_hits or resume_group_hit:
-        multiplier = 1.25
-        reason = f"简历证据加权：{label}"
-    return base_weight * multiplier, reason
+    reasons: list[str] = []
+
+    hard_sentences = [
+        sentence for sentence in matched_sentences
+        if any(text_contains(sentence, term) for term in JD_HARD_REQUIREMENT_TERMS)
+    ]
+    core_sentences = [
+        sentence for sentence in matched_sentences
+        if any(text_contains(sentence, term) for term in JD_CORE_RESPONSIBILITY_TERMS)
+    ]
+    preferred_sentences = [
+        sentence for sentence in matched_sentences
+        if any(text_contains(sentence, term) for term in JD_PREFERRED_REQUIREMENT_TERMS)
+    ]
+    weak_sentences = [
+        sentence for sentence in matched_sentences
+        if any(text_contains(sentence, term) for term in JD_WEAK_REQUIREMENT_TERMS)
+    ]
+    mention_count = alias_mention_count(jd_text, all_aliases)
+
+    if hard_sentences:
+        multiplier = max(multiplier, 1.42)
+        reasons.append("明确写进要求")
+    if core_sentences:
+        multiplier = max(multiplier, 1.22)
+        reasons.append("核心职责")
+    if mention_count >= 2:
+        multiplier += min(0.14, mention_count * 0.025)
+        reasons.append("岗位反复提到")
+    if preferred_sentences and not hard_sentences and not core_sentences:
+        multiplier = min(multiplier, 0.78)
+        reasons.append("加分项")
+    elif preferred_sentences:
+        reasons.append("同时被列为优先项")
+    if weak_sentences and not hard_sentences and not core_sentences and not preferred_sentences:
+        multiplier = min(multiplier, 0.88)
+        reasons.append("偏辅助要求")
+
+    multiplier = float(np.clip(multiplier, 0.6, 1.6))
+    if abs(multiplier - 1.0) < 0.01:
+        return base_weight, ""
+    return base_weight * multiplier, f"{label}（{'、'.join(reasons[:3])}）"
 
 
 def resume_has_engineering_evidence(resume_text: str) -> bool:
@@ -8757,49 +10783,10 @@ def category_priority_groups(jd_analysis: dict[str, Any]) -> list[str]:
 
 
 def seeded_required_skills(jd_analysis: dict[str, Any], required_skills: list[str]) -> list[str]:
-    seeded = prune_soft_required_skills(jd_analysis, list(required_skills))
-    anchor_groups = infer_jd_anchor_groups(jd_analysis)
-    explicit_skills = jd_explicit_anchor_skills(jd_analysis)
-    for group_name in anchor_groups:
-        seeded.extend(ROLE_ANCHOR_SKILL_MAP.get(group_name, []))
-
-    merged = list(dict.fromkeys(skill for skill in seeded if skill in SKILL_ALIASES))
-    if required_skills:
-        if len(required_skills) <= 2:
-            safe_anchor_only = [
-                skill for skill in merged
-                if skill not in required_skills and (
-                    skill in explicit_skills or skill in {
-                        "项目管理", "产品能力", "运营", "业务分析", "英文能力",
-                        "供应链管理", "供应链碳管理", "LCA", "ISO14067", "EPD", "CBAM",
-                    }
-                )
-            ]
-            return prune_soft_required_skills(
-                jd_analysis,
-                list(dict.fromkeys(required_skills + safe_anchor_only))[:6],
-            )
-        anchor_only = [
-            skill for skill in merged
-            if skill not in required_skills and (
-                skill in explicit_skills or skill in {
-                    "项目管理", "产品能力", "运营", "业务分析", "英文能力",
-                    "供应链管理", "供应链碳管理", "LCA", "ISO14067", "EPD", "CBAM",
-                }
-            )
-        ]
-        return prune_soft_required_skills(
-            jd_analysis,
-            list(dict.fromkeys(required_skills + anchor_only))[:8],
-        )
-    safe_seeded = [
-        skill for skill in merged
-        if skill in explicit_skills or skill in {
-            "项目管理", "产品能力", "运营", "业务分析",
-            "供应链管理", "LCA", "ISO14067", "EPD", "CBAM",
-        }
-    ]
-    return prune_soft_required_skills(jd_analysis, safe_seeded[:6])
+    return prune_soft_required_skills(
+        jd_analysis,
+        [skill for skill in dict.fromkeys(required_skills) if skill in SKILL_ALIASES],
+    )
 
 
 def category_anchor_adjustment(
@@ -8807,20 +10794,7 @@ def category_anchor_adjustment(
     matched_groups: list[str],
     missing_groups: list[str],
 ) -> tuple[float, list[str]]:
-    anchor_groups = category_priority_groups(jd_analysis)
-    if not anchor_groups:
-        return 0.0, []
-    matched_anchor = [group for group in anchor_groups if group in matched_groups]
-    missing_anchor = [group for group in anchor_groups if group in missing_groups]
-    score_delta = 0.0
-    notes: list[str] = []
-    if matched_anchor:
-        score_delta += min(10.0, 4.0 + len(matched_anchor) * 2.2)
-        notes.append("岗位核心方向已覆盖")
-    if missing_anchor:
-        score_delta -= min(14.0, 5.0 + len(missing_anchor) * 3.0)
-        notes.append("岗位主能力锚点仍有缺口")
-    return score_delta, notes
+    return 0.0, []
 
 
 def industry_aliases(industry: str) -> list[str]:
@@ -9080,7 +11054,7 @@ def target_preference_adjustment(
     keyword_hits = preference_semantic_hits(jd_text, job_keywords)
     if keyword_hits:
         score += min(10, len(keyword_hits) * 3)
-        reasons.append("岗位关键词/关联词命中：" + " / ".join(keyword_hits[:4]))
+        reasons.append("岗位关键词/关联词覆盖：" + " / ".join(keyword_hits[:4]))
 
     avoid_hits = preference_semantic_hits(jd_text, split_preference_items(preferences.get("avoid_keywords", "")), conservative=True)
     if avoid_hits:
@@ -9254,6 +11228,74 @@ def extraction_confidence_score(fields: dict[str, str], text: str, jd_analysis: 
     return int(np.clip(score, 0, 100))
 
 
+def resume_screening_group_weight(
+    label: str,
+    aliases: list[str],
+    base_weight: float,
+    profile_text: str,
+    resume_text: str,
+    preferences: dict[str, Any] | None = None,
+) -> tuple[float, str, bool]:
+    resume_standard_text = normalize_text(resume_text)
+    target_text = normalize_text(profile_text + "\n" + preference_context_text(preferences))
+    all_aliases = expanded_aliases(label, aliases)
+    group_names = profile_group_names(label, aliases)
+
+    resume_hits = alias_hits(resume_standard_text, all_aliases) or related_alias_hits(resume_standard_text, label, aliases)
+    target_hits = alias_hits(target_text, all_aliases) or related_alias_hits(target_text, label, aliases)
+    resume_group_hit = text_has_capability_group(resume_standard_text, group_names)
+    target_group_hit = text_has_capability_group(target_text, group_names)
+    has_resume_standard = bool(resume_standard_text)
+    is_candidate_capability = bool(
+        resume_hits or resume_group_hit
+    ) if has_resume_standard else bool(
+        target_hits or target_group_hit
+    )
+
+    multiplier = 1.0
+    reasons: list[str] = []
+    if resume_hits or resume_group_hit:
+        multiplier += 0.28
+        reasons.append("当前简历能力")
+    if (target_hits or target_group_hit) and (is_candidate_capability or not has_resume_standard):
+        multiplier += 0.22
+        reasons.append("目标偏好")
+    if resume_text and profile_text and (resume_hits or resume_group_hit) and (target_hits or target_group_hit):
+        multiplier += 0.18
+        reasons.append("简历与目标一致")
+    return base_weight * multiplier, f"{label}：" + "、".join(reasons) if reasons else "", is_candidate_capability
+
+
+def screening_match_factor(jd_text: str, label: str, aliases: list[str]) -> tuple[float, list[str], list[str]]:
+    all_aliases = expanded_aliases(label, aliases)
+    direct_hits = alias_hits(jd_text, aliases)
+    related_hits = related_alias_hits(jd_text, label, aliases)
+    requirement_hit = jd_requirement_context_hit(jd_text, all_aliases)
+    mention_count = alias_mention_count(jd_text, aliases)
+    notes: list[str] = []
+
+    if direct_hits:
+        factor = 1.0
+        notes.append("直接命中：" + " / ".join(direct_hits[:3]))
+    elif related_hits:
+        factor = 0.58
+        notes.append("相关命中：" + " / ".join(related_hits[:3]))
+    else:
+        return 0.0, [], []
+
+    if requirement_hit:
+        factor += 0.08
+        notes.append("出现在要求/职责上下文")
+    if mention_count >= 2:
+        factor += min(0.08, mention_count * 0.02)
+        notes.append(f"出现 {mention_count} 次")
+    return float(np.clip(factor, 0, 1.12)), notes, direct_hits
+
+
+def resume_standard_anchor_adjustment(jd_analysis: dict[str, Any], matched_groups: list[str]) -> tuple[float, list[str]]:
+    return 0.0, []
+
+
 def evaluate_profile_fit_v2(
     jd_analysis: dict[str, Any],
     profile_text: str,
@@ -9263,15 +11305,17 @@ def evaluate_profile_fit_v2(
     resume_text: str = "",
     fast: bool = False,
 ) -> dict[str, Any]:
+    """Screen JD records by asking whether the JD fits the current resume/profile standard."""
     profile_text = effective_profile_text(profile_text)
     profile_text, profile_duplicate_count = remove_duplicate_information(profile_text)
     resume_text, resume_duplicate_count = remove_duplicate_information(resume_text)
     preferences = load_target_preferences() if preferences is None else preferences
     jd_text, jd_duplicate_count = remove_duplicate_information(jd_analysis.get("raw_text", ""))
-    candidate_profile_text = normalize_text(profile_text + "\n" + resume_text)
+    candidate_profile_text = normalize_text(resume_text or profile_text)
 
-    required = []
+    resume_capabilities = []
     matched = []
+    direct_matched = []
     missing = []
     evidence = []
     related_matched = []
@@ -9281,23 +11325,30 @@ def evaluate_profile_fit_v2(
     for name, config in PROFILE_MATCH_GROUPS.items():
         aliases = config["aliases"]
         all_aliases = expanded_aliases(name, aliases)
-        weight, weight_reason = contextual_profile_group_weight(name, aliases, config["weight"], profile_text, resume_text, preferences)
-        if group_present(jd_text, all_aliases):
-            required.append(name)
+        weight, weight_reason, is_candidate_capability = resume_screening_group_weight(
+            name,
+            aliases,
+            config["weight"],
+            profile_text,
+            resume_text,
+            preferences,
+        )
+        if is_candidate_capability:
+            resume_capabilities.append(name)
             total_weight += weight
             if weight_reason:
                 weight_reasons.append(weight_reason)
-            hits = alias_hits(candidate_profile_text, aliases)
-            related_hits = related_alias_hits(candidate_profile_text, name, aliases)
-            if hits:
+            match_factor, match_notes, direct_hits = screening_match_factor(jd_text, name, aliases)
+            if direct_hits:
                 matched.append(name)
-                matched_weight += weight
-                evidence.append(f"{name}：{', '.join(hits[:3])}")
-            elif related_hits:
+                direct_matched.append(name)
+                matched_weight += weight * match_factor
+                evidence.append(f"{name}：{'；'.join(match_notes[:3])}")
+            elif match_factor:
                 matched.append(name)
                 related_matched.append(name)
-                matched_weight += weight * 0.68
-                evidence.append(f"{name}相关：{', '.join(related_hits[:3])}")
+                matched_weight += weight * match_factor
+                evidence.append(f"{name}：{'；'.join(match_notes[:3])}")
             else:
                 missing.append(name)
 
@@ -9307,68 +11358,66 @@ def evaluate_profile_fit_v2(
         tech_score = 45
     semantic_fn = semantic_similarity_fast if fast else semantic_similarity
     semantic_score = int(round(semantic_fn(jd_text, candidate_profile_text) * 100))
-    anchor_delta, anchor_notes = category_anchor_adjustment(jd_analysis, matched, missing)
+    anchor_delta, anchor_notes = resume_standard_anchor_adjustment(jd_analysis, matched)
 
-    value_score = 0
+    job_bonus = 0
     reasons = []
     if jd_analysis.get("value", {}).get("is_high_value"):
-        value_score += 16
+        job_bonus += 16
         reasons.append("核心职责和可沉淀成果较明确")
-    if any(text_contains(jd_text, word) for word in TARGET_INDUSTRY_WORDS):
-        value_score += 9
-        reasons.append("行业或职能方向清晰，便于横向比较")
     if fresh == "是":
-        value_score += 5
+        job_bonus += 5
         reasons.append("对应届/在校生友好")
     elif fresh == "否/偏社招":
         reasons.append("应届友好度偏低")
 
     salary_label = salary_display_label(jd_text, job_type)
-    salary_bonus = salary_preference_bonus(jd_text, job_type, preferences)
-    value_score += salary_bonus
+    salary_bonus = 0
+    job_bonus += salary_bonus
     if salary_label != "薪资未明确":
         reasons.append(salary_label)
 
     preference_score, preference_reasons = target_preference_adjustment(jd_text, jd_analysis, job_type, preferences)
-    if preference_score >= 0:
-        value_score += preference_score
-    else:
-        reasons.append("目标意向扣分：" + str(abs(preference_score)))
+    preference_bonus = max(0, preference_score)
+    preference_penalty = max(0, -preference_score)
+    if preference_penalty:
+        reasons.append("和你设置的目标方向不完全一致")
     reasons.extend(preference_reasons)
     if weight_reasons:
         reasons.extend(list(dict.fromkeys(weight_reasons))[:4])
 
-    risk_score = max(0, -preference_score)
+    risk_penalty = preference_penalty
     if jd_analysis.get("value", {}).get("is_generic_esg"):
-        risk_score += 25
-    risk_hits = [word for word in GENERIC_ESG_RISK_WORDS if text_contains(jd_text, word)]
+        risk_penalty += 25
+    risk_hits = [word for word in GENERIC_LOW_VALUE_RISK_WORDS if text_contains(jd_text, word)]
     if risk_hits:
-        risk_score += min(22, len(risk_hits) * 6)
+        risk_penalty += min(22, len(risk_hits) * 6)
         reasons.append("低价值/职责不清风险：" + " / ".join(risk_hits[:4]))
     if any(text_contains(jd_text, word) for word in ["3-5年", "5-10年", "5年以上", "资深", "负责人", "总监"]):
-        risk_score += 12
+        risk_penalty += 12
         reasons.append("经验门槛偏高")
-    if group_present(jd_text, ["销售", "市场拓展", "商务资源"]) and not group_present(jd_text, ["客户管理", "销售分析", "解决方案", "行业", "大客户"]):
-        risk_score += 12
-        reasons.append("销售/商务指标较重，需确认是否符合个人目标")
-    engineering_required = jd_has_engineering_requirement(jd_text, jd_analysis, required, jd_skill_list(jd_analysis))
-    if engineering_required and normalize_text(resume_text) and not resume_has_engineering_evidence(resume_text):
-        risk_score += 18
-        reasons.append("工程/开发岗位需要代码或系统项目证据，当前简历证据不足")
-    if total_weight == 0 and jd_analysis.get("category") in ["ESG岗", "泛运营岗", "待人工判断"]:
-        risk_score += 8
+    if total_weight == 0 and jd_analysis.get("category") in ["待人工判断"]:
+        risk_penalty += 8
 
     semantic_bonus = min(6, len(semantic_expansion_terms(jd_text)) + len(semantic_expansion_terms(candidate_profile_text))) if semantic_score >= 42 else 0
     if semantic_bonus:
-        reasons.append(f"语义相关度较高：{semantic_score}/100")
+        reasons.append("岗位描述和你的简历画像整体比较接近")
 
-    score = 28 + tech_score * 0.48 + semantic_score * 0.16 + semantic_bonus + value_score - risk_score + anchor_delta
+    direct_ratio = sum(1 for item in matched if item in direct_matched) / max(len(resume_capabilities), 1)
+    positive_bonus = job_bonus + preference_bonus
+    score = 24 + tech_score * 0.56 + semantic_score * 0.08 + semantic_bonus + positive_bonus - risk_penalty + anchor_delta
     if total_weight == 0:
         score -= 8
+    if resume_capabilities and not direct_matched:
+        score = min(score, 62)
+    if resume_capabilities and not matched:
+        score = min(score, 45)
+    if direct_ratio >= 0.5:
+        score += 3
     score = int(np.clip(round(score), 0, 100))
 
     if matched:
-        reasons.insert(0, "匹配能力：" + " / ".join(matched[:6]))
+        reasons.insert(0, "JD 能用到的简历能力：" + " / ".join(matched[:6]))
     if evidence:
         reasons.insert(1 if matched else 0, "意向证据：" + "；".join(evidence[:4]))
     if anchor_notes:
@@ -9376,23 +11425,38 @@ def evaluate_profile_fit_v2(
     if not reasons:
         reasons.append("信息不足，建议打开详情页补充JD")
 
+    score_breakdown = [
+        f"这条岗位能用到你简历里的 {len(matched)} 类能力，其中 {len(direct_matched)} 类写得比较直接。",
+        f"另有 {len(related_matched)} 类经历方向相关，但可能需要换成更贴近 JD 的说法。",
+    ]
+    if job_bonus > 0:
+        score_breakdown.append("岗位本身有值得优先看的信号，比如职责清晰、能沉淀成果、薪资或应届友好度较好。")
+    if preference_bonus > 0:
+        score_breakdown.append("它和你设置的目标城市、行业、方向或关键词比较接近。")
+    if risk_penalty > 0:
+        score_breakdown.append("需要谨慎确认：岗位里有目标不匹配、职责不清、经验门槛偏高或低价值执行类信号。")
+    if semantic_bonus:
+        score_breakdown.append("整体描述和你的简历画像比较接近，因此可以进一步打开详情看。")
+    if not matched:
+        score_breakdown.append("目前没有看到明显能直接承接的简历能力，建议先暂存观察。")
+
     gaps = missing[:8]
     if not gaps and total_weight == 0:
-        gaps = ["缺少岗位核心技能关键词，需要补充更完整 JD 或人工确认职责"]
-    if "LCA软件" in gaps and group_present(jd_text, ["建模", "模型", "SimaPro", "GaBi", "openLCA"]):
-        gaps = ["LCA软件实操证据"] + [gap for gap in gaps if gap != "LCA软件"]
-
+        gaps = ["当前简历/目标画像不足，建议先补充简历或目标偏好后再批量筛选"]
     return {
         "score": score,
         "tech_score": tech_score,
         "semantic_score": semantic_score,
-        "value_score": int(np.clip(value_score, 0, 100)),
-        "risk_score": int(np.clip(risk_score, 0, 100)),
+        "job_bonus": int(np.clip(round(job_bonus), -20, 100)),
+        "preference_bonus": int(np.clip(round(preference_bonus), 0, 100)),
+        "risk_penalty": int(np.clip(round(risk_penalty), 0, 100)),
         "matched": matched,
+        "direct_matched": direct_matched,
         "missing": gaps,
         "reasons": reasons,
+        "score_breakdown": score_breakdown,
         "salary_label": salary_label,
-        "required": required,
+        "required": resume_capabilities,
         "evidence": evidence[:8],
         "related_matched": related_matched,
         "duplicate_removed": profile_duplicate_count + resume_duplicate_count + jd_duplicate_count,
@@ -9401,11 +11465,11 @@ def evaluate_profile_fit_v2(
 
 def next_action_for_job(score: int, jd_analysis: dict[str, Any], job_type: str, internship_opening: str, missing: list[str]) -> str:
     if score >= 85:
-        return "立即定制简历并投递"
+        return "优先关注，再进入 JD 标准的简历匹配"
     if score >= 72:
         if missing:
-            return "补强关键词后投递：" + " / ".join(missing[:3])
-        return "可直接投递"
+            return "适合深看，确认岗位是否能用到：" + " / ".join(missing[:3])
+        return "适合进入定制简历流程"
     if internship_opening == "是" and score >= 60:
         return "可作为实习积累，先问清项目内容"
     if jd_analysis.get("value", {}).get("is_generic_esg"):
@@ -9417,17 +11481,21 @@ def analyze_batch_jd_records(
     records: list[dict[str, str]],
     profile_text: str,
     resume_text: str = "",
+    assume_deduped: bool = False,
 ) -> pd.DataFrame:
     rows = []
     preferences = load_target_preferences()
     profile_text = effective_profile_text(profile_text)
     profile_text, _profile_duplicate_count = remove_duplicate_information(profile_text)
     resume_text, _resume_duplicate_count = remove_duplicate_information(resume_text)
-    has_resume = bool(resume_text.strip())
-    deduped_records = dedupe_jd_records(records)
+    deduped_records = records if assume_deduped else dedupe_jd_records(records)
 
     for index, record in enumerate(deduped_records, start=1):
-        text, duplicate_removed = remove_duplicate_information(record["text"])
+        if assume_deduped:
+            text = normalize_text(str(record.get("text") or ""))
+            duplicate_removed = 0
+        else:
+            text, duplicate_removed = remove_duplicate_information(record["text"])
         if not text:
             continue
         record = {**record, "text": text}
@@ -9436,26 +11504,30 @@ def analyze_batch_jd_records(
         internship_opening = detect_internship_opening_safe(text)
         fresh = detect_fresh_graduate_safe(text)
         fit = evaluate_profile_fit_v2(jd, profile_text, job_type, fresh, preferences, resume_text=resume_text, fast=True)
-        if has_resume:
-            resume_match = match_resume_to_jd(jd, resume_text, profile_text, preferences, fast=True)
-            combined_score = int(round(fit["score"] * 0.55 + resume_match["score"] * 0.45))
-            resume_gaps = resume_match.get("missing_skills", [])[:6]
-            resume_hits = resume_match.get("matched_skills", [])[:8]
-            resume_score = resume_match.get("score", "")
-            resume_semantic = resume_match.get("semantic_score", "")
-            resume_evidence = resume_match.get("evidence", [])[:6]
-        else:
-            combined_score = fit["score"]
-            resume_gaps = []
-            resume_hits = []
-            resume_score = ""
-            resume_semantic = ""
-            resume_evidence = []
+        match_result = match_resume_to_jd(
+            jd,
+            resume_text or profile_text,
+            profile_text=profile_text,
+            preferences=preferences,
+            fast=True,
+        )
+        overall_score = int(match_result.get("overall_score", 0) or 0)
+        career_target_fit_score = int(match_result.get("career_target_fit_score", 70) or 70)
+        jd_preference_structured = {
+            "raw_text": text,
+            "job_title": jd_basic_value(jd, "岗位名", "职位名称", "岗位名称"),
+            "location": jd_basic_value(jd, "地点", "城市", "工作地点"),
+            "industry_background": [category_display_label(jd), jd.get("category", "")],
+            "salary": extract_salary_from_jd(text),
+        }
+        preference_fit = calculate_preference_fit(jd_preference_structured, preferences)
+        combined_score = int(match_result.get("final_rank_score", overall_score) or overall_score)
+        resume_gaps = fit.get("missing", [])[:6]
+        resume_hits = fit.get("matched", [])[:8]
+        resume_evidence = fit.get("evidence", [])[:6]
 
         fields = extract_card_fields_v2(record, text, jd)
         record_url = preferred_jd_record_url(record)
-        if not record_url:
-            record_url = next((url for url in extract_urls(text) if detail_url_is_usable(url, "")), "")
         company = fields["company"]
         title = fields["title"]
         salary = fields["salary"]
@@ -9473,14 +11545,36 @@ def analyze_batch_jd_records(
 
         rows.append(
             {
+                "final_rank_score": combined_score,
+                "overall_score": overall_score,
+                "evidence_fit_score": overall_score,
+                "career_target_fit_score": career_target_fit_score,
+                "preference_fit_score": int(preference_fit.get("preference_fit_score", 70)),
+                "recommendation_level": match_result.get("recommendation_level", ""),
+                "score_breakdown": match_result.get("score_breakdown", {}),
+                "matched_evidence": match_result.get("matched_evidence", []),
+                "missing_requirements": match_result.get("missing_requirements", []),
+                "weak_requirements": match_result.get("weak_requirements", []),
+                "career_mismatch_warnings": match_result.get("career_mismatch_warnings", []),
+                "salary_mismatch_warnings": preference_fit.get("salary_mismatch_warnings", []),
+                "preference_warnings": preference_fit.get("preference_warnings", []),
                 "序号": index,
                 "意向匹配度": combined_score,
+                "岗位推荐分": combined_score,
+                "简历匹配分": overall_score,
+                "职业方向分": career_target_fit_score,
+                "偏好匹配分": int(preference_fit.get("preference_fit_score", 70)),
+                "行业偏好分": int(preference_fit.get("industry_fit_score", 70)),
+                "城市偏好分": int(preference_fit.get("city_fit_score", 70)),
+                "薪资匹配分": int(preference_fit.get("salary_fit_score", 70)),
+                "薪资匹配": preference_fit.get("salary_fit_level", "UNKNOWN"),
+                "薪资提醒": "；".join(preference_fit.get("salary_mismatch_warnings", [])),
+                "偏好提醒": "；".join(preference_fit.get("preference_warnings", [])),
                 "技术匹配分": fit.get("tech_score", ""),
                 "语义相似分": fit.get("semantic_score", ""),
-                "简历匹配分": resume_score,
-                "JD简历相似分": resume_semantic,
-                "岗位价值分": fit.get("value_score", ""),
-                "风险分": fit.get("risk_score", ""),
+                "岗位加分": fit.get("job_bonus", ""),
+                "目标偏好加分": fit.get("preference_bonus", ""),
+                "风险扣分": fit.get("risk_penalty", ""),
                 "置信度": confidence,
                 "读取质量": confidence_score,
                 "投递建议": recommendation,
@@ -9495,15 +11589,17 @@ def analyze_batch_jd_records(
                 **region_info,
                 "学历": education,
                 "经验": experience,
-                "岗位分类": jd.get("category", ""),
+                "岗位分类": category_display_label(jd),
+                "岗位方向依据": jd.get("category_meta", {}).get("source", ""),
                 "高价值": "是" if jd.get("value", {}).get("is_high_value") else "否",
                 "低价值风险": "是" if jd.get("value", {}).get("is_generic_esg") else "否",
                 "风险标签": " / ".join(jd.get("value", {}).get("risk_tags", [])),
                 "技能关键词": " / ".join(jd_skill_list(jd)[:10]),
                 "匹配原因": "；".join(fit["reasons"]),
-                "简历命中": " / ".join(resume_hits),
-                "简历证据": "；".join(resume_evidence),
-                "主要缺口": " / ".join(gaps[:8]),
+                "筛选评分依据": "；".join(fit.get("score_breakdown", [])),
+                "简历能力命中": " / ".join(resume_hits),
+                "筛选证据": "；".join(resume_evidence),
+                "未覆盖简历能力": " / ".join(gaps[:8]),
                 "薪资判断": fit.get("salary_label", ""),
                 "来源": record.get("source", ""),
                 "页面": record.get("page_index", ""),
@@ -9517,7 +11613,7 @@ def analyze_batch_jd_records(
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    return df.sort_values(["意向匹配度", "高价值"], ascending=[False, False]).reset_index(drop=True)
+    return sort_batch_rank_rows(df)
 
 
 def db_sql(sql: str) -> str:
@@ -9647,20 +11743,27 @@ def logout_app_user() -> None:
 
 
 def init_db() -> None:
-    database_init_utils.init_db(
-        session_state=st.session_state,
-        db_schema_version=DB_SCHEMA_VERSION,
-        use_postgres=USE_POSTGRES,
-        db_path=DB_PATH,
-        db_autoincrement_pk=db_autoincrement_pk,
-        db_connect=db_connect,
-        ensure_user_columns_fn=ensure_user_columns,
-        ensure_recruitment_region_columns_fn=ensure_recruitment_region_columns,
-        ensure_application_queue_columns_fn=ensure_application_queue_columns,
-        ensure_profile_table_ready_fn=ensure_profile_table_ready,
-        cleanup_legacy_database_state_fn=cleanup_legacy_database_state,
-        ensure_database_indexes_fn=ensure_database_indexes,
-    )
+    global _DB_INIT_DONE
+    if _DB_INIT_DONE:
+        return
+    with _DB_INIT_LOCK:
+        if _DB_INIT_DONE:
+            return
+        database_init_utils.init_db(
+            session_state=st.session_state,
+            db_schema_version=DB_SCHEMA_VERSION,
+            use_postgres=USE_POSTGRES,
+            db_path=DB_PATH,
+            db_autoincrement_pk=db_autoincrement_pk,
+            db_connect=db_connect,
+            ensure_user_columns_fn=ensure_user_columns,
+            ensure_recruitment_region_columns_fn=ensure_recruitment_region_columns,
+            ensure_application_queue_columns_fn=ensure_application_queue_columns,
+            ensure_profile_table_ready_fn=ensure_profile_table_ready,
+            cleanup_legacy_database_state_fn=cleanup_legacy_database_state,
+            ensure_database_indexes_fn=ensure_database_indexes,
+        )
+        _DB_INIT_DONE = True
 
 
 def ensure_recruitment_region_columns(conn: Any) -> None:
@@ -9723,6 +11826,10 @@ def render_browser_capture_helper(upload_url: str, upload_token: str, *, key_pre
     return
 
 
+def collapse_expander_state(state_key: str) -> None:
+    st.session_state[state_key] = False
+
+
 def ensure_profile_table_ready(conn: Any) -> None:
     repair_default_profiles(conn)
 
@@ -9759,6 +11866,8 @@ def clear_runtime_data_cache() -> None:
 
 def refresh_render_utils_module() -> None:
     global render_utils
+    if os.getenv("CAREERPILOT_HOT_RELOAD_HELPERS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
     render_utils = importlib.reload(render_utils)
 
 
@@ -10060,7 +12169,7 @@ def add_batch_rows_to_today_queue(rows: pd.DataFrame) -> int:
 
 
 def build_report_frames() -> dict[str, pd.DataFrame]:
-    return report_export_utils.build_report_frames(
+    frames = report_export_utils.build_report_frames(
         session_state=st.session_state,
         get_active_profile=get_active_profile,
         get_active_resume=get_active_resume,
@@ -10071,6 +12180,20 @@ def build_report_frames() -> dict[str, pd.DataFrame]:
         resume_parse_quality=resume_parse_quality,
         public_export_df=public_export_df,
     )
+    if "build_report_readiness_state" in globals():
+        readiness = build_report_readiness_state()
+        frames["报告导出检查"] = pd.DataFrame(readiness["rows"])
+        frames["报告导出结论"] = pd.DataFrame(
+            [
+                {
+                    "完整度": readiness["score"],
+                    "结论": readiness["label"],
+                    "建议": readiness["recommendation"],
+                    "优先补齐": " / ".join(readiness["missing_actions"]),
+                }
+            ]
+        )
+    return frames
 
 
 def build_excel_report() -> bytes:
@@ -10097,9 +12220,9 @@ def render_app_shell_header() -> None:
         <section class="cp-hero">
             <div class="cp-hero-copy">
                 <div class="cp-hero-kicker">CareerPilot 工作台</div>
-                <h1 class="cp-hero-title">{safe_html(APP_TITLE)}</h1>
+                <h1 class="cp-hero-title">CareerPilot</h1>
                 <p class="cp-hero-subtitle">
-                    把岗位分析、简历匹配、求职决策和投递复盘放进一个稳定、清晰、支持昼夜模式切换的统一界面。
+                    全职业岗位分析与求职决策工作台
                 </p>
             </div>
             <div class="cp-hero-pills">
@@ -11326,25 +13449,34 @@ def render_app_styles() -> None:
         }
 
         .cp-capture-tooltip {
-            position: absolute;
-            top: calc(100% + 10px);
-            right: 0;
-            width: min(280px, 70vw);
-            padding: 12px 14px;
+            position: static;
+            flex: 1 0 100%;
+            width: 100%;
+            max-height: 0;
+            padding: 0 14px;
             border-radius: 14px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 90%, transparent);
-            background: color-mix(in srgb, var(--cp-panel) 96%, var(--cp-accent-soft));
+            border: 1px solid transparent;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 96%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 70%, var(--cp-panel)));
             color: var(--cp-text);
-            box-shadow: var(--cp-shadow-md);
+            box-shadow: none;
             font-size: 12px;
             line-height: 1.6;
             text-align: left;
             opacity: 0;
             visibility: hidden;
-            transform: translateY(-4px);
-            transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
-            z-index: 20;
-            pointer-events: none;
+            overflow: hidden;
+            transform: translateY(-3px);
+            transition:
+                max-height 180ms ease,
+                padding 180ms ease,
+                border-color 180ms ease,
+                box-shadow 180ms ease,
+                opacity 140ms ease,
+                transform 140ms ease,
+                visibility 140ms ease;
+            z-index: 2;
+            pointer-events: auto;
         }
 
         .cp-capture-tooltip strong {
@@ -11353,8 +13485,16 @@ def render_app_styles() -> None:
             color: var(--cp-text);
         }
 
-        .cp-capture-help-badge:hover .cp-capture-tooltip,
-        .cp-capture-help-badge:focus-within .cp-capture-tooltip {
+        .cp-capture-help-badge:hover + .cp-capture-tooltip,
+        .cp-capture-help-badge:focus + .cp-capture-tooltip,
+        .cp-capture-help-badge:focus-visible + .cp-capture-tooltip,
+        .cp-capture-tooltip:hover {
+            max-height: 240px;
+            padding: 12px 14px;
+            border-color: color-mix(in srgb, var(--cp-border) 86%, transparent);
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 66%, transparent),
+                0 14px 28px rgba(15, 23, 42, 0.08);
             opacity: 1;
             visibility: visible;
             transform: translateY(0);
@@ -11363,6 +13503,9 @@ def render_app_styles() -> None:
         .cp-capture-actions {
             display: flex;
             flex-wrap: wrap;
+            align-items: center;
+            position: relative;
+            overflow: visible;
             gap: 10px;
             margin: 0 0 12px;
         }
@@ -12196,6 +14339,815 @@ def render_app_styles() -> None:
             border-color: var(--cp-border) !important;
         }
 
+        /* Unified workspace panels and result surfaces */
+        .block-container {
+            max-width: 1440px;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            position: relative;
+            border-radius: 18px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 92%, var(--cp-panel))) !important;
+            box-shadow:
+                0 1px 0 color-mix(in srgb, #ffffff 74%, transparent) inset,
+                0 16px 34px rgba(15, 23, 42, 0.055) !important;
+            overflow: hidden;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto;
+            height: 3px;
+            background: linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 72%, var(--cp-teal)));
+            opacity: 0.52;
+            pointer-events: none;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 14px !important;
+            box-shadow: none !important;
+            background: color-mix(in srgb, var(--cp-panel) 95%, var(--cp-bg)) !important;
+        }
+
+        .cp-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: var(--cp-text);
+            font-size: 16px;
+            line-height: 1.35;
+            font-weight: 850;
+            letter-spacing: 0;
+            margin: 0 0 10px;
+        }
+
+        .cp-panel-title::before {
+            content: "";
+            width: 7px;
+            height: 22px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 70%, var(--cp-teal)));
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--cp-teal) 10%, transparent);
+            flex: 0 0 auto;
+        }
+
+        .cp-panel-copy,
+        .cp-note,
+        .cp-empty-state-copy,
+        .cp-decision-copy {
+            color: color-mix(in srgb, var(--cp-text) 68%, transparent);
+        }
+
+        .cp-section-banner {
+            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent);
+            border-radius: 18px;
+            padding: 14px 16px;
+            margin: 4px 0 14px;
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-panel) 94%, var(--cp-accent-soft)), color-mix(in srgb, var(--cp-panel) 96%, #ffffff));
+            box-shadow: var(--cp-shadow-sm);
+        }
+
+        .cp-section-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .cp-section-title {
+            color: var(--cp-text);
+            font-size: 17px;
+            font-weight: 850;
+            line-height: 1.3;
+        }
+
+        .cp-section-copy {
+            margin-top: 6px;
+            color: var(--cp-muted);
+            font-size: 13px;
+            line-height: 1.58;
+        }
+
+        .cp-section-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 0 9px;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--cp-teal) 24%, var(--cp-border));
+            background: color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel));
+            color: var(--cp-teal-dark);
+            font-size: 11px;
+            font-weight: 820;
+        }
+
+        .cp-decision-card,
+        .cp-empty-state,
+        .cp-fact,
+        .cp-overview-card,
+        div[data-testid="stMetric"],
+        div[data-testid="stExpander"],
+        div[data-testid="stAlert"],
+        div[data-testid="stCodeBlock"],
+        div[data-testid="stJson"],
+        div[data-testid="stTable"] {
+            border-radius: 16px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
+            box-shadow:
+                0 1px 0 color-mix(in srgb, #ffffff 62%, transparent) inset,
+                0 12px 26px rgba(15, 23, 42, 0.048) !important;
+        }
+
+        .cp-decision-card {
+            border-left: 0 !important;
+            padding: 16px 17px !important;
+            margin: 0 0 12px;
+        }
+
+        .cp-decision-card::before {
+            content: "";
+            display: block;
+            width: 38px;
+            height: 4px;
+            border-radius: 999px;
+            margin-bottom: 12px;
+            background: linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 68%, var(--cp-teal)));
+        }
+
+        .cp-decision-label,
+        .cp-fact-label,
+        div[data-testid="stMetricLabel"] {
+            color: color-mix(in srgb, var(--cp-muted) 86%, var(--cp-text)) !important;
+            font-size: 11.5px !important;
+            font-weight: 820 !important;
+            letter-spacing: 0.02em;
+        }
+
+        .cp-decision-value {
+            font-size: clamp(20px, 2vw, 26px);
+            letter-spacing: 0;
+        }
+
+        .cp-fact-grid,
+        .cp-overview-grid {
+            gap: 10px;
+        }
+
+        .cp-fact {
+            padding: 12px 13px !important;
+            border-radius: 14px !important;
+            min-height: 74px;
+        }
+
+        .cp-fact-value {
+            font-size: 14px;
+            line-height: 1.42;
+        }
+
+        .cp-empty-state {
+            min-height: 190px;
+            padding: 20px 18px 18px;
+            border-style: dashed !important;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .cp-empty-state-title {
+            font-size: 17px;
+            line-height: 1.35;
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px !important;
+            padding: 6px !important;
+            margin: 2px 0 12px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-border) 78%, transparent) !important;
+            border-radius: 16px !important;
+            background: color-mix(in srgb, var(--cp-panel-soft) 82%, var(--cp-panel)) !important;
+            box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 58%, transparent);
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            min-height: 38px !important;
+            border-radius: 12px !important;
+            padding: 0 14px !important;
+            color: color-mix(in srgb, var(--cp-muted) 84%, var(--cp-text)) !important;
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            letter-spacing: 0;
+            border: 1px solid transparent !important;
+        }
+
+        .stTabs [aria-selected="true"] {
+            color: var(--cp-teal-dark) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 92%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel))) !important;
+            border-color: color-mix(in srgb, var(--cp-teal) 22%, var(--cp-border)) !important;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06) !important;
+        }
+
+        .stTabs [data-baseweb="tab-panel"] {
+            padding-top: 2px !important;
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"] {
+            border-radius: 16px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 80%, var(--cp-panel))) !important;
+            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.055) !important;
+            overflow: hidden !important;
+        }
+
+        div[data-testid="stDataFrame"] [role="columnheader"],
+        div[data-testid="stDataEditor"] [role="columnheader"] {
+            background: color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel)) !important;
+            color: var(--cp-teal-dark) !important;
+            font-size: 12px !important;
+            font-weight: 850 !important;
+            border-color: color-mix(in srgb, var(--cp-border) 72%, transparent) !important;
+        }
+
+        div[data-testid="stDataFrame"] [role="gridcell"],
+        div[data-testid="stDataEditor"] [role="gridcell"] {
+            background: color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
+            color: var(--cp-text) !important;
+            font-size: 12px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 60%, transparent) !important;
+        }
+
+        div[data-testid="stDataFrame"] [role="row"]:hover [role="gridcell"],
+        div[data-testid="stDataEditor"] [role="row"]:hover [role="gridcell"] {
+            background: color-mix(in srgb, var(--cp-accent-soft) 52%, var(--cp-panel)) !important;
+        }
+
+        div[data-testid="stExpander"] {
+            overflow: hidden;
+        }
+
+        div[data-testid="stExpander"] summary {
+            min-height: 46px;
+            padding: 0 14px !important;
+            background: color-mix(in srgb, var(--cp-accent-soft) 44%, transparent);
+        }
+
+        div[data-testid="stExpander"] details > div {
+            padding: 12px 14px 14px !important;
+        }
+
+        div[data-testid="stAlert"] {
+            padding: 10px 12px !important;
+        }
+
+        div[data-testid="stAlert"] p {
+            font-size: 13px !important;
+            line-height: 1.55 !important;
+        }
+
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stTextInputRootElement"],
+        div[data-baseweb="select"] > div,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stFileUploader"] section {
+            border-radius: 14px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 76%, transparent) !important;
+            background: color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
+                0 8px 18px rgba(15, 23, 42, 0.035) !important;
+        }
+
+        div[data-testid="stTextArea"] textarea:focus,
+        div[data-testid="stTextInputRootElement"]:focus-within,
+        div[data-baseweb="select"] > div:focus-within,
+        div[data-testid="stNumberInput"] input:focus {
+            border-color: color-mix(in srgb, var(--cp-teal) 42%, var(--cp-border)) !important;
+            box-shadow:
+                0 0 0 3px color-mix(in srgb, var(--cp-teal) 12%, transparent),
+                inset 0 1px 0 color-mix(in srgb, #ffffff 74%, transparent) !important;
+        }
+
+        label[data-testid="stWidgetLabel"] p {
+            color: color-mix(in srgb, var(--cp-text) 86%, var(--cp-muted)) !important;
+            font-size: 12.5px !important;
+            font-weight: 820 !important;
+            margin-bottom: 6px !important;
+        }
+
+        div[data-testid="stMarkdownContainer"] h3,
+        div[data-testid="stMarkdownContainer"] h4,
+        div[data-testid="stMarkdownContainer"] h5 {
+            color: var(--cp-text);
+            letter-spacing: 0;
+        }
+
+        div[data-testid="stMarkdownContainer"] blockquote {
+            border-left: 4px solid var(--cp-teal);
+            background: color-mix(in srgb, var(--cp-accent-soft) 58%, var(--cp-panel));
+            border-radius: 0 14px 14px 0;
+            padding: 10px 12px;
+            color: var(--cp-text);
+        }
+
+        /* Premium surface pass: layered panels, refined outputs, richer result boxes */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            isolation: isolate;
+            border-radius: 22px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-border) 66%, #ffffff 18%) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 26%, transparent), transparent 42%),
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 30%, transparent), transparent 38%),
+                repeating-linear-gradient(90deg, color-mix(in srgb, var(--cp-text) 2.2%, transparent) 0 1px, transparent 1px 22px),
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 92%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 82%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
+                0 22px 44px rgba(15, 23, 42, 0.075),
+                0 4px 12px rgba(15, 23, 42, 0.045) !important;
+            transition:
+                transform 180ms ease,
+                box-shadow 180ms ease,
+                border-color 180ms ease,
+                background-color 180ms ease;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--cp-teal) 26%, var(--cp-border)) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
+                0 28px 58px rgba(15, 23, 42, 0.09),
+                0 7px 18px rgba(15, 23, 42, 0.052) !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::before {
+            height: 4px;
+            background:
+                linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 74%, var(--cp-teal)), color-mix(in srgb, var(--cp-red) 34%, var(--cp-gold))) !important;
+            opacity: 0.78;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::after {
+            content: "";
+            position: absolute;
+            inset: 4px 1px auto;
+            height: 42px;
+            border-radius: 20px 20px 0 0;
+            background: linear-gradient(180deg, color-mix(in srgb, #ffffff 28%, transparent), transparent);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 18px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 58%, transparent) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 96%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 88%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent),
+                0 10px 22px rgba(15, 23, 42, 0.04) !important;
+        }
+
+        .cp-section-banner,
+        .cp-capture-panel,
+        .cp-workspace-head,
+        .cp-sidebar-brand,
+        .cp-sidebar-status {
+            border-color: color-mix(in srgb, var(--cp-border) 68%, #ffffff 18%) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 46%),
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 42%, transparent), color-mix(in srgb, var(--cp-panel) 96%, #ffffff)) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
+                0 18px 34px rgba(15, 23, 42, 0.065) !important;
+        }
+
+        .cp-section-banner {
+            position: relative;
+            overflow: hidden;
+            padding: 16px 18px;
+        }
+
+        .cp-section-banner::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 14px;
+            bottom: 14px;
+            width: 4px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 78%, var(--cp-teal)));
+        }
+
+        .cp-section-heading,
+        .cp-section-copy {
+            margin-left: 8px;
+        }
+
+        .cp-decision-card,
+        .cp-empty-state,
+        .cp-fact,
+        .cp-overview-card,
+        div[data-testid="stMetric"],
+        div[data-testid="stExpander"],
+        div[data-testid="stAlert"],
+        div[data-testid="stCodeBlock"],
+        div[data-testid="stJson"],
+        div[data-testid="stTable"] {
+            border-radius: 18px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 64%, #ffffff 16%) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 22%, transparent), transparent 50%),
+                linear-gradient(145deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 90%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
+                0 16px 32px rgba(15, 23, 42, 0.065),
+                0 3px 9px rgba(15, 23, 42, 0.035) !important;
+        }
+
+        .cp-decision-card,
+        .cp-fact,
+        .cp-overview-card,
+        div[data-testid="stMetric"] {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cp-decision-card::after,
+        .cp-fact::after,
+        .cp-overview-card::after,
+        div[data-testid="stMetric"]::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(90deg, color-mix(in srgb, var(--cp-teal) 8%, transparent), transparent 28%),
+                repeating-linear-gradient(0deg, color-mix(in srgb, var(--cp-text) 1.6%, transparent) 0 1px, transparent 1px 18px);
+            opacity: 0.52;
+            pointer-events: none;
+        }
+
+        .cp-decision-card > *,
+        .cp-fact > *,
+        .cp-overview-card > *,
+        div[data-testid="stMetric"] > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .cp-empty-state {
+            border-style: solid !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 44%),
+                repeating-linear-gradient(90deg, color-mix(in srgb, var(--cp-text) 2%, transparent) 0 1px, transparent 1px 24px),
+                linear-gradient(145deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 52%, var(--cp-panel))) !important;
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"] {
+            border-radius: 18px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 64%, #ffffff 18%) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 46%),
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 88%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
+                0 20px 42px rgba(15, 23, 42, 0.075),
+                0 4px 12px rgba(15, 23, 42, 0.04) !important;
+        }
+
+        div[data-testid="stDataFrame"] [role="columnheader"],
+        div[data-testid="stDataEditor"] [role="columnheader"] {
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-accent-soft) 86%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 64%, var(--cp-panel))) !important;
+            border-color: color-mix(in srgb, var(--cp-border) 62%, transparent) !important;
+            text-transform: none;
+        }
+
+        div[data-testid="stDataFrame"] [role="gridcell"],
+        div[data-testid="stDataEditor"] [role="gridcell"] {
+            background: color-mix(in srgb, var(--cp-panel) 97%, #ffffff) !important;
+        }
+
+        div[data-testid="stDataFrame"] [role="row"]:nth-child(even) [role="gridcell"],
+        div[data-testid="stDataEditor"] [role="row"]:nth-child(even) [role="gridcell"] {
+            background: color-mix(in srgb, var(--cp-panel-soft) 44%, var(--cp-panel)) !important;
+        }
+
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stTextInputRootElement"],
+        div[data-baseweb="select"] > div,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stFileUploader"] section {
+            border-radius: 16px !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 20%, transparent), transparent),
+                color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 80%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
+                0 10px 22px rgba(15, 23, 42, 0.045) !important;
+        }
+
+        /* Density correction: keep nested output panels polished without crowding */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            overflow: visible !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 18%, transparent), transparent 46%),
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 24%, transparent), transparent 42%),
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 90%, var(--cp-panel))) !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+            transform: none;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::after {
+            opacity: 0.42;
+        }
+
+        .cp-panel-title {
+            gap: 11px;
+            margin: 0 0 16px;
+            font-size: 17px;
+        }
+
+        .cp-panel-title::before {
+            width: 6px;
+            height: 30px;
+            box-shadow: 0 0 0 5px color-mix(in srgb, var(--cp-teal) 8%, transparent);
+        }
+
+        .cp-empty-state {
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 148px;
+            margin: 4px 0 0;
+            padding: 26px 28px;
+            justify-content: center;
+            border-radius: 20px !important;
+            border-color: color-mix(in srgb, var(--cp-border) 58%, #ffffff 22%) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 48%),
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 34%, transparent), transparent 44%),
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
+                0 14px 30px rgba(15, 23, 42, 0.058) !important;
+        }
+
+        .cp-empty-state-title {
+            max-width: 36rem;
+            font-size: clamp(18px, 1.6vw, 22px);
+            line-height: 1.32;
+            letter-spacing: 0;
+        }
+
+        .cp-empty-state-copy {
+            max-width: 38rem;
+            margin-top: 12px;
+            font-size: 14px;
+            line-height: 1.75;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] .cp-empty-state {
+            margin-top: 6px;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
+            overflow: visible !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 16%, transparent), transparent 42%),
+                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
+                0 8px 18px rgba(15, 23, 42, 0.036) !important;
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"],
+        .cp-decision-card,
+        .cp-fact,
+        .cp-overview-card,
+        div[data-testid="stMetric"] {
+            box-sizing: border-box;
+            max-width: 100%;
+        }
+
+        /* Glass composition: tinted parent surfaces + frosted child outputs */
+        [data-testid="stDeployButton"],
+        [data-testid="stBaseButton-header"]:has(span),
+        button[data-testid="stBaseButton-header"][kind="header"],
+        [data-testid="stToolbar"] [title="Deploy"],
+        [data-testid="stToolbar"] [aria-label="Deploy"] {
+            display: none !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 24px !important;
+            border: 1px solid color-mix(in srgb, var(--cp-teal) 18%, var(--cp-border)) !important;
+            background:
+                linear-gradient(145deg, color-mix(in srgb, var(--cp-teal) 12%, transparent), color-mix(in srgb, var(--cp-gold) 7%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 38%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 48%, transparent),
+                0 18px 38px rgba(15, 23, 42, 0.055) !important;
+            backdrop-filter: blur(10px) saturate(1.04);
+            -webkit-backdrop-filter: blur(10px) saturate(1.04);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::before {
+            left: 18px;
+            right: auto;
+            top: 18px;
+            width: 8px;
+            height: 44px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 78%, var(--cp-teal))) !important;
+            box-shadow: 0 0 0 8px color-mix(in srgb, var(--cp-teal) 9%, transparent);
+            opacity: 0.9;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::after {
+            display: none;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title {
+            margin-left: 28px;
+            margin-bottom: 18px;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title::before {
+            display: none;
+        }
+
+        .cp-empty-state,
+        .cp-decision-card,
+        .cp-overview-card,
+        div[data-testid="stMetric"],
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"],
+        div[data-testid="stExpander"],
+        div[data-testid="stAlert"],
+        div[data-testid="stCodeBlock"],
+        div[data-testid="stJson"],
+        div[data-testid="stTable"] {
+            border-radius: 22px !important;
+            border: 1px solid color-mix(in srgb, #ffffff 50%, var(--cp-border)) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 58%, transparent), color-mix(in srgb, #ffffff 24%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 62%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 88%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 3%, transparent),
+                0 18px 36px rgba(15, 23, 42, 0.075) !important;
+            backdrop-filter: blur(18px) saturate(1.12);
+            -webkit-backdrop-filter: blur(18px) saturate(1.12);
+        }
+
+        .cp-empty-state {
+            min-height: 156px;
+            padding: 34px 40px;
+            margin: 8px 6px 0;
+        }
+
+        .cp-empty-state-title {
+            font-size: clamp(19px, 1.55vw, 24px);
+        }
+
+        .cp-empty-state-copy {
+            color: color-mix(in srgb, var(--cp-text) 62%, transparent);
+        }
+
+        /* Clean rebuild: Streamlit containers become quiet sections, content owns the shape */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            margin: 0 0 18px;
+            padding: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::before,
+        div[data-testid="stVerticalBlockBorderWrapper"]::after {
+            display: none !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            padding: 0 !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title {
+            position: relative;
+            display: flex;
+            align-items: center;
+            min-height: 34px;
+            margin: 0 0 14px !important;
+            padding: 0 0 0 17px;
+            font-size: 18px;
+            font-weight: 860;
+            color: var(--cp-text);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title::before {
+            display: block !important;
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 4px;
+            width: 5px;
+            height: 26px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 74%, var(--cp-teal)));
+            box-shadow: 0 0 0 7px color-mix(in srgb, var(--cp-teal) 8%, transparent);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.cp-panel-title) {
+            padding: 18px 18px 20px !important;
+            border-radius: 24px !important;
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--cp-teal) 8%, transparent), color-mix(in srgb, var(--cp-gold) 5%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 36%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 38%, transparent),
+                0 16px 34px rgba(15, 23, 42, 0.045) !important;
+        }
+
+        .cp-empty-state {
+            min-height: 132px !important;
+            margin: 0 !important;
+            padding: 30px 34px !important;
+            border-radius: 24px !important;
+            border: 1px solid color-mix(in srgb, #ffffff 56%, var(--cp-border)) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 72%, transparent), color-mix(in srgb, #ffffff 34%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 72%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 92%, transparent),
+                0 18px 38px rgba(15, 23, 42, 0.07) !important;
+            backdrop-filter: blur(16px) saturate(1.08);
+            -webkit-backdrop-filter: blur(16px) saturate(1.08);
+        }
+
+        .cp-empty-state-title {
+            font-size: clamp(20px, 1.7vw, 25px) !important;
+            font-weight: 880;
+        }
+
+        .cp-empty-state-copy {
+            margin-top: 10px;
+            max-width: 34rem;
+            font-size: 14px;
+            line-height: 1.72;
+        }
+
+        .cp-decision-card,
+        .cp-overview-card,
+        .cp-fact,
+        div[data-testid="stMetric"] {
+            border-radius: 20px !important;
+            border: 1px solid color-mix(in srgb, #ffffff 46%, var(--cp-border)) !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 60%, transparent), color-mix(in srgb, #ffffff 22%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 68%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
+                0 14px 28px rgba(15, 23, 42, 0.06) !important;
+            backdrop-filter: blur(14px) saturate(1.08);
+            -webkit-backdrop-filter: blur(14px) saturate(1.08);
+        }
+
+        .cp-decision-card::before {
+            width: 30px;
+            height: 3px;
+            margin-bottom: 13px;
+            opacity: 0.9;
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"] {
+            border-radius: 20px !important;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, #ffffff 64%, transparent), color-mix(in srgb, #ffffff 20%, transparent)),
+                color-mix(in srgb, var(--cp-panel) 74%, transparent) !important;
+            box-shadow:
+                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
+                0 14px 30px rgba(15, 23, 42, 0.062) !important;
+        }
+
         @media (max-width: 760px) {
             .block-container {
                 padding-left: 1rem;
@@ -12284,10 +15236,15 @@ def render_app_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
+    inject_global_styles()
 
 
 def public_export_df(df: pd.DataFrame) -> pd.DataFrame:
     return table_format_utils.public_export_df(df)
+
+
+def normalize_legacy_table_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return table_format_utils.normalize_legacy_table_columns(df)
 
 
 def user_table_df(df: pd.DataFrame, columns: list[str] | None = None, *, hide_scores: bool = True) -> pd.DataFrame:
@@ -12351,7 +15308,7 @@ def render_risk_logic_note() -> None:
 
 
 def target_jd_row_label(row: pd.Series) -> str:
-    score = row.get("意向匹配度", row.get("匹配度", ""))
+    score = row.get("final_rank_score", row.get("意向匹配度", row.get("推荐评分", row.get("综合分", row.get("匹配度", "")))))
     company = str(row.get("公司", "") or "未识别公司")
     title = str(row.get("岗位", "") or row.get("岗位名", "") or "未识别岗位")
     prefix = f"{score}分｜" if str(score).strip() else ""
@@ -12372,11 +15329,132 @@ def batch_gap_count(value: Any) -> int:
     return len(split_preference_items(text))
 
 
+def batch_rank_score_column(df: pd.DataFrame) -> str:
+    return "final_rank_score" if df is not None and "final_rank_score" in df.columns else ""
+
+
+def batch_risk_tags(row: pd.Series) -> list[tuple[str, str]]:
+    tags: list[tuple[str, str]] = []
+    for warning in row.get("salary_mismatch_warnings", []) or []:
+        if str(warning).strip():
+            tags.append((str(warning), "high"))
+    for warning in row.get("preference_warnings", []) or []:
+        if str(warning).strip():
+            tags.append((str(warning), "medium"))
+    if int(row.get("career_target_fit_score", 70) or 0) < 50:
+        tags.append(("方向偏离", "high"))
+    if int(row.get("preference_fit_score", 70) or 0) < 55:
+        tags.append(("偏好不符", "medium"))
+    if int(row.get("城市偏好分", 70) or 0) < 55:
+        tags.append(("城市不符", "medium"))
+    if int(row.get("薪资匹配分", 70) or 0) < 55:
+        tags.append(("薪资偏低", "high"))
+    if str(row.get("低价值风险", "") or "") == "是":
+        tags.append(("岗位风险待核实", "high"))
+    raw_tags = split_preference_items(str(row.get("风险标签", "") or ""))
+    tags.extend((item, "medium") for item in raw_tags[:3])
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for text, level in tags:
+        if text and text not in seen:
+            deduped.append((text, level))
+            seen.add(text)
+    return deduped[:6]
+
+
+def render_batch_overview(view_df: pd.DataFrame) -> None:
+    analyzed_count = len(view_df)
+    priority_count = int(view_df["投递建议"].astype(str).str.contains("P1|P2|优先", regex=True, na=False).sum()) if "投递建议" in view_df.columns else 0
+    highest_rank = int(view_df["final_rank_score"].max()) if "final_rank_score" in view_df.columns and not view_df.empty else 0
+    career_mismatch = int((view_df["career_target_fit_score"].fillna(70).astype(int) < 50).sum()) if "career_target_fit_score" in view_df.columns else 0
+    salary_city_risk = 0
+    if "preference_fit_score" in view_df.columns:
+        salary_city_risk += int((view_df["preference_fit_score"].fillna(70).astype(int) < 55).sum())
+    if "薪资匹配分" in view_df.columns:
+        salary_city_risk += int((view_df["薪资匹配分"].fillna(70).astype(int) < 55).sum())
+    metric_cols = st.columns(5)
+    with metric_cols[0]:
+        ui_components.compact_metric("已分析 JD", analyzed_count)
+    with metric_cols[1]:
+        ui_components.compact_metric("推荐优先", priority_count)
+    with metric_cols[2]:
+        ui_components.compact_metric("最高推荐分", highest_rank)
+    with metric_cols[3]:
+        ui_components.compact_metric("方向不匹配", career_mismatch)
+    with metric_cols[4]:
+        ui_components.compact_metric("薪资/城市风险", salary_city_risk)
+
+
+def render_batch_job_card(row: pd.Series, *, selected: bool = False) -> None:
+    enriched = row.to_dict()
+    enriched["risk_tags"] = batch_risk_tags(row)
+    if not enriched.get("missing_requirements"):
+        enriched["missing_requirements"] = split_preference_items(str(row.get("未覆盖简历能力", "") or ""))[:2]
+    ui_components.render_job_rank_card(enriched, selected=selected)
+
+
+def render_batch_jd_detail(row: pd.Series) -> None:
+    ui_components.section_title(row.get("岗位", "") or "选中岗位", row.get("公司", "") or "未识别公司")
+    score_cols = st.columns(4)
+    with score_cols[0]:
+        ui_components.score_summary_card("岗位推荐分", row.get("final_rank_score", 0), level=row.get("recommendation_level", ""))
+    with score_cols[1]:
+        ui_components.score_summary_card("简历匹配分", row.get("overall_score", row.get("evidence_fit_score", 0)))
+    with score_cols[2]:
+        ui_components.score_summary_card("职业方向分", row.get("career_target_fit_score", 0))
+    with score_cols[3]:
+        ui_components.score_summary_card("偏好匹配分", row.get("preference_fit_score", 0))
+
+    risks = batch_risk_tags(row)
+    if risks:
+        st.markdown("##### 风险标签")
+        for text, level in risks:
+            ui_components.risk_tag(text, level)
+
+    st.markdown("##### 评分拆解")
+    ui_components.compact_breakdown(row.get("score_breakdown", {}))
+
+    evidence_items = row.get("matched_evidence", []) or []
+    missing_items = row.get("missing_requirements", []) or []
+    weak_items = row.get("weak_requirements", []) or []
+    detail_tabs = st.tabs(["证据", "缺口", "原文"])
+    with detail_tabs[0]:
+        for item in evidence_items[:5]:
+            ui_components.evidence_card(
+                item.get("jd_requirement", "") or item.get("requirement", ""),
+                item.get("resume_evidence", ""),
+                item.get("match_type", "") or item.get("evidence_strength", ""),
+                item.get("explanation", ""),
+            )
+        if not evidence_items:
+            ui_components.empty_state("暂无匹配证据", "当前简历里还没有识别到可直接支撑该岗位要求的证据。")
+    with detail_tabs[1]:
+        for item in missing_items[:5]:
+            ui_components.gap_card(
+                item.get("requirement", ""),
+                item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写入简历。",
+                "未找到真实证据，不建议直接写入简历。",
+                item.get("importance", ""),
+            )
+        for item in weak_items[:5]:
+            ui_components.gap_card(
+                item.get("requirement", ""),
+                item.get("problem", "") or "有相关线索，但证据不够完整。",
+                "有相关线索，但需要补充真实场景、动作和结果。",
+                item.get("importance", ""),
+            )
+        if not missing_items and not weak_items:
+            ui_components.empty_state("缺口较少", "当前没有明显未覆盖或弱证据要求。")
+    with detail_tabs[2]:
+        st.caption(f"{row.get('地点', '')} · {row.get('薪资', '')} · {row.get('链接', '')}")
+        st.text_area("JD 原文", value=str(row.get("JD原文", "") or ""), height=220, disabled=True, key=f"batch_detail_jd_{row.name}")
+
+
 def apply_batch_quick_view(df: pd.DataFrame, view_name: str, preferences: dict[str, Any] | None = None) -> pd.DataFrame:
     if df is None or df.empty or view_name == "全部":
-        return df
+        return normalize_legacy_table_columns(df) if df is not None else df
     preferences = preferences or load_target_preferences()
-    view_df = df.copy()
+    view_df = normalize_legacy_table_columns(df)
     risk_column = "低价值风险" if "低价值风险" in view_df.columns else "泛ESG风险"
 
     if view_name == "强投优先" and "投递建议" in view_df.columns:
@@ -12410,17 +15488,20 @@ def apply_batch_quick_view(df: pd.DataFrame, view_name: str, preferences: dict[s
             for mask in masks[1:]:
                 combined = combined | mask
             view_df = view_df[combined]
-    elif view_name == "缺口最小" and "主要缺口" in view_df.columns:
-        view_df = view_df.assign(_gap_count=view_df["主要缺口"].apply(batch_gap_count))
+    elif view_name == "缺口最小" and "未覆盖简历能力" in view_df.columns:
+        view_df = view_df.assign(_gap_count=view_df["未覆盖简历能力"].apply(batch_gap_count))
         sort_cols = ["_gap_count"]
         ascending = [True]
-        if "意向匹配度" in view_df.columns:
-            sort_cols.append("意向匹配度")
+        rank_col = batch_rank_score_column(view_df)
+        if rank_col:
+            sort_cols.append(rank_col)
             ascending.append(False)
         view_df = view_df.sort_values(sort_cols, ascending=ascending).drop(columns=["_gap_count"])
 
-    if "意向匹配度" in view_df.columns and view_name in {"强投优先", "目标城市", "目标行业", "排除低价值", "应届/实习友好"}:
-        view_df = view_df.sort_values("意向匹配度", ascending=False)
+    if view_name in {"强投优先", "目标城市", "目标行业", "排除低价值", "应届/实习友好"}:
+        rank_col = batch_rank_score_column(view_df)
+        if rank_col:
+            view_df = view_df.sort_values(rank_col, ascending=False)
     return view_df
 
 
@@ -12457,18 +15538,225 @@ def render_state_alerts() -> None:
     )
 
 
+SUPPORTIVE_ADVICE_TAILS = [
+    "最小动作：今天先写 1 条可放进简历的经历句，包含场景、动作、交付物和结果。",
+    "完成标准：产出一张小表，列出目标岗位关键词、你已有证据、缺口和下一步。",
+    "验证方式：只拿 1 个目标岗位对照，确认这条修改能回答“我做了什么、交付了什么、结果是什么”。",
+    "边界提醒：没有真实证据的技能先不硬写，改成能在本周补出的课程项目、截图或报告。",
+]
+
+
+ADVICE_PRACTICAL_MARKERS = (
+    "今天",
+    "本周",
+    "写",
+    "改写",
+    "整理",
+    "补齐",
+    "列出",
+    "替换",
+    "检查",
+    "确认",
+    "输出",
+    "交付",
+    "交付物",
+    "截图",
+    "报告",
+    "表格",
+    "对照表",
+    "清单",
+    "bullet",
+    "STAR",
+    "README",
+)
+
+
+def has_practical_advice_detail(text: str) -> bool:
+    if re.search(r"\d+\s*(条|个|页|分钟|秒|天|周|次|份|项)", text):
+        return True
+    return any(marker in text for marker in ADVICE_PRACTICAL_MARKERS)
+
+
+def humanize_advice_text(text: Any, index: int = 0) -> str:
+    base = normalize_text(str(text or ""))
+    if not base:
+        return ""
+    if "最小动作：" in base or "完成标准：" in base or "验证方式：" in base or "边界提醒：" in base:
+        return base
+    if has_practical_advice_detail(base):
+        return base
+    tail = SUPPORTIVE_ADVICE_TAILS[index % len(SUPPORTIVE_ADVICE_TAILS)]
+    separator = "" if base.endswith(("。", "！", "？", ".", "!", "?")) else "。"
+    return f"{base}{separator}{tail}"
+
+
+def humanize_advice_list(items: list[Any], limit: int | None = None) -> list[str]:
+    values = [humanize_advice_text(item, index) for index, item in enumerate(items) if normalize_text(str(item or ""))]
+    return values[:limit] if limit else values
+
+
+def supportive_section_caption(kind: str = "default") -> None:
+    messages = {
+        "job": "先选 1-2 个最值得投的岗位深看：补齐岗位证据、详情页链接和面试追问点，再决定是否批量投递。",
+        "resume": "先改最贴目标岗位的一段经历：用“任务-动作-交付物-结果”替换空泛描述，完成后再扩展到其他经历。",
+        "interview": "答案不用背模板；每个高频问题准备 1 个真实案例、1 个数字或交付物、1 句复盘，比泛泛表态更稳。",
+        "internship": "除分数外，也看通勤、导师反馈和能否留下作品；优先确认你能带走什么成果，而不只是做了多久。",
+    }
+    st.caption(messages.get(kind, "先把建议落成一个小交付物：一条经历句、一张对照表，或一个可展示截图。"))
+
+
+def resume_match_overall_score(resume_match: dict[str, Any] | None) -> int:
+    if not resume_match:
+        return 0
+    return int(resume_match.get("overall_score", 0) or 0)
+
+
+def legacy_resume_match_overall_score(resume_match: dict[str, Any] | None) -> int:
+    """LEGACY ONLY: use for old saved records that predate overall_score."""
+    if not resume_match:
+        return 0
+    return int(resume_match.get("overall_score", resume_match.get("score", 0)) or 0)
+
+
+def _requirement_name(item: dict[str, Any]) -> str:
+    return str(item.get("requirement") or item.get("jd_requirement") or item.get("target_requirement") or "").strip()
+
+
+def resume_matched_requirement_names(resume_match: dict[str, Any] | None, limit: int = 12) -> list[str]:
+    if not resume_match:
+        return []
+    names = [_requirement_name(item) for item in resume_match.get("matched_evidence", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def legacy_resume_matched_requirement_names(resume_match: dict[str, Any] | None, limit: int = 12) -> list[str]:
+    """LEGACY ONLY: fallback to matched_skills for old reports."""
+    names = resume_matched_requirement_names(resume_match, limit)
+    if not names and resume_match:
+        names = [str(item).strip() for item in resume_match.get("matched_skills", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_missing_requirement_names(resume_match: dict[str, Any] | None, limit: int = 12) -> list[str]:
+    if not resume_match:
+        return []
+    names = [_requirement_name(item) for item in resume_match.get("missing_requirements", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def legacy_resume_missing_requirement_names(resume_match: dict[str, Any] | None, limit: int = 12) -> list[str]:
+    """LEGACY ONLY: fallback to missing_skills for old reports."""
+    names = resume_missing_requirement_names(resume_match, limit)
+    if not names and resume_match:
+        names = [str(item).strip() for item in resume_match.get("missing_skills", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_weak_requirement_names(resume_match: dict[str, Any] | None, limit: int = 12) -> list[str]:
+    if not resume_match:
+        return []
+    names = [_requirement_name(item) for item in resume_match.get("weak_requirements", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_hard_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    if not resume_match:
+        return []
+    names = [
+        _requirement_name(item)
+        for item in resume_match.get("missing_requirements", []) or []
+        if item.get("importance") == "HIGH"
+    ]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def legacy_resume_hard_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    """LEGACY ONLY: fallback to hard_skill_gaps for old reports."""
+    names = resume_hard_gap_names(resume_match, limit)
+    if not names and resume_match:
+        names = [str(item).strip() for item in resume_match.get("hard_skill_gaps", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_evidence_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    names = resume_weak_requirement_names(resume_match, limit)
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def legacy_resume_evidence_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    """LEGACY ONLY: fallback to evidence_skill_gaps for old reports."""
+    names = resume_evidence_gap_names(resume_match, limit)
+    if not names and resume_match:
+        names = [str(item).strip() for item in resume_match.get("evidence_skill_gaps", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_expression_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    if not resume_match:
+        return []
+    names = [
+        _requirement_name(item)
+        for item in resume_match.get("weak_requirements", []) or []
+        if "expression" in str(item.get("problem", "")).lower() or "表达" in str(item.get("problem", ""))
+    ]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def legacy_resume_expression_gap_names(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    """LEGACY ONLY: fallback to expression_skill_gaps for old reports."""
+    names = resume_expression_gap_names(resume_match, limit)
+    if not names and resume_match:
+        names = [str(item).strip() for item in resume_match.get("expression_skill_gaps", []) or []]
+    return list(dict.fromkeys(item for item in names if item))[:limit]
+
+
+def resume_gap_example_texts(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    if not resume_match:
+        return []
+    texts = [
+        str(item.get("reason") or item.get("missing_reason") or "").strip()
+        for item in resume_match.get("missing_requirements", []) or []
+    ]
+    texts.extend(
+        str(item.get("problem") or item.get("reason") or "").strip()
+        for item in resume_match.get("weak_requirements", []) or []
+    )
+    return list(dict.fromkeys(item for item in texts if item))[:limit]
+
+
+def resume_strength_texts(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    if not resume_match:
+        return []
+    texts = []
+    for item in resume_match.get("matched_evidence", []) or []:
+        requirement = _requirement_name(item)
+        explanation = str(item.get("explanation") or item.get("resume_evidence") or "").strip()
+        if requirement and explanation:
+            texts.append(f"{requirement}：{explanation}")
+        elif requirement:
+            texts.append(requirement)
+    return list(dict.fromkeys(item for item in texts if item))[:limit]
+
+
+def resume_evidence_texts(resume_match: dict[str, Any] | None, limit: int = 8) -> list[str]:
+    if not resume_match:
+        return []
+    texts = [str(item.get("resume_evidence") or "").strip() for item in resume_match.get("matched_evidence", []) or []]
+    return list(dict.fromkeys(item for item in texts if item))[:limit]
+
+
 def build_job_action_plan(jd_analysis: dict[str, Any] | None, resume_match: dict[str, Any] | None = None) -> dict[str, list[str] | str]:
     if not jd_analysis:
         return {"decision": "先完成目标 JD 分析。", "actions": [], "bullets": [], "evidence_gaps": [], "interview_focus": []}
 
     value = jd_analysis.get("value", {})
     skills = jd_skill_list(jd_analysis)
-    missing = resume_match.get("missing_skills", []) if resume_match else skills[:5]
-    hard_gaps = resume_match.get("hard_skill_gaps", []) if resume_match else []
-    evidence_gaps = resume_match.get("evidence_skill_gaps", []) if resume_match else []
-    expression_gaps = resume_match.get("expression_skill_gaps", []) if resume_match else []
+    missing = resume_missing_requirement_names(resume_match) if resume_match else skills[:5]
+    hard_gaps = resume_hard_gap_names(resume_match)
+    evidence_gaps = resume_evidence_gap_names(resume_match)
+    expression_gaps = resume_expression_gap_names(resume_match)
     anchor_groups = resume_match.get("anchor_groups", []) if resume_match else category_priority_groups(jd_analysis)
-    score = int(resume_match.get("score", 0) if resume_match else 0)
+    score = resume_match_overall_score(resume_match)
 
     if resume_match:
         if score >= 82 and value.get("is_high_value"):
@@ -12526,17 +15814,17 @@ def build_job_action_plan(jd_analysis: dict[str, Any] | None, resume_match: dict
     evidence_gaps = evidence_gap_notes[:5] or ["需要补充可量化的项目产出、工具使用和交付场景。"]
     interview_focus = (skills[:5] or [jd_analysis.get("category", "岗位方向")]) + ["项目复盘", "动机匹配"]
     return {
-        "decision": decision,
-        "actions": actions[:5],
+        "decision": humanize_advice_text(decision),
+        "actions": humanize_advice_list(actions, limit=5),
         "bullets": bullets,
-        "evidence_gaps": evidence_gaps,
+        "evidence_gaps": humanize_advice_list(evidence_gaps, limit=5),
         "interview_focus": interview_focus[:6],
     }
 
 
 def job_decision_label(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> tuple[str, str]:
     value = jd_analysis.get("value", {})
-    score = int(resume_match.get("score", 0) if resume_match else 0)
+    score = resume_match_overall_score(resume_match)
     if value.get("is_generic_esg"):
         return "谨慎核实", "warning"
     if resume_match:
@@ -12556,7 +15844,7 @@ def job_decision_reasons(jd_analysis: dict[str, Any], resume_match: dict[str, An
     basic = jd_analysis.get("basic", {})
     value = jd_analysis.get("value", {})
     reasons = [
-        f"岗位分类：{jd_analysis.get('category', '待判断')}",
+        f"岗位方向：{jd_analysis.get('category', '待判断')}",
         str(value.get("label", "需要结合 JD 详情判断")),
     ]
     location = basic.get("地点")
@@ -12574,18 +15862,18 @@ def job_decision_reasons(jd_analysis: dict[str, Any], resume_match: dict[str, An
     if preference_score or preference_reasons:
         reasons.extend(preference_reasons[:3])
     if resume_match:
-        reasons.append(f"当前简历匹配度：{int(resume_match.get('score', 0))}")
-        missing = resume_match.get("missing_skills", [])
+        reasons.append(f"当前简历匹配度：{resume_match_overall_score(resume_match)}")
+        missing = resume_missing_requirement_names(resume_match)
         if missing:
-            reasons.append("待补证据：" + " / ".join(missing[:4]))
+            reasons.append("待补充能力：" + " / ".join(missing[:4]))
     return list(dict.fromkeys(reason for reason in reasons if reason))[:6]
 
 
 def build_resume_focus_plan(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> dict[str, list[str]]:
     skills = jd_skill_list(jd_analysis)
     category = jd_analysis.get("category", "目标岗位")
-    matched = resume_match.get("matched_skills", []) if resume_match else []
-    missing = resume_match.get("missing_skills", []) if resume_match else skills[:6]
+    matched = resume_matched_requirement_names(resume_match) if resume_match else []
+    missing = resume_missing_requirement_names(resume_match) if resume_match else skills[:6]
 
     category_focus = {
         "数据/商业分析岗": ["数据分析项目", "指标体系或业务复盘", "SQL / Excel / Python 工具使用"],
@@ -12638,6 +15926,7 @@ def build_resume_focus_plan(jd_analysis: dict[str, Any], resume_match: dict[str,
 def render_resume_focus_plan(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> None:
     plan = build_resume_focus_plan(jd_analysis, resume_match)
     st.markdown("#### 投前简历改法")
+    supportive_section_caption("resume")
     focus_cols = st.columns(3)
     with focus_cols[0]:
         st.markdown("##### 突出")
@@ -12661,29 +15950,29 @@ def render_resume_focus_plan(jd_analysis: dict[str, Any], resume_match: dict[str
 
 
 def render_score_breakdown(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> None:
-    st.markdown("#### 最终判断")
+    ui_components.section_title("最终判断", "先看简历匹配分，再看风险提示。")
     value = jd_analysis.get("value", {}) if jd_analysis else {}
     if resume_match:
-        st.metric("最终匹配度", f"{int(resume_match.get('score', 0))} / 100")
+        ui_components.render_score_badge("简历匹配分", resume_match_overall_score(resume_match))
     else:
-        st.info("完成简历匹配后，这里会显示最终匹配度。")
+        ui_components.empty_state("还没有简历匹配分", "完成简历匹配后，这里会显示整体匹配判断。")
     render_risk_logic_note()
     notes = []
     if value.get("is_high_value"):
-        notes.append("岗位价值较高：职责里出现项目、数据、交付物、咨询、分析或可沉淀成果等信号。")
+        notes.append("优先关注：职责里出现项目、数据、交付物、咨询、分析或可沉淀成果等信号。")
     if value.get("is_generic_esg"):
-        notes.append("低价值风险较高：JD 中出现职责不清、杂务、销售伪装或成果不可量化等信号。")
+        notes.append("待核实风险：JD 中出现职责不清、杂务、销售伪装或成果不可量化等信号。")
     risk_tags = value.get("risk_tags") or []
     if risk_tags:
-        notes.append("风险标签：" + " / ".join(risk_tags[:6]))
-    for item in notes or ["暂无明显风险标签；仍建议结合公司、岗位正文和面试信息确认。"]:
+        notes.append("风险提示：" + " / ".join(risk_tags[:6]))
+    for item in notes or ["暂无明显风险提示；仍建议结合公司、岗位正文和面试信息确认。"]:
         st.write(f"- {item}")
 
 
 def render_job_action_plan(jd_analysis: dict[str, Any] | None, resume_match: dict[str, Any] | None = None) -> None:
     plan = build_job_action_plan(jd_analysis, resume_match)
-    st.markdown("#### 下一步行动")
-    st.info(str(plan["decision"]))
+    ui_components.section_title("下一步行动", str(plan["decision"]))
+    supportive_section_caption("job")
     action_tab, evidence_tab, resume_tab = st.tabs(["投递前动作", "证据与面试", "简历改写"])
     with action_tab:
         for item in plan["actions"]:
@@ -12722,7 +16011,7 @@ def render_resume_empty_state(jd_analysis: dict[str, Any] | None, active_resume:
 
 
 def render_resume_match_snapshot(resume_match: dict[str, Any]) -> None:
-    score = int(resume_match.get("score", 0))
+    score = resume_match_overall_score(resume_match)
     if score >= 78:
         verdict = "可以进入定制简历"
     elif score >= 60:
@@ -12730,8 +16019,8 @@ def render_resume_match_snapshot(resume_match: dict[str, Any]) -> None:
     else:
         verdict = "先补基础匹配"
     facts = [
-        ("已覆盖", f"{len(resume_match.get('matched_skills', []))} 项"),
-        ("待补证据", f"{len(resume_match.get('missing_skills', []))} 项"),
+        ("已覆盖", f"{len(resume_matched_requirement_names(resume_match))} 项"),
+        ("待补充能力", f"{len(resume_missing_requirement_names(resume_match))} 项"),
         ("已去重", f"{int(resume_match.get('duplicate_removed', 0))} 段"),
     ]
     fact_cards = "".join(
@@ -12751,10 +16040,10 @@ def render_resume_match_snapshot(resume_match: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     st.markdown("##### 可主打的优势")
-    for item in resume_match.get("strengths", [])[:4]:
+    for item in resume_strength_texts(resume_match, 4):
         st.write(f"- {item}")
     st.markdown("##### 投前必须处理")
-    for item in resume_match.get("gap_examples", [])[:4]:
+    for item in resume_gap_example_texts(resume_match, 4):
         st.write(f"- {item}")
 
 
@@ -12780,24 +16069,31 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
     if not result:
         render_decision_empty_state(
             "完成左侧参数后，右侧会显示简历通过率、面试概率、Offer 概率和下一步动作。",
-            ["确认目标 JD。", "选择公司层级、学历匹配和英文能力。", "点击预测通过率。"],
+            ["确认目标 JD。", "选择公司层级、学历是否符合和英文能力。", "点击预测结果。"],
         )
         return
     pass_rate = int(result.get("简历通过率", 0))
     interview_rate = int(result.get("进入面试概率", 0))
     offer_rate = int(result.get("拿 offer 概率", 0))
-    if offer_rate >= 35:
-        verdict = "优先推进"
-    elif interview_rate >= 35:
-        verdict = "值得投递，先补证据"
-    else:
-        verdict = "备选或降优先级"
+    verdict = str(result.get("decision_tier") or "")
+    if not verdict:
+        if offer_rate >= 35:
+            verdict = "优先推进"
+        elif interview_rate >= 35:
+            verdict = "值得投递，先补证据"
+        else:
+            verdict = "备选或降优先级"
     facts = [
         ("简历通过", f"{pass_rate}%"),
         ("进入面试", f"{interview_rate}%"),
         ("拿 Offer", f"{offer_rate}%"),
+        ("主要瓶颈", str(result.get("bottleneck", "待判断"))),
+        ("最弱阶段", str(result.get("weakest_stage", "待判断"))),
+        ("可信度", str(result.get("confidence", "中"))),
         ("短板数量", str(result.get("shortcomings", 0))),
     ]
+    if result.get("career_families"):
+        facts.append(("岗位族", " / ".join(result.get("career_families", [])[:2])))
     fact_cards = "".join(
         '<div class="cp-fact">'
         f'<div class="cp-fact-label">{safe_html(name)}</div>'
@@ -12809,13 +16105,19 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
         '<div class="cp-decision-card">'
         '<div class="cp-decision-label">推进判断</div>'
         f'<div class="cp-decision-value">{safe_html(verdict)}</div>'
-        '<div class="cp-decision-copy">把概率当作排序工具，不当作绝对结果；真正影响结果的是投递版简历和岗位证据。</div>'
+        f'<div class="cp-decision-copy">{safe_html(result.get("scope_note", "把概率当作排序工具，不当作绝对结果；真正影响结果的是投递版简历和岗位证据。"))}</div>'
         "</div>"
         f'<div class="cp-fact-grid">{fact_cards}</div>',
         unsafe_allow_html=True,
     )
+    risk_flags = result.get("risk_flags", [])
+    if risk_flags:
+        st.markdown("##### 先核实这些风险")
+        for item in risk_flags[:4]:
+            st.write(f"- {item}")
     st.markdown("##### 下一步动作")
-    for item in result.get("actions", [])[:4]:
+    supportive_section_caption("job")
+    for item in humanize_advice_list(result.get("actions", [])[:4]):
         st.write(f"- {item}")
 
 
@@ -12833,6 +16135,9 @@ def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
         ("入职前问题", f"{len(analysis.get('questions_to_ask', []))} 个"),
         ("第一周动作", f"{len(analysis.get('first_week_plan', []))} 项"),
     ]
+    career_families = analysis.get("signal_profile", {}).get("career_families", [])
+    if career_families:
+        facts.append(("识别方向", " / ".join(career_families[:2])))
     fact_cards = "".join(
         '<div class="cp-fact">'
         f'<div class="cp-fact-label">{safe_html(name)}</div>'
@@ -12850,6 +16155,7 @@ def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
         unsafe_allow_html=True,
     )
     st.markdown("##### 接 Offer 前先问")
+    supportive_section_caption("internship")
     for item in analysis.get("questions_to_ask", [])[:4]:
         st.write(f"- {item}")
 
@@ -12883,7 +16189,7 @@ def render_interview_report_workspace_heading() -> None:
     render_workspace_heading_compat(
         eyebrow="面试与报告",
         title="面试与报告",
-        description="一边沉淀面试回答和短板映射，一边把阶段数据整理成可以导出的复盘材料。",
+        description="一边沉淀面试回答和对应短板，一边把阶段数据整理成可以导出的复盘材料。",
         note="先准备回答，再整理报告。",
     )
 
@@ -12893,21 +16199,25 @@ def render_interview_snapshot(
     interview_gap_rows: list[dict[str, str]] | None = None,
 ) -> None:
     if not interview_analysis:
-        render_decision_empty_state(
-            "导入一份或多份面经后，这里会先生成贴你简历的回答建议，再总结经验规律和原始问题。",
-            ["支持粘贴文本，也支持上传 PDF / Word / TXT / 面经截图。", "最好先完成目标 JD 分析和当前简历匹配。", "点击提炼面试问题后，会自动做 OCR 和批量总结。"],
-        )
+        ui_components.empty_state("等待面经", "导入面经后，这里会生成准备成熟度、重点短板和回答建议。")
         return
     answer_count = len(interview_analysis.get("answer_templates", []))
     generated_count = sum(len(items) for items in interview_analysis.get("generated_questions", {}).values())
     history_count = sum(len(items) for items in interview_analysis.get("buckets", {}).values())
+    extracted_count = sum(len(items) for items in interview_analysis.get("extracted_questions", {}).values())
+    readiness_score = int(interview_analysis.get("readiness_score", 0))
     facts = [
-        ("回答框架", f"{answer_count} 条"),
+        ("准备成熟度", f"{readiness_score} / 100"),
+        ("真实题目", f"{extracted_count} 个"),
         ("按 JD 生成题", f"{generated_count} 个"),
-        ("面经命中", f"{history_count} 条"),
+        ("经验命中", f"{history_count} 条"),
         ("短板重点", f"{len(interview_gap_rows or [])} 项"),
         ("面经来源", f"{int(interview_analysis.get('source_count', 1) or 1)} 份"),
     ]
+    breakdown = interview_analysis.get("readiness_breakdown", {})
+    if breakdown:
+        weakest_readiness = min(breakdown, key=breakdown.get)
+        facts.append(("最弱准备项", weakest_readiness))
     fact_cards = "".join(
         '<div class="cp-fact">'
         f'<div class="cp-fact-label">{safe_html(name)}</div>'
@@ -12918,31 +16228,136 @@ def render_interview_snapshot(
     st.markdown(
         '<div class="cp-decision-card">'
         '<div class="cp-decision-label">面试准备</div>'
-        '<div class="cp-decision-value">已生成问题清单</div>'
-        '<div class="cp-decision-copy">先根据真实面试问题和当前简历生成个性化回答，再回头总结经验规律；重点不是背模板，而是把你自己的经历讲实。</div>'
+        f'<div class="cp-decision-value">{safe_html(interview_analysis.get("readiness_label", "已生成问题清单"))}</div>'
+        '<div class="cp-decision-copy">先用真实面经校准题型，再按目标 JD 和当前简历短板生成回答；重点不是背模板，而是确认每道题背后要证明什么。</div>'
         "</div>"
         f'<div class="cp-fact-grid">{fact_cards}</div>',
         unsafe_allow_html=True,
     )
+    focus_items = interview_analysis.get("preparation_focus", [])
+    if focus_items:
+        st.markdown("##### 当前最该补")
+        for item in focus_items[:3]:
+            st.write(f"- {item}")
     st.markdown("##### 先背这几条")
+    supportive_section_caption("interview")
     for item in interview_analysis.get("answer_templates", [])[:4]:
         st.write(f"- {item}")
     if interview_gap_rows:
         st.markdown("##### 先补这些短板相关回答")
         for row in interview_gap_rows[:3]:
-            st.write(f"- {row['短缺项']}：{row['建议准备重点']}")
+            st.write(f"- {row['短缺项']}：{humanize_advice_text(row['建议准备重点'])}")
+
+
+def build_report_readiness_state() -> dict[str, Any]:
+    jd_analysis = st.session_state.get("jd_analysis")
+    resume_match = st.session_state.get("resume_match")
+    gap_analysis = st.session_state.get("gap_analysis")
+    interview_analysis = st.session_state.get("interview_analysis")
+    custom_resume = st.session_state.get("custom_resume")
+    offer_prediction = st.session_state.get("offer_prediction")
+    applications = load_applications()
+
+    score = 0
+    rows = []
+
+    def add_item(name: str, ready: bool, weight: int, detail: str, next_action: str) -> None:
+        nonlocal score
+        if ready:
+            score += weight
+        rows.append(
+            {
+                "模块": name,
+                "状态": "已就绪" if ready else "待补齐",
+                "权重": weight,
+                "说明": detail,
+                "下一步": next_action if not ready else "保持更新",
+            }
+        )
+
+    add_item(
+        "目标 JD",
+        bool(jd_analysis),
+        18,
+        jd_analysis.get("category", "还没有目标岗位判断") if jd_analysis else "报告缺少岗位判断基准",
+        "先在岗位工作台导入并分析一条目标 JD",
+    )
+    add_item(
+        "简历匹配",
+        bool(resume_match),
+        22,
+        f"匹配度 {int(resume_match.get('overall_score', 0))}/100" if resume_match else "报告缺少简历与岗位的贴合判断",
+        "用当前简历完成一次匹配分析",
+    )
+    add_item(
+        "不足行动",
+        bool(gap_analysis and gap_analysis.get("action_rows")),
+        18,
+        f"{len(gap_analysis.get('action_rows', []))} 条行动" if gap_analysis else "还没有把短板转成可执行计划",
+        "生成不足清单和一周补强计划",
+    )
+    add_item(
+        "投递记录",
+        not applications.empty,
+        18,
+        f"{len(applications)} 条投递记录" if not applications.empty else "报告缺少真实投递进度",
+        "至少加入 1 条投递记录或今日队列",
+    )
+    extracted_count = 0
+    interview_ready = False
+    interview_detail = "还没有沉淀面试题和回答框架"
+    interview_next = "导入 1-3 份目标岗位面经并生成回答建议"
+    if interview_analysis:
+        extracted_count = sum(len(items) for items in interview_analysis.get("extracted_questions", {}).values())
+        readiness_score = int(interview_analysis.get("readiness_score", 0))
+        interview_ready = readiness_score >= 55 and extracted_count >= 2
+        interview_detail = f"{readiness_score}/100，{extracted_count} 个真实/提炼问题，{interview_analysis.get('readiness_label', '')}"
+        focus_items = interview_analysis.get("preparation_focus", [])
+        if focus_items:
+            interview_next = focus_items[0]
+    add_item(
+        "面试准备",
+        interview_ready,
+        14,
+        interview_detail,
+        interview_next,
+    )
+    add_item(
+        "投递材料",
+        bool(custom_resume and offer_prediction),
+        10,
+        "已有定制简历和 Offer 漏斗判断" if (custom_resume and offer_prediction) else "报告还缺投递版材料或推进判断",
+        "同时生成定制简历片段，并完成一次 Offer 漏斗预测",
+    )
+
+    if score >= 82:
+        label = "可导出正式投递包"
+        recommendation = "可以导出报告；导出前只需要检查最新 JD、简历版本和投递记录是否一致。"
+    elif score >= 62:
+        label = "可导出草稿，建议补齐关键模块"
+        recommendation = "可以先导出草稿，但正式投递前建议补齐待补齐模块，尤其是短板行动和投递记录。"
+    elif score >= 38:
+        label = "信息不足，先补核心判断"
+        recommendation = "先补目标 JD、简历匹配和不足行动；否则报告更像资料汇总，不像可执行投递包。"
+    else:
+        label = "不建议导出"
+        recommendation = "当前材料太少，先完成岗位分析和简历匹配，再整理报告。"
+
+    missing_actions = [row["下一步"] for row in rows if row["状态"] != "已就绪"][:3]
+    return {
+        "score": score,
+        "label": label,
+        "recommendation": recommendation,
+        "rows": rows,
+        "missing_actions": missing_actions,
+    }
 
 
 def render_report_readiness_panel() -> None:
-    jd_ready = bool(st.session_state.get("jd_analysis"))
-    resume_ready = bool(st.session_state.get("resume_match"))
-    gap_ready = bool(st.session_state.get("gap_analysis"))
-    applications_ready = not load_applications().empty
+    readiness = build_report_readiness_state()
     facts = [
-        ("目标 JD", "已就绪" if jd_ready else "缺失"),
-        ("简历匹配", "已就绪" if resume_ready else "缺失"),
-        ("不足清单", "已就绪" if gap_ready else "缺失"),
-        ("投递记录", "已就绪" if applications_ready else "缺失"),
+        (row["模块"], row["状态"])
+        for row in readiness["rows"][:6]
     ]
     fact_cards = "".join(
         '<div class="cp-fact">'
@@ -12951,16 +16366,19 @@ def render_report_readiness_panel() -> None:
         "</div>"
         for name, value in facts
     )
-    ready_count = sum([jd_ready, resume_ready, gap_ready, applications_ready])
     st.markdown(
         '<div class="cp-decision-card">'
         '<div class="cp-decision-label">报告完整度</div>'
-        f'<div class="cp-decision-value">{ready_count} / 4</div>'
-        '<div class="cp-decision-copy">完整投递包建议包含 JD 判断、简历匹配、不足行动和投递记录。</div>'
+        f'<div class="cp-decision-value">{int(readiness["score"])} / 100</div>'
+        f'<div class="cp-decision-copy">{safe_html(readiness["label"])}：{safe_html(readiness["recommendation"])}</div>'
         "</div>"
         f'<div class="cp-fact-grid">{fact_cards}</div>',
         unsafe_allow_html=True,
     )
+    if readiness["missing_actions"]:
+        st.markdown("##### 报告导出前优先补")
+        for action in readiness["missing_actions"]:
+            st.write(f"- {action}")
 
 
 def render_browser_capture_import(key_prefix: str, default: bool = False, show_toggle: bool = True) -> str:
@@ -13043,13 +16461,35 @@ def render_jd_workspace_heading() -> None:
     render_workspace_heading_compat(
         eyebrow="岗位工作台",
         title="岗位判断",
-        description="先判断岗位值不值得投，再把单条分析、批量筛选和行业监测串成一条筛选路径。",
-        note="先定目标，再批量扩展。",
+        description="先判断值不值得投，再看风险和行动。",
+        note="按推荐分推进。",
     )
 
 
 def render_jd_empty_state() -> None:
-    render_utils.render_jd_empty_state(streamlit_module=st)
+    ui_components.render_result_panel_empty()
+
+
+def single_jd_result_panel_data(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> dict[str, Any]:
+    resume_match = resume_match or {}
+    plan = build_job_action_plan(jd_analysis, resume_match if resume_match else None)
+    label, _tone = job_decision_label(jd_analysis, resume_match if resume_match else None)
+    value = jd_analysis.get("value", {}) or {}
+    return {
+        "final_rank_score": resume_match.get("final_rank_score"),
+        "overall_score": resume_match.get("overall_score"),
+        "career_target_fit_score": resume_match.get("career_target_fit_score"),
+        "preference_fit_score": resume_match.get("preference_fit_score"),
+        "recommendation_level": resume_match.get("recommendation_level") or label,
+        "recommendation_reason": resume_match.get("recommendation_reason") or plan.get("decision", ""),
+        "career_mismatch_warnings": resume_match.get("career_mismatch_warnings", []),
+        "salary_mismatch_warnings": resume_match.get("salary_mismatch_warnings", []),
+        "preference_warnings": resume_match.get("preference_warnings", []),
+        "missing_requirements": resume_match.get("missing_requirements", []),
+        "weak_requirements": resume_match.get("weak_requirements", []),
+        "risk_tags": value.get("risk_tags", []),
+        "next_actions": list(plan.get("actions", []) or [])[:3],
+    }
 
 
 def render_job_decision_snapshot(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> None:
@@ -13059,9 +16499,9 @@ def render_job_decision_snapshot(jd_analysis: dict[str, Any], resume_match: dict
     basic = jd_analysis.get("basic", {})
     value = jd_analysis.get("value", {})
     facts = [
-        ("岗位分类", jd_analysis.get("category", "待判断")),
-        ("岗位价值", "高" if value.get("is_high_value") else "待判断"),
-        ("低价值风险", "高" if value.get("is_generic_esg") else "低"),
+        ("岗位方向", category_display_label(jd_analysis)),
+        ("优先关注", "是" if value.get("is_high_value") else "待确认"),
+        ("待核实风险", "是" if value.get("is_generic_esg") else "否"),
         ("地点", basic.get("地点") or "未识别"),
     ]
     fact_cards = "".join(
@@ -13095,11 +16535,30 @@ def render_job_decision_snapshot(jd_analysis: dict[str, Any], resume_match: dict
 
 
 def render_jd_tab() -> None:
-    left_col, right_col = st.columns([1.08, 0.92], gap="large")
+    def clear_jd_manual_text() -> None:
+        st.session_state["jd_manual_text"] = ""
+        st.session_state.pop("jd_analysis", None)
+        clear_jd_dependent_results()
+
+    def use_example_jd_text() -> None:
+        st.session_state["jd_manual_text"] = (
+            "岗位名称：数据分析实习生\n"
+            "工作地点：上海\n"
+            "岗位职责：协助业务团队搭建指标看板，使用 SQL / Excel 完成数据清洗、转化漏斗分析和周报输出；"
+            "根据运营活动数据提出优化建议。\n"
+            "任职要求：熟悉 Excel，了解 SQL 或 Python，有用户增长、运营分析或课程项目经验优先。"
+        )
+
+    left_col, right_col = st.columns([0.55, 0.45], gap="large")
     with left_col:
         with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">导入 JD</div>', unsafe_allow_html=True)
-            text = st.text_area("粘贴 JD 文本", height=260, placeholder="粘贴招聘 JD、岗位描述或网页复制内容...")
+            ui_components.section_title("导入 JD", "粘贴岗位正文，或展开更多导入方式。")
+            text = st.text_area(
+                "粘贴 JD 文本",
+                height=230,
+                placeholder="粘贴招聘 JD、岗位描述或网页复制内容...",
+                key="jd_manual_text",
+            )
             exported_jd_text = ""
             upload_text = ""
             crawled_jd_text = ""
@@ -13120,7 +16579,7 @@ def render_jd_tab() -> None:
                         )
                         cols = st.columns([1, 3])
                         max_workers = cols[0].slider("并发爬虫数", min_value=1, max_value=8, value=4)
-                        use_dynamic_crawl = cols[1].checkbox("启用内置增强解析", value=False)
+                        use_dynamic_crawl = cols[1].checkbox("启用内置增强解析", value=True)
                         if cols[1].button("并发抓取 JD 链接"):
                             urls = extract_urls(url_block)
                             if not urls:
@@ -13148,7 +16607,7 @@ def render_jd_tab() -> None:
                         render_browser_capture_helper(upload_url, upload_token, key_prefix="jd_inline_helper")
                         st.markdown("##### 一键网页采集结果")
                         if st.button("同步采集结果", key="jd_scan_exports_inline"):
-                            text_from_export, table_from_export = scan_browser_export_folder()
+                            text_from_export, table_from_export = scan_browser_export_folder(limit=1)
                             st.session_state["jd_exported_text"] = text_from_export
                             st.session_state["jd_exported_table"] = table_from_export
                             if table_from_export.empty:
@@ -13169,22 +16628,50 @@ def render_jd_tab() -> None:
                             key="jd_upload",
                         )
                         upload_text = extract_text_from_upload(uploaded) if uploaded else ""
-            if st.button("分析 JD", type="primary", width="stretch"):
+            action_cols = st.columns([2, 1, 1])
+            analyze_clicked = action_cols[0].button("分析 JD", type="primary", width="stretch")
+            action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
+            action_cols[2].button("示例 JD", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
+            if analyze_clicked:
                 full_text = "\n".join([text, exported_jd_text, crawled_jd_text, upload_text]).strip()
                 if not full_text:
-                    st.warning("请先粘贴或上传 JD。")
+                    ui_components.warning_card("还没有导入JD", "请先粘贴岗位描述，或上传 JD 文件。")
                 else:
                     set_current_target_jd(full_text, "单条JD分析", "手动导入JD")
                     st.success("JD 分析完成，并已设为当前目标 JD。")
 
     jd_analysis = st.session_state.get("jd_analysis")
     with right_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">判断结果</div>', unsafe_allow_html=True)
-            if jd_analysis:
-                render_job_decision_snapshot(jd_analysis, st.session_state.get("resume_match"))
-            else:
-                render_jd_empty_state()
+        st.markdown('<section class="cp-result-panel">', unsafe_allow_html=True)
+        ui_components.section_title("判断结果", "先看是否值得投，再看风险和行动。")
+        if jd_analysis:
+            result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
+            ui_components.render_result_panel(result_panel)
+            with st.expander("更多证据与缺口", expanded=False):
+                missing_items = result_panel.get("missing_requirements", []) or []
+                weak_items = result_panel.get("weak_requirements", []) or []
+                for item in missing_items[:4]:
+                    ui_components.gap_card(
+                        item.get("requirement", ""),
+                        item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写入简历。",
+                        "未找到真实证据，不建议直接写入简历。",
+                        item.get("importance", ""),
+                    )
+                for item in weak_items[:4]:
+                    ui_components.gap_card(
+                        item.get("requirement", ""),
+                        item.get("problem", "") or "有相关线索，但证据不够完整。",
+                        "有相关线索，但需要补充真实场景、动作和结果。",
+                        item.get("importance", ""),
+                    )
+                if not missing_items and not weak_items:
+                    ui_components.empty_state("暂无更多缺口", "完成简历匹配后，这里会显示弱证据和缺失要求。")
+            if st.button("加入今日队列", key="add_current_jd_today_queue_result_panel", width="stretch"):
+                add_current_jd_to_today_queue(jd_analysis, st.session_state.get("resume_match"))
+                st.toast("已加入今日求职队列。")
+        else:
+            render_jd_empty_state()
+        st.markdown("</section>", unsafe_allow_html=True)
 
     if not jd_analysis:
         return
@@ -13199,7 +16686,11 @@ def render_jd_tab() -> None:
 
 
 def render_batch_jd_tab() -> None:
-    st.subheader("批量 JD 分析")
+    ui_components.render_page_header(
+        "批量 JD 筛选",
+        "把岗位池整理成推荐列表，优先按 final_rank_score 查看最值得推进的机会。",
+        chips=["推荐列表", "final_rank_score 排序"],
+    )
     active_profile = get_active_profile()
     active_resume = get_active_resume()
 
@@ -13285,7 +16776,7 @@ def render_batch_jd_tab() -> None:
                 url_block = st.text_area("一行一个 URL", height=90, key="batch_url_block")
                 use_dynamic_crawl = st.checkbox(
                     "公开链接增强解析",
-                    value=False,
+                    value=True,
                     key="batch_dynamic_crawl",
                 )
                 if st.button("抓取公开链接并预览", key="batch_fetch_urls_preview"):
@@ -13311,14 +16802,14 @@ def render_batch_jd_tab() -> None:
                     )
 
     options = st.columns(2)
-    include_resume = options[0].checkbox("叠加当前简历匹配", value=bool(active_resume["content"]))
-    min_score = options[1].slider("最低显示匹配度", min_value=0, max_value=100, value=0)
+    include_resume = options[0].checkbox("以当前简历作为筛选标准", value=bool(active_resume["content"]))
+    min_score = options[1].slider("最低推荐评分", min_value=0, max_value=100, value=0)
 
     resume_text = active_resume["content"].strip() if include_resume and active_resume["content"].strip() else ""
     if include_resume and resume_text:
         pass
     elif include_resume:
-        st.warning("当前没有简历内容，请先在左侧“当前简历”上传或粘贴后再叠加匹配。")
+        st.warning("当前没有简历内容，请先在左侧“当前简历”上传或粘贴后再作为筛选标准。")
 
     if st.button("开始批量分析", type="primary"):
         records = list(imported_records)
@@ -13356,23 +16847,29 @@ def render_batch_jd_tab() -> None:
                     records,
                     profile_text_for_analysis(),
                     resume_text=resume_text,
+                    assume_deduped=True,
                 )
             st.session_state.batch_jd_analysis = df
             st.success(f"批量分析完成，共 {len(df)} 条结果。")
 
     df = st.session_state.get("batch_jd_analysis")
     if df is None or df.empty:
+        ui_components.empty_state(
+            "还没有批量结果",
+            "导入多条JD后，会按推荐分排序，并标出方向、城市和薪资风险。",
+        )
         return
 
     quick_view = st.radio("一键视图", BATCH_QUICK_VIEWS, horizontal=True, key="batch_quick_view")
     filter_cols = st.columns(6)
     only_p1 = filter_cols[0].checkbox("只看P1/P2", value=False)
-    only_high_value = filter_cols[1].checkbox("只看高价值", value=False)
-    exclude_generic = filter_cols[2].checkbox("排除低价值风险", value=True)
+    only_high_value = filter_cols[1].checkbox("只看优先关注岗位", value=False)
+    exclude_generic = filter_cols[2].checkbox("排除待核实风险岗位", value=True)
     only_internship = filter_cols[3].checkbox("只看实习", value=False)
     province_filter = filter_cols[4].selectbox("省份筛选", province_filter_options(df), index=0)
     keyword_filter = filter_cols[5].text_input("关键词筛选", placeholder="公司/岗位/技能/城市/省份")
 
+    df = normalize_legacy_table_columns(df)
     view_df = apply_batch_quick_view(df.copy(), quick_view, load_target_preferences())
     if only_p1 and "投递建议" in view_df.columns:
         view_df = view_df[view_df["投递建议"].astype(str).str.contains("P1|P2", regex=True)]
@@ -13387,63 +16884,69 @@ def render_batch_jd_tab() -> None:
     if keyword_filter:
         haystack = view_df.astype(str).agg(" ".join, axis=1)
         view_df = view_df[haystack.str.contains(keyword_filter, case=False, na=False, regex=False)]
-    if min_score and "意向匹配度" in view_df.columns:
-        view_df = view_df[view_df["意向匹配度"] >= min_score]
+    rank_col = batch_rank_score_column(view_df)
+    if min_score and rank_col:
+        view_df = view_df[view_df[rank_col] >= min_score]
     view_df = view_df.reset_index(drop=True)
 
-    st.markdown("#### 批量分析结果")
-    top_cols = [
-        "意向匹配度",
-        "投递建议",
-        "下一步动作",
-        "公司",
-        "岗位",
-        "类型",
-        "是否招实习",
-        "应届生",
-        "薪资",
-        "地点",
-        "岗位分类",
-        "高价值",
-        "低价值风险",
-        "风险标签",
-        "技能关键词",
-        "主要缺口",
-        "薪资判断",
-        "重复清理",
-        "链接",
-    ]
-    show_cols = [col for col in top_cols if col in df.columns]
+    ui_components.section_title("岗位推荐列表", f"当前视图：{quick_view}，排序依据为 final_rank_score。")
+    render_batch_overview(view_df)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("筛选后岗位数", len(view_df))
-    c1.caption(f"视图：{quick_view}")
-    c2.metric("P1优先", int(view_df["投递建议"].astype(str).str.contains("P1").sum()) if "投递建议" in view_df.columns else 0)
-    c3.metric("高价值", int((view_df["高价值"] == "是").sum()) if "高价值" in view_df.columns else 0)
-    c4.metric("已识别省份", recognized_province_total(view_df))
-    c5.metric("实习机会", int((view_df["是否招实习"] == "是").sum()) if "是否招实习" in view_df.columns else 0)
-    table_tab, target_tab, insight_tab, export_tab = st.tabs(["结果表", "设为目标JD", "分布与优先岗位", "导出"])
-    with table_tab:
-        render_user_dataframe(view_df, show_cols)
+    if view_df.empty:
+        ui_components.empty_state("没有符合筛选条件的岗位", "放宽视图、关键词或最低推荐分后再查看。")
+        return
+
+    selected_options = [
+        f"{idx + 1}. {int(row.get('final_rank_score', 0) or 0)}分｜{row.get('公司', '') or '未识别公司'}｜{row.get('岗位', '') or '未识别岗位'}"
+        for idx, (_, row) in enumerate(view_df.iterrows())
+    ]
+    selected_label = st.session_state.get("batch_selected_job_label")
+    if selected_label not in selected_options:
+        selected_label = selected_options[0]
+    list_col, detail_col = st.columns([0.42, 0.58], gap="large")
+    with list_col:
+        selected_label = st.radio(
+            "JD 推荐列表",
+            selected_options,
+            index=selected_options.index(selected_label),
+            key="batch_selected_job_label",
+            label_visibility="collapsed",
+        )
+        selected_pos = selected_options.index(selected_label)
+        for pos, (_, row) in enumerate(view_df.head(12).iterrows()):
+            render_batch_job_card(row, selected=pos == selected_pos)
         queue_count = min(5, len(view_df))
-        if queue_count and st.button(f"把前 {queue_count} 个加入今日队列", key="batch_add_today_queue"):
+        if queue_count and st.button(f"把前 {queue_count} 个加入今日队列", key="batch_add_today_queue", width="stretch"):
             added = add_batch_rows_to_today_queue(view_df.head(queue_count))
             st.success(f"已加入今日求职队列：{added} 个岗位。")
-    with target_tab:
-        render_target_jd_picker(view_df, "batch_jd", "批量JD筛选")
-    with insight_tab:
-        if not view_df.empty:
-            st.markdown("#### 最该优先看的岗位")
-            for _, row in view_df.head(5).iterrows():
-                st.write(f"- {row.get('意向匹配度', '')}分｜{row.get('公司', '')}｜{row.get('岗位', '')}｜{row.get('下一步动作', '')}")
-            st.markdown("#### 省份热力地图")
-            render_china_province_map(view_df, "批量JD省份分布")
+    with detail_col:
+        selected_row = view_df.iloc[selected_options.index(selected_label)]
+        with st.container(border=True):
+            render_batch_jd_detail(selected_row)
+        with st.expander("设为目标 JD", expanded=False):
+            render_target_jd_picker(view_df.iloc[[selected_options.index(selected_label)]], "batch_jd", "批量JD筛选")
+        with st.expander("查看紧凑结果表 / 分布", expanded=False):
+            top_cols = [
+                "岗位推荐分",
+                "简历匹配分",
+                "职业方向分",
+                "偏好匹配分",
+                "投递建议",
+                "薪资",
+                "公司",
+                "岗位",
+                "地点",
+                "岗位分类",
+                "链接",
+            ]
+            ui_components.render_table_toolbar("紧凑结果表", len(view_df), [quick_view, province_filter])
+            render_user_dataframe(view_df, [col for col in top_cols if col in view_df.columns])
             if "岗位分类" in view_df.columns:
                 dist = view_df["岗位分类"].value_counts().reset_index()
-                dist.columns = ["岗位分类", "数量"]
-                fig = px.bar(dist, x="岗位分类", y="数量", color="岗位分类")
+                dist.columns = ["岗位方向", "数量"]
+                fig = pretty_bar_chart(dist, x="数量", y="岗位方向", title="岗位方向分布", orientation="h", limit=10)
                 st.plotly_chart(fig, width="stretch")
-    with export_tab:
+    with st.expander("导出批量 JD 分析", expanded=False):
         output = io.BytesIO()
         public_export_df(view_df).to_excel(output, index=False)
         st.download_button(
@@ -13510,13 +17013,16 @@ def render_resume_tab() -> None:
         for bullet in generate_resume_bullets(st.session_state.get("jd_analysis"), resume_match):
             st.write(f"- {bullet}")
     with evidence_tab:
-        if resume_match["matched_skills"]:
-            st.write("已覆盖：" + " / ".join(resume_match["matched_skills"]))
-        if resume_match["missing_skills"]:
-            st.write("待补证据：" + " / ".join(resume_match["missing_skills"]))
-        if resume_match.get("evidence"):
+        matched_names = resume_matched_requirement_names(resume_match)
+        missing_names = resume_missing_requirement_names(resume_match)
+        evidence_texts = resume_evidence_texts(resume_match)
+        if matched_names:
+            st.write("已覆盖能力：" + " / ".join(matched_names))
+        if missing_names:
+            st.write("待补充能力：" + " / ".join(missing_names))
+        if evidence_texts:
             st.markdown("#### 已识别证据")
-            for item in resume_match["evidence"]:
+            for item in evidence_texts:
                 st.write(f"- {item}")
     with diagnosis_tab:
         st.markdown("#### 这份简历当前最该改的地方")
@@ -13541,6 +17047,93 @@ def render_resume_tab() -> None:
             st.caption("当前没有生成明确短板，请先补充目标 JD 或重新运行简历匹配。")
 
 
+def revision_level_message(revision_level: str) -> str:
+    if revision_level == "NOT_SAFE_TO_TARGET":
+        return "当前证据不足，不建议直接定制为该岗位。"
+    if revision_level == "LIMITED_CUSTOMIZATION":
+        return "当前只能做有限表达优化，请不要把缺失能力写成已有经历。"
+    if revision_level == "PARTIAL_CUSTOMIZATION":
+        return "可以围绕已有强证据做分段定制，但仍需人工确认事实边界。"
+    if revision_level == "HIGHLY_CUSTOMIZABLE":
+        return "当前证据较充分，适合做较完整的目标 JD 定制。"
+    return "请先生成定制诊断。"
+
+
+def rewrite_bucket(item: dict[str, Any]) -> str:
+    suggested = str(item.get("suggested_bullet") or "").strip()
+    risk = str(item.get("risk_warning") or "").strip()
+    potential = str(item.get("rewrite_potential") or "").upper()
+    strength = float(item.get("evidence_strength") or 0)
+    if not suggested or potential == "LOW":
+        return "不建议硬写"
+    if risk or strength < 0.72 or potential == "MEDIUM":
+        return "需要用户确认后改写"
+    return "可直接改写"
+
+
+def render_revision_warning_list(title: str, items: list[dict[str, Any]], *, missing: bool = True) -> None:
+    if not items:
+        ui_components.empty_state(title, "当前没有这类提醒。")
+        return
+    st.markdown(f"##### {title}")
+    for item in items[:6]:
+        if missing:
+            ui_components.gap_card(
+                item.get("requirement", ""),
+                item.get("warning", "") or "未找到真实证据，不建议直接写入简历。",
+                item.get("safe_action", "") or "先补真实项目、课程产出、作品或面试可讲案例。",
+                "MISSING",
+            )
+        else:
+            ui_components.gap_card(
+                item.get("topic", ""),
+                item.get("risk_reason", ""),
+                item.get("prep_suggestion", ""),
+                "RISK",
+            )
+
+
+def render_advantage_cards(cards: list[dict[str, Any]]) -> None:
+    real_cards = [card for card in cards if str(card.get("resume_evidence") or "").strip()]
+    if not real_cards:
+        ui_components.empty_state("当前没有足够强的证据优势", "主打优势只来自 advantage_cards 中的真实 resume_evidence。")
+        return
+    for card in real_cards[:6]:
+        ui_components.evidence_card(
+            card.get("target_requirement", ""),
+            card.get("resume_evidence", ""),
+            card.get("evidence_strength", ""),
+            card.get("suggested_expression", ""),
+        )
+
+
+def render_rewrite_buckets(rewrites: list[dict[str, Any]], revision_level: str) -> None:
+    allowed = rewrites
+    if revision_level == "LIMITED_CUSTOMIZATION":
+        allowed = [item for item in rewrites if rewrite_bucket(item) == "可直接改写"]
+        buckets = {
+            "基于强证据的有限优化": [item for item in allowed if rewrite_bucket(item) == "可直接改写"],
+        }
+    else:
+        buckets = {
+            "可直接改写": [item for item in allowed if rewrite_bucket(item) == "可直接改写"],
+            "需要用户确认后改写": [item for item in allowed if rewrite_bucket(item) == "需要用户确认后改写"],
+            "不建议硬写": [item for item in rewrites if rewrite_bucket(item) == "不建议硬写"],
+        }
+    for title, items in buckets.items():
+        st.markdown(f"##### {title}")
+        if not items:
+            ui_components.empty_state(title, "暂无内容。")
+            continue
+        for item in items[:6]:
+            ui_components.rewrite_card(
+                item.get("original_bullet", ""),
+                "" if title == "不建议硬写" else item.get("suggested_bullet", ""),
+                item.get("reason", ""),
+                item.get("risk_warning", "") or ("未找到真实证据，不建议直接写入简历。" if title == "不建议硬写" else None),
+            )
+
+
 def render_custom_resume_tab() -> None:
     render_utils.render_section_banner(
         streamlit_module=st,
@@ -13553,10 +17146,13 @@ def render_custom_resume_tab() -> None:
     active_resume = get_active_resume()
     resume_match = st.session_state.get("resume_match")
     if not jd_analysis:
-        st.warning("请先在岗位工作台完成目标 JD 分析。")
+        ui_components.empty_state(
+            "还没有目标岗位",
+            "选择一个目标JD后，会判断是否适合定制，并生成分段修改建议。",
+        )
         return
     if not active_resume["content"].strip():
-        st.warning("请先在左侧“当前简历”上传或粘贴真实简历。")
+        ui_components.warning_card("还没有当前简历", "请先在左侧上传或粘贴真实简历。")
         return
 
     with st.expander(f"当前简历：{active_resume['name']}", expanded=False):
@@ -13571,7 +17167,7 @@ def render_custom_resume_tab() -> None:
     if st.button("生成定制版简历内容", type="primary"):
         full_resume = active_resume["content"].strip()
         if not full_resume:
-            st.warning("请先在左侧维护当前简历。")
+            ui_components.warning_card("还没有当前简历", "请先在左侧维护当前简历。")
         else:
             st.session_state.custom_resume = build_custom_resume(full_resume, jd_analysis, profile_text_for_analysis())
             st.session_state.custom_resume_jd_fingerprint = current_jd_fingerprint()
@@ -13582,59 +17178,89 @@ def render_custom_resume_tab() -> None:
     if not result:
         return
 
-    st.markdown("#### 目标定位")
-    st.write(f"目标岗位：{result['job_title']}；岗位分类：{result['category']}")
-    if result["company"]:
-        st.write(f"目标公司：{result['company']}")
-    st.write("关键词布局：" + result["keyword_line"])
+    targeted_revision = result.get("targeted_resume_revision", {}) or {}
+    revision_assessment = targeted_revision.get("revision_assessment", {}) or {}
+    match_reference = targeted_revision.get("match_reference", {}) or {}
+    revision_level = revision_assessment.get("revision_level", "")
+    final_rank_score = match_reference.get("final_rank_score") or (resume_match or {}).get("final_rank_score")
+    overall_score = match_reference.get("overall_score") or (resume_match or {}).get("overall_score", 0)
+    feasibility_score = targeted_revision.get("target_revision_feasibility_score") or revision_assessment.get("target_revision_feasibility_score", 0)
 
-    ready_tab, parts_tab, advice_tab, pitch_tab, risk_tab = st.tabs(["直接可用", "分块查看", "修改意见", "投递说明", "证据与风险"])
+    ui_components.section_title("可改写度诊断", f"目标岗位：{result['job_title']}；岗位方向：{result['category']}")
+    score_cols = st.columns(4)
+    with score_cols[0]:
+        ui_components.score_summary_card("可改写度", feasibility_score, level=revision_level)
+    with score_cols[1]:
+        ui_components.score_summary_card("简历匹配分", overall_score)
+    with score_cols[2]:
+        ui_components.score_summary_card("岗位推荐分", final_rank_score or 0)
+    with score_cols[3]:
+        ui_components.compact_metric("目标公司", result["company"] or "未识别")
+    if revision_level == "NOT_SAFE_TO_TARGET":
+        ui_components.warning_card("暂不建议直接定制", "当前证据不足，不建议把简历包装成该岗位方向。")
+    elif revision_level == "LIMITED_CUSTOMIZATION":
+        ui_components.warning_card("只能有限优化", "可以优化表达，但不要把缺失能力写成已有经历。")
+    else:
+        ui_components.info_card("定制建议", revision_level_message(revision_level))
+    for reason in revision_assessment.get("cap_reasons", [])[:3]:
+        st.caption(reason)
+
+    missing_warnings = targeted_revision.get("missing_experience_warnings", []) or []
+    interview_risks = targeted_revision.get("interview_risk_points", []) or []
+    bullet_rewrites = targeted_revision.get("experience_bullet_rewrites", []) or []
+    advantage_cards = targeted_revision.get("advantage_cards", []) or []
+    summary_revision = targeted_revision.get("summary_revision", {}) or {}
+    skills_revision = targeted_revision.get("skills_section_revision", {}) or {}
+    keyword_suggestions = targeted_revision.get("keyword_insertion_suggestions", []) or []
+
+    ready_tab, parts_tab, risk_tab, project_tab = st.tabs(["定制结论", "证据与改写", "风险提醒", "补项目建议"])
     with ready_tab:
-        st.text_area("可复制到简历里再按真实经历微调", value=result.get("ready_resume_text", ""), height=430)
+        if revision_level == "NOT_SAFE_TO_TARGET":
+            ui_components.warning_card("暂不建议直接定制", "当前证据不足，不建议把简历包装成该岗位方向。")
+            st.caption("修改方向参考/风险提示")
+            for item in revision_assessment.get("cap_reasons", [])[:4]:
+                st.caption(item)
+        elif revision_level == "LIMITED_CUSTOMIZATION":
+            ui_components.warning_card("只能有限优化", "可以优化表达，但不要把缺失能力写成已有经历。")
+            render_rewrite_buckets(bullet_rewrites, revision_level)
+        else:
+            st.text_area("可复制到简历里再按真实经历微调", value=result.get("ready_resume_text", ""), height=280)
     with parts_tab:
-        st.markdown("#### 求职摘要")
-        st.text_area("放到简历开头", value=result["summary"], height=120)
-        st.markdown("#### 核心能力栏")
-        for item in result.get("skills_section", []):
-            st.write(f"- {item}")
-        st.markdown("#### 经历 bullet 成稿")
-        for bullet in result.get("experience_bullets", result["bullets"]):
-            st.write(f"- {bullet}")
-        st.markdown("#### 项目经历可替换版本")
-        for item in result["project_rewrite"]:
-            st.write(f"- {item}")
-    with advice_tab:
-        st.markdown("#### 定制版不是直接替换完就投，这些地方还要人工校正")
-        advice_rows = build_custom_resume_revision_rows_v2(result, resume_match, jd_analysis)
-        advice_df = pd.DataFrame(advice_rows)
-        if "建议成稿" in advice_df.columns:
-            advice_df = advice_df.rename(columns={"建议成稿": "建议修改后的句子"})
-        advice_cols = ["模块", "原句", "建议修改后的句子"]
-        render_user_dataframe(advice_df, [col for col in advice_cols if col in advice_df.columns])
-        st.markdown("#### 使用顺序")
-        for item in [
-            "先改摘要：让第一句就对齐目标岗位。",
-            "再改最近一段经历：优先补最贴岗的证据，不要平均用力。",
-            "最后检查风险词：没做过的技能、工具、标准不要硬写。",
-        ]:
-            st.write(f"- {item}")
-    with pitch_tab:
-        st.text_area("可用于邮件/私信/网申自我介绍", value=result.get("application_pitch", ""), height=140)
-    with risk_tab:
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("#### 已覆盖关键词")
-            st.write(" / ".join(result["matched_skills"]) or "暂无明显覆盖")
-        with cols[1]:
-            st.markdown("#### 需要补证据的关键词")
-            st.write(" / ".join(result["missing_skills"]) or "暂无明显缺口")
-        st.markdown("#### 改写风险提醒")
-        for item in result["risk_notes"]:
-            st.write(f"- {item}")
-        if result.get("evidence_lines"):
-            st.markdown("#### 本次改写参考的原简历证据")
-            for item in result["evidence_lines"]:
+        if revision_level in {"PARTIAL_CUSTOMIZATION", "HIGHLY_CUSTOMIZABLE"}:
+            st.markdown("##### 证据优势")
+            render_advantage_cards(advantage_cards)
+            st.markdown("##### 摘要改写")
+            st.text_area("summary_revision", value=summary_revision.get("suggested_text", ""), height=100)
+            st.markdown("##### 核心能力栏")
+            for item in skills_revision.get("skills_to_keep", [])[:8]:
                 st.write(f"- {item}")
+            st.markdown("##### 关键词插入建议")
+            for item in keyword_suggestions[:8]:
+                safe_label = "可加入" if item.get("safe_to_add") else "需要事实后再加入"
+                ui_components.gap_card(item.get("keyword", ""), item.get("reason", ""), item.get("insertion_location", ""), safe_label)
+            st.markdown("##### 分段改写")
+            render_rewrite_buckets(bullet_rewrites, revision_level)
+        elif revision_level == "LIMITED_CUSTOMIZATION":
+            ui_components.empty_state("只能有限优化", "只展示强证据改写，不包装主打优势。")
+            render_rewrite_buckets(bullet_rewrites, revision_level)
+        else:
+            ui_components.empty_state("暂不建议直接定制", "当前证据不足，不展示可复制文本。")
+    with risk_tab:
+        render_revision_warning_list("缺失经历提醒", missing_warnings, missing=True)
+        render_revision_warning_list("面试风险点", interview_risks, missing=False)
+        medium_or_weak = [item for item in bullet_rewrites if rewrite_bucket(item) != "可直接改写"]
+        if medium_or_weak:
+            st.markdown("##### 需要补充事实")
+            for item in medium_or_weak[:5]:
+                ui_components.gap_card(
+                    item.get("target_requirement", ""),
+                    "有相关线索，但需要补充真实场景、动作和结果。",
+                    item.get("risk_warning", ""),
+                    "WEAK" if rewrite_bucket(item) == "不建议硬写" else "MEDIUM",
+                )
+    with project_tab:
+        for item in result.get("project_rewrite", [])[:6]:
+            ui_components.gap_card("补项目建议", item, "先补真实产出，再考虑写入简历。", "PROJECT")
 
     export_text = "\n".join(
         [
@@ -13660,7 +17286,10 @@ def render_custom_resume_tab() -> None:
             *[f"- {item}" for item in result["risk_notes"]],
         ]
     )
-    st.download_button("下载定制简历片段 TXT", export_text.encode("utf-8-sig"), "custom_resume.txt", mime="text/plain")
+    if revision_level in {"PARTIAL_CUSTOMIZATION", "HIGHLY_CUSTOMIZABLE"}:
+        st.download_button("下载定制简历片段 TXT", export_text.encode("utf-8-sig"), "custom_resume.txt", mime="text/plain")
+    else:
+        ui_components.empty_state("暂不提供可复制导出", "只有 PARTIAL_CUSTOMIZATION / HIGHLY_CUSTOMIZABLE 才会开放可复制简历片段。")
 
 
 def render_recruitment_monitor_tab() -> None:
@@ -13694,7 +17323,7 @@ def render_recruitment_monitor_tab() -> None:
             url_block = st.text_area("一行一个 URL", height=100, placeholder="https://...\nhttps://...")
             crawl_cols = st.columns(2)
             max_workers = crawl_cols[0].slider("并发爬虫数", min_value=1, max_value=8, value=5, key="recruitment_workers")
-            use_dynamic_crawl = crawl_cols[1].checkbox("启用内置增强解析", value=False, key="recruitment_dynamic_crawl")
+            use_dynamic_crawl = crawl_cols[1].checkbox("启用内置增强解析", value=True, key="recruitment_dynamic_crawl")
     if use_capture_input:
         exported_recruitment_text = render_browser_capture_import("recruitment", default=True, show_toggle=False)
     if use_file_input:
@@ -13780,7 +17409,7 @@ def render_offer_prediction_tab() -> None:
     if not jd_analysis:
         render_decision_empty_state(
             "Offer 预测需要先有一个明确目标 JD。",
-            ["去岗位工作台导入 JD。", "完成单条 JD 分析。", "回到这里调整公司层级和个人匹配参数。"],
+            ["去岗位工作台导入 JD。", "完成单条 JD 分析。", "回到这里调整公司层级和个人情况。"],
         )
         return
 
@@ -13794,9 +17423,9 @@ def render_offer_prediction_tab() -> None:
             if not resume_match:
                 st.warning("建议先完成简历匹配；未完成时会用默认匹配度估算。")
             company_tier = st.selectbox("公司层级", tier_options, index=tier_options.index(inferred_tier) if inferred_tier in tier_options else 4)
-            education_fit = st.selectbox("学历匹配", ["高于或满足要求", "勉强满足", "低于要求"])
+            education_fit = st.selectbox("学历是否符合", ["高于或满足要求", "勉强满足", "低于要求", "不确定"])
             english_level = st.selectbox("英文能力", ["强", "一般", "弱"])
-            if st.button("预测通过率 / 面试率 / Offer率", type="primary", width="stretch"):
+            if st.button("预测简历通过 / 面试 / Offer", type="primary", width="stretch"):
                 st.session_state.offer_prediction = predict_offer_probabilities(
                     jd_analysis,
                     resume_match,
@@ -13833,26 +17462,34 @@ def render_offer_prediction_tab() -> None:
                 {"阶段": "拿 Offer", "概率": result["拿 offer 概率"]},
             ]
         )
-        fig = px.bar(chart_df, x="阶段", y="概率", color="阶段", range_y=[0, 100], title="Offer 漏斗预测")
+        fig = pretty_bar_chart(
+            chart_df,
+            x="阶段",
+            y="概率",
+            title="Offer 漏斗预测",
+            range_y=[0, 100],
+            sort_desc=False,
+        )
         st.plotly_chart(fig, width="stretch")
 
 
 def render_interview_tab() -> None:
-    left_col, right_col = st.columns([1.03, 0.97], gap="large")
+    left_col, right_col = st.columns([0.55, 0.45], gap="large")
     with left_col:
         with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">导入面经</div>', unsafe_allow_html=True)
+            ui_components.section_title("导入面经", "粘贴复盘或上传文件，优先提炼真实追问。")
             text = st.text_area(
                 "粘贴面经文本",
-                height=260,
+                height=190,
                 placeholder="粘贴牛客、公众号、社群或个人复盘中的面经内容。建议一份面经一段；如果是批量总结，也可以连续粘贴多份。",
             )
-            uploaded_files = st.file_uploader(
-                "上传面经文件 / 截图",
-                type=["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
-                key="interview_upload",
-                accept_multiple_files=True,
-            )
+            with st.expander("上传面经文件 / 截图", expanded=False):
+                uploaded_files = st.file_uploader(
+                    "支持 PDF / Word / TXT / 图片",
+                    type=["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
+                    key="interview_upload",
+                    accept_multiple_files=True,
+                )
             source_items: list[tuple[str, str]] = []
             if normalize_text(text):
                 source_items.append(("手动粘贴", text))
@@ -13863,7 +17500,7 @@ def render_interview_tab() -> None:
 
             if st.button("提炼面试问题", type="primary", width="stretch"):
                 if not source_items:
-                    st.warning("请先粘贴至少一份面经，或上传面经文档/截图。")
+                    ui_components.warning_card("还没有面经", "请先粘贴面经，或上传面经文件。")
                 else:
                     jd_analysis = st.session_state.get("jd_analysis")
                     st.session_state.interview_analysis = analyze_interview_sources_v2(source_items, jd_analysis)
@@ -13877,12 +17514,15 @@ def render_interview_tab() -> None:
     personalized_answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
     with right_col:
         with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">准备结论</div>', unsafe_allow_html=True)
-            render_interview_snapshot(interview_analysis, interview_gap_rows)
+            ui_components.section_title("准备结论", "把面经题目转成你当前最该练的回答。")
+            if interview_analysis:
+                render_interview_snapshot(interview_analysis, interview_gap_rows)
+            else:
+                ui_components.empty_state("还没有面经", "导入面经后，会整理高频问题、回答建议和追问风险。")
     if not interview_analysis:
         return
 
-    personalized_tab, mapping_tab, insight_tab, question_tab, history_tab = st.tabs(["个性化回答", "短板映射", "经验总结", "问题清单", "原始面经"])
+    personalized_tab, mapping_tab, insight_tab, question_tab, history_tab = st.tabs(["个性化回答", "对应短板", "经验总结", "问题清单", "来源问题"])
     with personalized_tab:
         if personalized_answers:
             st.markdown("#### 先练这些最贴当前简历的回答")
@@ -13922,7 +17562,7 @@ def render_interview_tab() -> None:
     with question_tab:
         extracted_questions = interview_analysis.get("extracted_questions", {})
         if any(extracted_questions.values()):
-            st.markdown("#### 从面经原文里抽到的问题")
+            st.markdown("#### 从面经里整理出的问题")
             cols = st.columns(2)
             for idx, (category, questions) in enumerate(extracted_questions.items()):
                 with cols[idx % 2]:
@@ -13969,8 +17609,8 @@ def render_internship_tab() -> None:
             uploaded = st.file_uploader("上传实习 JD 文件", type=["pdf", "docx", "txt", "md", "html", "htm"], key="internship_upload")
             upload_text = extract_text_from_upload(uploaded) if uploaded else ""
             if upload_text:
-                with st.expander("查看实习文件提取文本"):
-                    st.text_area("实习文本提取结果", value=upload_text, height=160)
+                with st.expander("查看上传文件内容"):
+                    st.text_area("上传文件内容", value=upload_text, height=160)
 
             if st.button("评估这个实习是否值得去", type="primary", width="stretch"):
                 full_text = "\n".join([internship_text, upload_text]).strip()
@@ -14055,11 +17695,12 @@ def render_gap_tab() -> None:
         return
 
     st.info(gap_analysis["summary"])
+    supportive_section_caption("resume")
     action_tab, resume_tab, plan_tab, detail_tab = st.tabs(["马上做什么", "简历改写句", "一周计划", "缺口明细"])
     with action_tab:
         action_rows = pd.DataFrame(gap_analysis.get("action_rows", []))
         if not action_rows.empty:
-            preferred_cols = ["优先级", "短板", "今天就做", "交付物", "不要写"]
+            preferred_cols = ["优先级", "短板", "今天就做", "交付物", "温和提醒", "不要写"]
             show_cols = [col for col in preferred_cols if col in action_rows.columns]
             render_user_dataframe(action_rows, show_cols)
         else:
@@ -14129,15 +17770,20 @@ def render_applications_tab() -> None:
             salary = cols[2].text_input("薪资", value=basic.get("薪资", "") if basic else "")
             cols = st.columns(3)
             location = cols[0].text_input("地点", value=basic.get("地点", "") if basic else "")
-            category = cols[1].text_input("分类", value=jd_analysis.get("category", "") if jd_analysis else "")
-            match_score = cols[2].number_input("匹配度", min_value=0, max_value=100, value=int(resume_match.get("score", 0) if resume_match else 0))
+            category = cols[1].text_input("岗位方向", value=jd_analysis.get("category", "") if jd_analysis else "")
+            default_match_score = int(
+                resume_match.get("final_rank_score", resume_match.get("overall_score", 0))
+                if resume_match
+                else 0
+            )
+            match_score = cols[2].number_input("推荐评分", min_value=0, max_value=100, value=default_match_score)
             cols = st.columns(3)
             applied = cols[0].checkbox("已投递")
             interview_status = cols[1].selectbox("面试状态", ["未开始", "已投递", "笔试", "一面", "二面", "HR面", "已结束"])
             offer_status = cols[2].selectbox("Offer 状态", ["无", "等待中", "Offer", "拒绝", "放弃"])
             queue_cols = st.columns(2)
-            queue_date = queue_cols[0].text_input("队列日期", value="")
-            next_action = queue_cols[1].text_input("下一步动作", value="")
+            queue_date = queue_cols[0].text_input("计划日期", value="")
+            next_action = queue_cols[1].text_input("下一步", value="")
             notes = st.text_area("备注", height=80)
             submitted = st.form_submit_button("加入投递库")
             if submitted:
@@ -14168,20 +17814,22 @@ def render_applications_tab() -> None:
     edited = st.data_editor(
         df,
         width="stretch",
+        height=user_table_height(df, user_table_row_height(df)),
         hide_index=True,
+        row_height=user_table_row_height(df),
         column_config={
             "id": None,
-            "match_score": st.column_config.ProgressColumn("综合分", min_value=0, max_value=100),
-            "is_high_value": st.column_config.CheckboxColumn("高价值"),
-            "is_generic_esg": st.column_config.CheckboxColumn("低价值风险"),
+            "match_score": st.column_config.ProgressColumn("推荐评分", min_value=0, max_value=100),
+            "is_high_value": st.column_config.CheckboxColumn("优先关注"),
+            "is_generic_esg": st.column_config.CheckboxColumn("待核实风险"),
             "applied": st.column_config.CheckboxColumn("已投递"),
-            "queue_date": st.column_config.TextColumn("队列日期"),
-            "next_action": st.column_config.TextColumn("下一步动作"),
+            "queue_date": st.column_config.TextColumn("计划日期"),
+            "next_action": st.column_config.TextColumn("下一步"),
             "company": st.column_config.TextColumn("公司"),
             "job_title": st.column_config.TextColumn("岗位"),
             "salary": st.column_config.TextColumn("薪资"),
             "location": st.column_config.TextColumn("地点"),
-            "category": st.column_config.TextColumn("分类"),
+            "category": st.column_config.TextColumn("岗位方向"),
             "offer_status": st.column_config.TextColumn("Offer状态"),
             "notes": st.column_config.TextColumn("备注"),
             "created_at": None,
@@ -14251,26 +17899,37 @@ def render_dashboard_tab() -> None:
                     width="stretch",
                 )
 
-    skill_tab, match_tab, gap_tab, application_tab = st.tabs(["技能关键词", "匹配雷达", "能力缺口", "投递进度"])
+    skill_tab, match_tab, gap_tab, application_tab = st.tabs(["岗位关键词", "匹配度雷达", "能力缺口", "投递进度"])
     with skill_tab:
-        st.markdown("#### 技能关键词")
+        st.markdown("#### 岗位关键词")
         if jd_analysis and not jd_analysis["skills"].empty:
-            fig = px.bar(jd_analysis["skills"], x="技能", y="命中次数", color="技能")
+            fig = pretty_bar_chart(
+                jd_analysis["skills"],
+                x="出现频次",
+                y="技能",
+                title="岗位关键词",
+                orientation="h",
+                limit=12,
+            )
             st.plotly_chart(fig, width="stretch")
         else:
-            st.caption("暂无 JD 技能数据。")
+            st.caption("暂无岗位关键词数据。")
 
     with match_tab:
         st.markdown("#### 匹配度雷达图")
         if resume_match:
-            matched_count = len(resume_match["matched_skills"])
-            missing_count = len(resume_match["missing_skills"])
+            matched_names = resume_matched_requirement_names(resume_match)
+            missing_names = resume_missing_requirement_names(resume_match)
+            strength_texts = resume_strength_texts(resume_match)
+            matched_count = len(matched_names)
+            missing_count = len(missing_names)
             hard_skill = max(20, min(100, 50 + matched_count * 8 - missing_count * 3))
-            tool_skill = 75 if any(skill in resume_match["matched_skills"] for skill in ["Python", "数据分析"]) else 45
-            english = 75 if "英文能力" in resume_match["matched_skills"] else 45
-            project = 80 if any("项目" in strength or "交付" in strength for strength in resume_match["strengths"]) else 55
-            values = [hard_skill, tool_skill, english, project, resume_match["score"]]
+            tool_skill = 75 if any(skill in matched_names for skill in ["Python", "数据分析"]) else 45
+            english = 75 if "英文能力" in matched_names else 45
+            project = 80 if any("项目" in strength or "交付" in strength for strength in strength_texts) else 55
+            values = [hard_skill, tool_skill, english, project, resume_match_overall_score(resume_match)]
             labels = ["硬技能", "工具/数据", "英文", "项目经历", "岗位匹配"]
+            go = get_plotly_graph_objects()
             fig = go.Figure(
                 data=go.Scatterpolar(r=values + [values[0]], theta=labels + [labels[0]], fill="toself")
             )
@@ -14285,7 +17944,14 @@ def render_dashboard_tab() -> None:
             gap_counts = pd.DataFrame(
                 [{"分类": key, "数量": len(items)} for key, items in gap_analysis["current_gaps"].items()]
             )
-            fig = px.bar(gap_counts, x="分类", y="数量", color="分类")
+            fig = pretty_bar_chart(
+                gap_counts,
+                x="数量",
+                y="分类",
+                title="能力缺口分布",
+                orientation="h",
+                sort_desc=True,
+            )
             st.plotly_chart(fig, width="stretch")
         else:
             st.caption("暂无不足分析数据。")
@@ -14296,6 +17962,7 @@ def render_dashboard_tab() -> None:
         if not df.empty:
             progress = df["interview_status"].value_counts().reset_index()
             progress.columns = ["状态", "数量"]
+            px = get_plotly_express()
             fig = px.pie(progress, names="状态", values="数量", hole=0.45)
             st.plotly_chart(fig, width="stretch")
         else:
@@ -14304,12 +17971,7 @@ def render_dashboard_tab() -> None:
 
 def render_jd_workspace_tab() -> None:
     render_jd_workspace_heading()
-    mode = st.radio(
-        "选择岗位工作模式",
-        APP_NAVIGATION["jd_modes"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    mode = ui_components.pill_nav(APP_NAVIGATION["jd_modes"], st.session_state.get("jd_workspace_mode", APP_NAVIGATION["jd_modes"][0]), key="jd_workspace_mode")
     if mode == "单条JD分析":
         render_jd_tab()
     elif mode == "批量JD筛选":
@@ -14320,12 +17982,7 @@ def render_jd_workspace_tab() -> None:
 
 def render_resume_workspace_tab() -> None:
     render_resume_workspace_heading()
-    mode = st.radio(
-        "选择简历工作模式",
-        APP_NAVIGATION["resume_modes"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    mode = ui_components.pill_nav(APP_NAVIGATION["resume_modes"], st.session_state.get("resume_workspace_mode", APP_NAVIGATION["resume_modes"][0]), key="resume_workspace_mode")
     if mode == "简历解析与匹配":
         render_resume_tab()
     elif mode == "定制简历":
@@ -14336,12 +17993,7 @@ def render_resume_workspace_tab() -> None:
 
 def render_decision_workspace_tab() -> None:
     render_decision_workspace_heading()
-    mode = st.radio(
-        "选择决策工作模式",
-        APP_NAVIGATION["decision_modes"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    mode = ui_components.pill_nav(APP_NAVIGATION["decision_modes"], st.session_state.get("decision_workspace_mode", APP_NAVIGATION["decision_modes"][0]), key="decision_workspace_mode")
     if mode == "Offer预测":
         render_offer_prediction_tab()
     elif mode == "实习评估":
@@ -14352,12 +18004,7 @@ def render_decision_workspace_tab() -> None:
 
 def render_interview_report_workspace_tab() -> None:
     render_interview_report_workspace_heading()
-    mode = st.radio(
-        "选择准备与报告模式",
-        APP_NAVIGATION["report_modes"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    mode = ui_components.pill_nav(APP_NAVIGATION["report_modes"], st.session_state.get("report_workspace_mode", APP_NAVIGATION["report_modes"][0]), key="report_workspace_mode")
     if mode == "面经分析":
         render_interview_tab()
     else:
@@ -14365,7 +18012,6 @@ def render_interview_report_workspace_tab() -> None:
 
 
 def render_sidebar() -> None:
-    render_sidebar_brand_panel()
     user = st.session_state.get(AUTH_SESSION_KEY) or {}
     profiles = load_user_profiles()
     active_profile = get_active_profile()
@@ -14377,6 +18023,12 @@ def render_sidebar() -> None:
         prefs.get("preferred_industries", []),
         prefs.get("target_roles", []),
     )
+    ui_components.render_sidebar_profile_card(
+        user.get("display_name") or user.get("email") or "未登录",
+        active_resume.get("name") or "未设置",
+        profile_name_label,
+        APP_BUILD_LABEL,
+    )
     render_sidebar_status_card(
         user.get("display_name") or user.get("email") or "未登录",
         profile_name_label,
@@ -14384,7 +18036,6 @@ def render_sidebar() -> None:
         active_resume.get("name") or "未设置",
     )
     if user:
-        st.sidebar.caption(f"当前用户：{user.get('display_name') or user.get('email')}")
         if st.sidebar.button("退出登录", key="logout_user_btn"):
             logout_app_user()
             st.rerun()
@@ -14398,6 +18049,10 @@ def render_sidebar() -> None:
         st.sidebar.write(compact_profile_summary(active_profile.get("content", "")))
     st.sidebar.caption("目标行业/方向：" + industry_selection_summary(selected_industries, selected_directions))
     st.sidebar.caption("城市：" + compact_list_text(prefs.get("target_cities", [])))
+    st.sidebar.markdown("#### 当前简历")
+    st.sidebar.caption(active_resume.get("name") or "未设置")
+    if not st.sidebar.checkbox("编辑目标/简历", value=False, key="sidebar_editors_enabled"):
+        return
 
     with st.sidebar.expander("编辑求职目标", expanded=profiles.empty):
         profile_name = st.text_input(
@@ -14408,7 +18063,10 @@ def render_sidebar() -> None:
         with st.container(border=True):
             st.markdown("##### 目标行业与方向")
             industry_summary = compact_list_text(selected_industries) if selected_industries else "未选择"
-            with st.expander(f"目标行业：{industry_summary}", expanded=not bool(selected_industries)):
+            industry_expander_key = "target_industry_expander_open"
+            if industry_expander_key not in st.session_state:
+                st.session_state[industry_expander_key] = True
+            with st.expander(f"目标行业：{industry_summary}", expanded=bool(st.session_state[industry_expander_key])):
                 selected_industries = st.multiselect(
                     "目标行业",
                     RECRUITMENT_INDUSTRY_OPTIONS,
@@ -14416,6 +18074,8 @@ def render_sidebar() -> None:
                     key="target_industry_selector",
                     placeholder="先选择一个或多个目标行业",
                     label_visibility="collapsed",
+                    on_change=collapse_expander_state,
+                    args=(industry_expander_key,),
                 )
             selected_industries, selected_directions = normalize_industry_direction_selection(
                 selected_industries,
@@ -14427,9 +18087,12 @@ def render_sidebar() -> None:
                     active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
                     current_directions = [direction for direction in selected_directions if direction in active_options]
                     direction_summary = compact_list_text(current_directions) if current_directions else "未选择"
+                    direction_expander_key = f"target_direction_expander_open_{sanitize_capture_filename(industry)}"
+                    if direction_expander_key not in st.session_state:
+                        st.session_state[direction_expander_key] = True
                     with st.expander(
                         f"{industry} - 二级方向：{direction_summary}",
-                        expanded=not bool(current_directions),
+                        expanded=bool(st.session_state[direction_expander_key]),
                     ):
                         chosen_directions = st.multiselect(
                             f"{industry} 二级方向",
@@ -14438,18 +18101,58 @@ def render_sidebar() -> None:
                             key=f"target_direction_selector_{industry}",
                             placeholder=f"为「{industry}」选择二级方向",
                             label_visibility="collapsed",
+                            on_change=collapse_expander_state,
+                            args=(direction_expander_key,),
                         )
                     updated_directions.extend(chosen_directions)
                 selected_directions = updated_directions
             else:
                 selected_directions = []
-        selected_cities = free_input_multiselect(
-            "意向城市",
-            CHINA_CITY_OPTIONS,
-            split_preference_items(prefs.get("target_cities", [])),
-            key="target_city_selector",
-            help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以直接输入新城市后回车确认。",
-        )
+        with st.container(border=True):
+            st.markdown("##### 城市偏好")
+            selected_cities = free_input_multiselect(
+                "意向城市",
+                CHINA_CITY_OPTIONS,
+                split_preference_items(prefs.get("target_cities", [])),
+                key="target_city_selector",
+                help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以直接输入新城市后回车确认。",
+            )
+            target_city_strict = st.checkbox(
+                "城市严格匹配",
+                value=bool(prefs.get("target_city_strict")),
+                help="开启后，批量岗位排序会对不在目标城市的岗位设置更低推荐分上限。",
+            )
+        with st.container(border=True):
+            st.markdown("##### 薪资层级")
+            target_salary_enabled = st.checkbox(
+                "启用目标薪资偏好",
+                value=bool(prefs.get("target_salary_enabled")),
+                help="目标薪资只影响批量 JD 推荐排序，不影响简历匹配分和根据 JD 改简历。",
+            )
+            salary_cols = st.columns([1, 1, 0.86])
+            min_monthly_salary = salary_cols[0].number_input(
+                "最低月薪",
+                min_value=0,
+                max_value=200000,
+                step=1000,
+                value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
+                disabled=not target_salary_enabled,
+            )
+            max_monthly_salary = salary_cols[1].number_input(
+                "期望上限",
+                min_value=0,
+                max_value=300000,
+                step=1000,
+                value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
+                disabled=not target_salary_enabled,
+                help="不填或为 0 表示只看最低要求。",
+            )
+            salary_strict = salary_cols[2].checkbox(
+                "严格",
+                value=bool(prefs.get("salary_strict")),
+                disabled=not target_salary_enabled,
+                help="开启后，明显低于目标薪资的岗位推荐分会封顶到 50。",
+            )
         job_keywords = st.text_input(
             "岗位关键词",
             value="、".join(split_preference_items(prefs.get("job_keywords", []))),
@@ -14485,7 +18188,11 @@ def render_sidebar() -> None:
                             "extra_cities": "",
                             "accept_remote": bool(prefs.get("accept_remote")),
                             "accept_nationwide": bool(prefs.get("accept_nationwide")),
-                            "min_monthly_salary": int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
+                            "target_city_strict": bool(target_city_strict),
+                            "target_salary_enabled": bool(target_salary_enabled),
+                            "salary_strict": bool(salary_strict),
+                            "min_monthly_salary": int(min_monthly_salary),
+                            "max_monthly_salary": int(max_monthly_salary),
                             "min_daily_salary": int(prefs.get("min_daily_salary") or DEFAULT_TARGET_PREFERENCES["min_daily_salary"]),
                             "preferred_industries": selected_industries,
                             "extra_industries": "",
@@ -14520,7 +18227,7 @@ def render_sidebar() -> None:
                 "sidebar_new_resume_upload_sig",
             )
             if new_resume_upload_parsed and new_resume_upload_text:
-                st.caption(f"已结构化读取 {len(new_resume_upload_parsed['sections'])} 个板块、{len(new_resume_upload_parsed['skills'])} 个技能关键词，并自动填入简历内容。")
+                st.caption(f"已读取 {len(new_resume_upload_parsed['sections'])} 个简历栏目、{len(new_resume_upload_parsed['skills'])} 个技能词，并自动填入简历内容。")
                 upload_signature = uploaded_file_signature(new_resume_upload)
                 if upload_signature and st.session_state.get("sidebar_new_resume_saved_sig") != upload_signature:
                     try:
@@ -14570,7 +18277,7 @@ def render_sidebar() -> None:
                 f"sidebar_resume_upload_sig_{active_resume['id']}",
             )
             if resume_upload_text:
-                st.caption(f"已结构化读取上传简历：{len(resume_upload_parsed['sections'])} 个板块、{len(resume_upload_parsed['skills'])} 个技能关键词，并自动填入简历内容。")
+                st.caption(f"已读取上传简历：{len(resume_upload_parsed['sections'])} 个简历栏目、{len(resume_upload_parsed['skills'])} 个技能词，并自动填入简历内容。")
                 upload_signature = uploaded_file_signature(resume_upload)
                 autosave_key = f"sidebar_resume_upload_saved_sig_{active_resume['id']}"
                 if upload_signature and st.session_state.get(autosave_key) != upload_signature:
@@ -14618,7 +18325,7 @@ def render_sidebar() -> None:
                 "sidebar_add_resume_upload_sig",
             )
             if new_resume_upload_parsed and new_resume_upload_text:
-                st.caption(f"已结构化读取 {len(new_resume_upload_parsed['sections'])} 个板块、{len(new_resume_upload_parsed['skills'])} 个技能关键词，并自动填入新简历内容。")
+                st.caption(f"已读取 {len(new_resume_upload_parsed['sections'])} 个简历栏目、{len(new_resume_upload_parsed['skills'])} 个技能词，并自动填入新简历内容。")
                 upload_signature = uploaded_file_signature(new_resume_upload)
                 if upload_signature and st.session_state.get("sidebar_add_resume_saved_sig") != upload_signature:
                     try:
@@ -14645,20 +18352,24 @@ def render_sidebar() -> None:
                     except db_integrity_errors():
                         st.error("简历名称已存在。")
 
-    with st.sidebar.expander("高级：本地数据位置", expanded=False):
-        st.code(str(DB_PATH))
-
 
 def render_auth_screen() -> None:
     render_auth_welcome_panel()
-    left_col, right_col = st.columns([0.98, 1.02], gap="medium")
+    left_col, right_col = st.columns([1.08, 0.92], gap="large")
     with left_col:
         st.markdown(
             """
             <section class="cp-auth-showcase">
                 <div class="cp-auth-showcase-inner">
-                    <div class="cp-auth-showcase-kicker">Warm Workspace</div>
-                    <h3>一个更稳的求职驾驶舱</h3>
+                    <div class="cp-auth-showcase-kicker">CareerPilot Access</div>
+                    <h3 class="cp-login-title"><span class="cp-login-title-brand">CareerPilot</span><span class="cp-login-title-cn">全职业岗位分析</span></h3>
+                    <p class="cp-login-subtitle">一个工作台，管理岗位、简历、投递与判断，让求职推进更清晰</p>
+                    <div class="cp-login-english">Resume-ready Job Capture Decision Support</div>
+                    <div class="cp-weekly-focus">
+                        <span>Weekly Focus</span>
+                        <strong>Collect faster. Decide calmer. 从抓取到投递跟进，一条路径更顺手。</strong>
+                    </div>
+                    <h4>一个更稳的求职驾驶舱</h4>
                     <p><span class="cp-auth-showcase-copy-line">岗位信息、简历、投递进度与关键判断都会被认真放在同一工作台</span><span class="cp-auth-showcase-copy-line">陪伴每一段求职推进，让每一次选择都清晰从容。</span></p>
                     <div class="cp-auth-feature-list">
                         <div class="cp-auth-feature">
@@ -14708,7 +18419,7 @@ def render_auth_screen() -> None:
             <section class="cp-auth-card">
                 <div class="cp-auth-card-head">
                     <div class="cp-auth-card-kicker">Sign In To Continue</div>
-                    <h2 class="cp-auth-card-title"><span class="cp-auth-title-line">欢迎来到CareerPilot</span><span class="cp-auth-title-mid">职业路上</span><span class="cp-auth-title-break">我们陪你慢慢探索</span></h2>
+                    <h2 class="cp-auth-card-title"><span class="cp-auth-title-line">欢迎来到CareerPilot</span><span class="cp-auth-title-break">职业路上，我们陪你慢慢探索</span></h2>
                     <p class="cp-auth-card-copy">不急着定义未来，先慢慢靠近答案</p>
                 </div>
             """,
@@ -14719,7 +18430,7 @@ def render_auth_screen() -> None:
         with login_tab:
             with st.form("login_form"):
                 email = st.text_input("邮箱", key="login_email", placeholder="name@example.com")
-                password = st.text_input("密码", type="password", key="login_password", placeholder="输入登录密码")
+                password = st.text_input("密码", type="password", key="login_password", placeholder="请输入密码")
                 submitted = st.form_submit_button("登录", type="primary", use_container_width=True)
             if submitted:
                 ok, message = authenticate_app_user(email, password)
@@ -14749,21 +18460,359 @@ def render_auth_screen() -> None:
         st.markdown("</section>", unsafe_allow_html=True)
 
 
+# ---------------------------------------------------------------------------
+# Dashboard shell override
+# ---------------------------------------------------------------------------
+
+APP_NAVIGATION = {
+    "main_tabs": ["岗位工作台", "简历工作台", "求职决策", "面试与报告"],
+    "jd_modes": ["单条JD分析", "批量JD筛选", "行业招聘监测"],
+    "resume_modes": ["简历解析与匹配", "定制简历", "不足与努力方向"],
+    "decision_modes": ["Offer预测", "实习评估", "投递管理"],
+    "report_modes": ["面经分析", "可视化与报告"],
+}
+
+MAIN_WORKSPACE_LABELS = {
+    "jd": "岗位工作台",
+    "resume": "简历工作台",
+    "decision": "求职决策",
+    "report": "面试与报告",
+}
+
+WORKSPACE_DESCRIPTIONS = {
+    "jd": "判断岗位价值，筛选更值得投递的机会。",
+    "resume": "围绕目标岗位，看简历匹配、定制版本和证据缺口。",
+    "decision": "把投递、实习、Offer 概率和下一步动作放到同一处判断。",
+    "report": "整理面试准备、复盘材料和可导出的求职报告。",
+}
+
+
+def render_app_styles() -> None:
+    inject_global_styles()
+
+
+def render_main_workspace_nav() -> str:
+    current = st.session_state.get("main_workspace", "jd")
+    if current not in MAIN_WORKSPACE_LABELS:
+        current = "jd"
+        st.session_state.main_workspace = current
+    return current
+
+
+def _current_shell_labels() -> tuple[str, str, str]:
+    user = st.session_state.get(AUTH_SESSION_KEY) or {}
+    active_profile = get_active_profile()
+    active_resume = get_active_resume()
+    user_label = user.get("display_name") or user.get("email") or "未登录"
+    profile_label = active_profile.get("name") or "未设置"
+    resume_label = active_resume.get("name") or "未设置"
+    return user_label, profile_label, resume_label
+
+
+def render_app_shell_header(workspace: str = "jd") -> None:
+    _user_label, profile_label, resume_label = _current_shell_labels()
+    title = MAIN_WORKSPACE_LABELS.get(workspace, "岗位工作台")
+    description = WORKSPACE_DESCRIPTIONS.get(workspace, "")
+    ui_components.render_topbar(
+        title,
+        description,
+        chips=[
+            f"当前简历 {resume_label}",
+            f"目标档案 {profile_label}",
+            f"版本 {APP_BUILD_LABEL}",
+        ],
+    )
+
+
+def render_sidebar() -> None:
+    user = st.session_state.get(AUTH_SESSION_KEY) or {}
+    prefs = load_target_preferences()
+    active_profile = get_active_profile()
+    active_resume = get_active_resume()
+    user_label, profile_label, resume_label = _current_shell_labels()
+    selected_industries, selected_directions = normalize_industry_direction_selection(
+        prefs.get("preferred_industries", []),
+        prefs.get("target_roles", []),
+    )
+
+    ui_components.render_sidebar_brand(APP_BUILD_LABEL)
+    ui_components.render_sidebar_status(user_label, resume_label, profile_label)
+    ui_components.render_sidebar_nav(
+        MAIN_WORKSPACE_LABELS,
+        st.session_state.get("main_workspace", "jd"),
+        key="main_workspace",
+    )
+
+    st.sidebar.markdown('<div class="cp-sidebar-block-title">偏好设置</div>', unsafe_allow_html=True)
+    with st.sidebar.expander("目标行业与方向", expanded=False):
+        st.caption(industry_selection_summary(selected_industries, selected_directions) or "未设置")
+        if active_profile.get("content"):
+            st.write(compact_profile_summary(active_profile.get("content", "")))
+    with st.sidebar.expander("意向城市", expanded=False):
+        st.caption(compact_list_text(prefs.get("target_cities", [])) or "未设置")
+        st.caption("严格匹配：" + ("开启" if prefs.get("target_city_strict") else "关闭"))
+    with st.sidebar.expander("目标薪资", expanded=False):
+        salary_enabled = bool(prefs.get("target_salary_enabled"))
+        min_salary = int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"])
+        max_salary = int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"])
+        st.caption("已启用" if salary_enabled else "未启用")
+        st.caption(f"{min_salary} - {max_salary or '不限'} / 月")
+    with st.sidebar.expander("其他偏好", expanded=False):
+        job_keywords = split_preference_items(prefs.get("job_keywords", []))
+        st.caption("岗位关键词：" + (compact_list_text(job_keywords) or "未设置"))
+        st.caption("补充偏好：" + (str(prefs.get("notes") or "未设置")))
+
+    with st.sidebar.expander("编辑目标/简历", expanded=False):
+        st.caption("完整编辑入口保留在这里，避免主导航和用户状态重复堆叠。")
+        profiles = load_user_profiles()
+        resumes = load_user_resumes()
+        if profiles.empty:
+            st.caption("尚未创建求职目标。")
+        else:
+            profile_names = profiles["name"].tolist()
+            current_profile_name = active_profile.get("name") if active_profile.get("name") in profile_names else profile_names[0]
+            selected_profile_name = st.selectbox("选择目标档案", profile_names, index=profile_names.index(current_profile_name), key="sidebar_profile_select")
+            selected_profile = profiles[profiles["name"] == selected_profile_name].iloc[0]
+            if int(selected_profile["id"]) != st.session_state.get("active_profile_id"):
+                st.session_state.active_profile_id = int(selected_profile["id"])
+        if resumes.empty:
+            st.caption("尚未设置当前简历。")
+        else:
+            resume_names = resumes["name"].tolist()
+            current_resume_name = active_resume.get("name") if active_resume.get("name") in resume_names else resume_names[0]
+            selected_resume_name = st.selectbox("选择简历", resume_names, index=resume_names.index(current_resume_name), key="sidebar_resume_select")
+            selected_resume = resumes[resumes["name"] == selected_resume_name].iloc[0]
+            if int(selected_resume["id"]) != st.session_state.get("active_resume_id"):
+                st.session_state.active_resume_id = int(selected_resume["id"])
+                clear_resume_dependent_results()
+
+    st.sidebar.markdown('<section class="cp-sidebar-toolbox"><div class="cp-sidebar-toolbox-title">工具区</div>', unsafe_allow_html=True)
+    if user:
+        upload_url = capture_upload_public_url()
+        upload_token = get_or_create_capture_upload_token(int(user["id"]))
+        with st.sidebar.expander("一键网页采集", expanded=False):
+            render_browser_capture_helper(upload_url, upload_token, key_prefix="sidebar")
+        if st.sidebar.button("退出登录", key="logout_user_btn", width="stretch"):
+            logout_app_user()
+            st.rerun()
+    st.sidebar.markdown("</section>", unsafe_allow_html=True)
+
+
+def render_jd_workspace_tab() -> None:
+    mode = ui_components.render_segmented_nav(
+        APP_NAVIGATION["jd_modes"],
+        st.session_state.get("jd_workspace_mode", APP_NAVIGATION["jd_modes"][0]),
+        key="jd_workspace_mode",
+    )
+    if mode == "单条JD分析":
+        render_jd_tab()
+    elif mode == "批量JD筛选":
+        ui_components.render_section_header("批量JD筛选", "按推荐分排序，优先看更合适的机会。")
+        render_batch_jd_tab()
+    else:
+        ui_components.render_section_header("行业招聘监测", "观察岗位需求变化和高频能力。")
+        render_recruitment_monitor_tab()
+
+
+def render_resume_workspace_tab() -> None:
+    mode = ui_components.render_segmented_nav(
+        APP_NAVIGATION["resume_modes"],
+        st.session_state.get("resume_workspace_mode", APP_NAVIGATION["resume_modes"][0]),
+        key="resume_workspace_mode",
+    )
+    if mode == "简历解析与匹配":
+        render_resume_tab()
+    elif mode == "定制简历":
+        render_custom_resume_tab()
+    else:
+        render_gap_tab()
+
+
+def render_decision_workspace_tab() -> None:
+    mode = ui_components.render_segmented_nav(
+        APP_NAVIGATION["decision_modes"],
+        st.session_state.get("decision_workspace_mode", APP_NAVIGATION["decision_modes"][0]),
+        key="decision_workspace_mode",
+    )
+    if mode == "Offer预测":
+        render_offer_prediction_tab()
+    elif mode == "实习评估":
+        render_internship_tab()
+    else:
+        render_applications_tab()
+
+
+def render_interview_report_workspace_tab() -> None:
+    mode = ui_components.render_segmented_nav(
+        APP_NAVIGATION["report_modes"],
+        st.session_state.get("report_workspace_mode", APP_NAVIGATION["report_modes"][0]),
+        key="report_workspace_mode",
+    )
+    if mode == "面经分析":
+        render_interview_tab()
+    else:
+        render_dashboard_tab()
+
+
+def render_jd_empty_state() -> None:
+    ui_components.render_result_panel_empty()
+
+
+def render_jd_tab() -> None:
+    def clear_jd_manual_text() -> None:
+        st.session_state["jd_manual_text"] = ""
+        st.session_state.pop("jd_analysis", None)
+        clear_jd_dependent_results()
+
+    def use_example_jd_text() -> None:
+        st.session_state["jd_manual_text"] = (
+            "岗位名称：数据分析实习生\n"
+            "工作地点：上海\n"
+            "岗位职责：协助业务团队搭建指标看板，使用 SQL / Excel 完成数据清洗、转化漏斗分析和周报输出，"
+            "根据运营活动数据提出优化建议。\n"
+            "任职要求：熟悉 Excel，了解 SQL 或 Python，有用户增长、运营分析或课程项目经验优先。"
+        )
+
+    st.markdown('<div class="cp-section-title-block"><div><h2>单条JD分析</h2><p>粘贴岗位描述，快速判断是否值得投。</p></div></div>', unsafe_allow_html=True)
+    left_col, right_col = st.columns([0.52, 0.48], gap="medium")
+
+    with left_col:
+        with st.container(border=True):
+            ui_components.render_section_header("导入JD", "粘贴岗位描述，系统会判断推荐价值和风险。")
+            text = st.text_area(
+                "粘贴 JD 文本",
+                height=220,
+                placeholder="粘贴招聘 JD、岗位描述或网页复制内容...",
+                key="jd_manual_text",
+            )
+            exported_jd_text = ""
+            upload_text = ""
+            crawled_jd_text = ""
+            action_cols = st.columns([1.25, 1, 1], gap="small")
+            analyze_clicked = action_cols[0].button("分析JD", type="primary", width="stretch")
+            action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
+            action_cols[2].button("示例JD", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
+
+            with st.expander("文件上传和网页导入", expanded=False):
+                import_modes = st.columns(3)
+                use_url_import = import_modes[0].checkbox("公开链接抓取", value=False, key="jd_use_url_import")
+                use_capture_import = import_modes[1].checkbox("一键网页采集", value=False, key="jd_use_capture_import")
+                use_file_import = import_modes[2].checkbox("上传文件", value=False, key="jd_use_file_import")
+
+                if use_url_import:
+                    url_block = st.text_area(
+                        "JD 链接（一行一个 URL）",
+                        height=96,
+                        placeholder="https://...\nhttps://...",
+                    )
+                    crawl_cols = st.columns([1, 2])
+                    max_workers = crawl_cols[0].slider("并发数", min_value=1, max_value=8, value=4)
+                    use_dynamic_crawl = crawl_cols[1].checkbox("启用增强解析", value=True)
+                    if crawl_cols[1].button("抓取链接"):
+                        urls = extract_urls(url_block)
+                        if not urls:
+                            st.warning("请先粘贴至少一个 JD 链接。")
+                        else:
+                            with st.spinner(f"正在抓取 {len(urls)} 个链接..."):
+                                crawl_results = crawl_jd_urls(urls, max_workers=max_workers, use_dynamic=use_dynamic_crawl)
+                            st.session_state.jd_crawl_results = crawl_results
+                            st.session_state.crawled_jd_text = "\n\n".join([item["text"] for item in crawl_results if item["ok"]])
+                            ok_count = sum(1 for item in crawl_results if item["ok"])
+                            if ok_count:
+                                st.success(f"成功抓取 {ok_count}/{len(crawl_results)} 个链接。")
+                            else:
+                                st.error("没有成功抓到可用 JD 文本，建议复制网页正文或上传截图。")
+                    crawled_jd_text = st.session_state.get("crawled_jd_text", "")
+
+                if use_capture_import:
+                    user_id = current_user_id()
+                    upload_url = capture_upload_public_url()
+                    upload_token = get_or_create_capture_upload_token(user_id) if user_id else ""
+                    render_browser_capture_helper(upload_url, upload_token, key_prefix="jd_inline_helper")
+                    if st.button("同步采集结果", key="jd_scan_exports_inline"):
+                        text_from_export, table_from_export = scan_browser_export_folder(limit=1)
+                        st.session_state["jd_exported_text"] = text_from_export
+                        st.session_state["jd_exported_table"] = table_from_export
+                        if table_from_export.empty:
+                            st.warning("没有扫描到采集结果。")
+                        else:
+                            st.success(f"已导入 {len(table_from_export)} 个导出文件。")
+                    exported_table = st.session_state.get("jd_exported_table")
+                    if exported_table is not None and not exported_table.empty:
+                        render_user_dataframe(exported_table)
+                    exported_jd_text = st.session_state.get("jd_exported_text", "")
+
+                if use_file_import:
+                    uploaded = st.file_uploader(
+                        "上传 JD 文件",
+                        type=["pdf", "docx", "txt", "md", "html", "htm", "xlsx", "xls", "csv", "png", "jpg", "jpeg", "webp"],
+                        key="jd_upload",
+                    )
+                    upload_text = extract_text_from_upload(uploaded) if uploaded else ""
+
+            if analyze_clicked:
+                full_text = "\n".join([text, exported_jd_text, crawled_jd_text, upload_text]).strip()
+                if not full_text:
+                    ui_components.warning_card("还没有导入JD", "请先粘贴岗位描述，或上传 JD 文件。")
+                else:
+                    set_current_target_jd(full_text, "单条JD分析", "手动导入JD")
+                    st.success("JD 分析完成，并已设为当前目标 JD。")
+
+    jd_analysis = st.session_state.get("jd_analysis")
+    with right_col:
+        with st.container(border=True):
+            ui_components.render_section_header("判断结果", "推荐分、风险点和下一步行动会集中在这里。")
+            if jd_analysis:
+                result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
+                ui_components.render_result_panel(result_panel)
+                with st.expander("更多证据与缺口", expanded=False):
+                    missing_items = result_panel.get("missing_requirements", []) or []
+                    weak_items = result_panel.get("weak_requirements", []) or []
+                    for item in missing_items[:4]:
+                        ui_components.gap_card(
+                            item.get("requirement", ""),
+                            item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写进简历。",
+                            "未找到真实证据，不建议直接写进简历。",
+                            item.get("importance", ""),
+                        )
+                    for item in weak_items[:4]:
+                        ui_components.gap_card(
+                            item.get("requirement", ""),
+                            item.get("problem", "") or "有相关线索，但证据不够完整。",
+                            "需要补充真实场景、动作和结果。",
+                            item.get("importance", ""),
+                        )
+                    if not missing_items and not weak_items:
+                        ui_components.empty_state("暂无更多缺口", "完成简历匹配后，这里会显示弱证据和缺失要求。")
+                if st.button("加入今日队列", key="add_current_jd_today_queue_result_panel", width="stretch"):
+                    add_current_jd_to_today_queue(jd_analysis, st.session_state.get("resume_match"))
+                    st.toast("已加入今日求职队列。")
+            else:
+                render_jd_empty_state()
+
+    if not jd_analysis:
+        return
+
+    score_tab, resume_tab = st.tabs(["评分拆解", "简历改法"])
+    with score_tab:
+        render_score_breakdown(jd_analysis, st.session_state.get("resume_match"))
+    with resume_tab:
+        render_resume_focus_plan(jd_analysis, st.session_state.get("resume_match"))
+
+
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon="🧭", layout="wide")
     refresh_render_utils_module()
     render_app_styles()
     clear_legacy_runtime_state()
     init_db()
-    ensure_embedded_capture_upload_service()
     if not current_user_id():
         render_auth_screen()
         return
     render_sidebar()
     render_state_alerts()
-    render_app_shell_header()
-
     workspace = render_main_workspace_nav()
+    render_app_shell_header(workspace)
     if workspace == "jd":
         render_jd_workspace_tab()
     elif workspace == "resume":

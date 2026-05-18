@@ -191,6 +191,49 @@ class StreamlitWebSocketProxy(websocket.WebSocketHandler):
             task.cancel()
 
 
+class HealthHandler(web.RequestHandler):
+    def initialize(
+        self,
+        *,
+        streamlit_base: str,
+        upload_base: str,
+        bookmarklet_path: str,
+    ) -> None:
+        self.streamlit_base = streamlit_base
+        self.upload_base = upload_base
+        self.bookmarklet_path = bookmarklet_path
+
+    async def get(self) -> None:
+        client = httpclient.AsyncHTTPClient()
+        checks: dict[str, str] = {}
+        ok = True
+
+        async def check(name: str, url: str, method: str = "GET") -> None:
+            nonlocal ok
+            try:
+                response = await client.fetch(
+                    url,
+                    method=method,
+                    raise_error=False,
+                    request_timeout=2.0,
+                )
+                if 200 <= response.code < 400:
+                    checks[name] = "ok"
+                else:
+                    ok = False
+                    checks[name] = f"http_{response.code}"
+            except Exception as exc:
+                ok = False
+                checks[name] = str(exc)
+
+        await check("streamlit", f"{self.streamlit_base}/_stcore/health")
+        await check("capture_api", f"{self.upload_base}{self.bookmarklet_path}")
+
+        self.set_status(200 if ok else 503)
+        self.set_header("Cache-Control", "no-store")
+        self.write({"ok": ok, "checks": checks})
+
+
 def start_streamlit(host: str, port: int, upload_host: str, upload_port: int) -> subprocess.Popen[bytes]:
     env = os.environ.copy()
     env.setdefault("UPLOAD_API_HOST", upload_host)
@@ -240,6 +283,15 @@ def main() -> None:
 
     app = web.Application(
         [
+            (
+                r"/(?:api/health|healthz)",
+                HealthHandler,
+                {
+                    "streamlit_base": streamlit_base,
+                    "upload_base": upload_base,
+                    "bookmarklet_path": bookmarklet_path,
+                },
+            ),
             (r"/_stcore/stream", StreamlitWebSocketProxy, {"streamlit_base": streamlit_base}),
             (r"/stream", StreamlitWebSocketProxy, {"streamlit_base": streamlit_base}),
             (

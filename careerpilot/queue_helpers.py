@@ -4,8 +4,34 @@ from typing import Any, Callable
 import pandas as pd
 
 
+def row_first(row: pd.Series, *keys: str, default: Any = "") -> Any:
+    for key in keys:
+        value = row.get(key, None)
+        if value is not None and str(value).strip() not in {"", "nan", "None"}:
+            return value
+    return default
+
+
 def today_label() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def resume_queue_score(resume_match: dict[str, Any] | None) -> int:
+    if not resume_match:
+        return 0
+    # Legacy score fallback is only for old saved records; current JD queues use final_rank_score/overall_score.
+    if "final_rank_score" in resume_match:
+        return int(resume_match.get("final_rank_score") or 0)
+    if "overall_score" in resume_match:
+        return int(resume_match.get("overall_score") or 0)
+    return int(resume_match.get("score", 0) or 0)
+
+
+def resume_overall_score(resume_match: dict[str, Any] | None) -> int:
+    if not resume_match:
+        return 0
+    # Legacy score fallback is only for old saved records that predate overall_score.
+    return int((resume_match.get("overall_score") if "overall_score" in resume_match else resume_match.get("score", 0)) or 0)
 
 
 def build_current_jd_queue_record(
@@ -23,7 +49,7 @@ def build_current_jd_queue_record(
         "salary": basic.get("薪资", ""),
         "location": basic.get("地点", ""),
         "category": jd_analysis.get("category", ""),
-        "match_score": int(resume_match.get("score", 0) if resume_match else 0),
+        "match_score": resume_queue_score(resume_match),
         "is_high_value": jd_analysis.get("value", {}).get("is_high_value", False),
         "is_generic_esg": jd_analysis.get("value", {}).get("is_generic_esg", False),
         "applied": False,
@@ -46,20 +72,21 @@ def build_batch_queue_records(
     for _, row in rows.iterrows():
         records.append(
             {
-                "company": row.get("公司", ""),
-                "job_title": row.get("岗位", ""),
-                "salary": row.get("薪资", ""),
-                "location": row.get("地点", ""),
-                "category": row.get("岗位分类", ""),
-                "match_score": int(row.get("意向匹配度", 0) or 0),
-                "is_high_value": str(row.get("高价值", "")) == "是",
-                "is_generic_esg": str(row.get("低价值风险", "")) == "是",
+                "company": row_first(row, "公司", "company"),
+                "job_title": row_first(row, "岗位", "岗位名", "job_title"),
+                "salary": row_first(row, "薪资", "salary"),
+                "location": row_first(row, "地点", "location"),
+                "category": row_first(row, "岗位分类", "岗位方向", "分类", "category"),
+                # Legacy score fallback is only for old queue rows that lack current ranking fields.
+                "match_score": int(row_first(row, "final_rank_score", "overall_score", "score", default=0) or 0),
+                "is_high_value": str(row_first(row, "高价值", "优先关注", "高价值岗位")) == "是",
+                "is_generic_esg": str(row_first(row, "低价值风险", "待核实风险", "泛ESG风险")) == "是",
                 "applied": False,
                 "interview_status": "未开始",
                 "offer_status": "无",
                 "notes": f"今日队列：{row.get('来源', '批量JD筛选')}",
                 "queue_date": today_label_fn(),
-                "next_action": row.get("下一步动作", "定制简历并确认投递渠道"),
+                "next_action": row_first(row, "下一步动作", "下一步", default="定制简历并确认投递渠道"),
             }
         )
     return records
