@@ -13,4 +13,7 @@ def legacy_skill_coverage_match(
     fast: bool = False,
 ) -> JsonDict:
     """LEGACY ONLY: run previous skill-coverage scorer for compatibility fields only."""
-    return services.legacy_matcher(jd_analysis, resume_text, profile_text, preferences, fast=fast)
+    try:
+        return services.legacy_matcher(jd_analysis, resume_text, profile_text, preferences, fast=fast)
+    except Exception:
+        return {}

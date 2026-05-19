@@ -123,14 +123,11 @@ def _calculate_from_evidence_map(
         for item in skill_records
         if item.get("importance") == "HIGH" and item.get("evidence_status") == "MISSING"
     ]
-    tool_keys = {services.normalize_text(tool) for tool in MATCH_TOOL_ALIASES}
-    missing_must_have_tools = [keyword for keyword in must_have_missing if services.normalize_text(keyword) in tool_keys]
-    if len(missing_must_have_tools) >= 2 and skill_score < 30:
-        overall_score = min(overall_score, 42)
-        ceiling_reasons.append("Multiple must-have tools are missing; overall_score capped at 42.")
-    if jd_structured.get("job_family") == "software_engineering" and skill_score < 20 and core_score < 45:
-        overall_score = min(overall_score, 40)
-        ceiling_reasons.append("Engineering role lacks implementation evidence; overall_score capped at 40.")
+    overall_score = apply_high_priority_missing_ceiling(
+        overall_score,
+        high_priority_missing_ratio_from_records(core_records + skill_records),
+        ceiling_reasons,
+    )
     return {
         "overall_score": overall_score,
         "score_breakdown": score_breakdown,
@@ -404,6 +401,24 @@ def apply_hard_ceilings(score: int, ceiling_reasons: list[str]) -> int:
     return min(score, ceiling)
 
 
+def apply_high_priority_missing_ceiling(score: int, missing_ratio: float, ceiling_reasons: list[str]) -> int:
+    if missing_ratio >= 0.60:
+        ceiling_reasons.append("High-priority core responsibility and skill/tool requirements are at least 60% missing; overall_score capped at 45.")
+        return min(score, 45)
+    if missing_ratio >= 0.40:
+        ceiling_reasons.append("High-priority core responsibility and skill/tool requirements are at least 40% missing; overall_score capped at 60.")
+        return min(score, 60)
+    return score
+
+
+def high_priority_missing_ratio_from_records(records: list[JsonDict]) -> float:
+    high_records = [item for item in records if item.get("importance") == "HIGH"]
+    if not high_records:
+        return 0.0
+    missing = [item for item in high_records if item.get("evidence_status") == "MISSING"]
+    return len(missing) / max(len(high_records), 1)
+
+
 def calculate_match_scores(
     jd_structured: JsonDict,
     resume_structured: JsonDict,
@@ -434,14 +449,10 @@ def calculate_match_scores(
     weighted_score = sum(score_breakdown[key] * weight for key, weight in SCORE_WEIGHTS.items())
     overall_score = apply_hard_ceilings(clamp_int(weighted_score), ceiling_reasons)
     must_have_missing = [keyword for keyword in keyword_coverage.get("must_have_keywords", []) if keyword in keyword_coverage.get("missing_keywords", [])]
-    tool_keys = {services.normalize_text(tool) for tool in MATCH_TOOL_ALIASES}
-    missing_must_have_tools = [keyword for keyword in must_have_missing if services.normalize_text(keyword) in tool_keys]
-    if len(missing_must_have_tools) >= 2 and skill_score < 30:
-        overall_score = min(overall_score, 42)
-        ceiling_reasons.append("关键技能/工具缺失较多，overall_score 最多 42")
-    if jd_structured.get("job_family") == "software_engineering" and skill_score < 20 and core_score < 45:
-        overall_score = min(overall_score, 40)
-        ceiling_reasons.append("研发岗位缺少工程实现证据，overall_score 最多 40")
+    high_priority_total = len(jd_structured.get("core_responsibilities", []) or []) + len(keyword_coverage.get("must_have_keywords", []) or [])
+    high_priority_missing = len(core_missing) + len(must_have_missing)
+    missing_ratio = high_priority_missing / max(high_priority_total, 1) if high_priority_total else 0.0
+    overall_score = apply_high_priority_missing_ceiling(overall_score, missing_ratio, ceiling_reasons)
     return {
         "overall_score": overall_score,
         "score_breakdown": score_breakdown,

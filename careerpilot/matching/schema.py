@@ -10,11 +10,11 @@ ScoreBreakdown = dict[str, int]
 
 SCORE_WEIGHTS: dict[str, float] = {
     "hard_requirements_score": 0.20,
-    "core_responsibility_score": 0.25,
-    "skill_tool_score": 0.20,
+    "core_responsibility_score": 0.30,
+    "skill_tool_score": 0.15,
     "project_experience_score": 0.20,
-    "industry_background_score": 0.10,
-    "evidence_quality_score": 0.05,
+    "industry_background_score": 0.05,
+    "evidence_quality_score": 0.10,
 }
 
 EMPTY_SCORE_BREAKDOWN: ScoreBreakdown = {

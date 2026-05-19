@@ -4,6 +4,9 @@ from .jd_parser import MATCH_TOOL_ALIASES
 from .schema import JsonDict, MatchingServices, unique_items
 
 
+STRONG_REQUIREMENT_MARKERS = ["必须", "熟练", "掌握", "精通", "要求", "必备", "优先", "加分", "需要", "需具备"]
+
+
 def keyword_aliases(keyword: str, services: MatchingServices) -> list[str]:
     clean = services.normalize_text(keyword)
     aliases = [clean]
@@ -99,10 +102,8 @@ def build_keyword_coverage(
     jd_text = str(jd_structured.get("raw_text", "")) + " " + " ".join(req.get("text", "") for req in jd_structured.get("hard_requirements", []))
     for keyword in jd_structured.get("skills", []) + jd_structured.get("tools", []):
         aliases = keyword_aliases(keyword, services)
-        if any(any(marker in jd_text[max(0, jd_text.find(alias) - 24): jd_text.find(alias) + len(alias) + 24] for marker in ["必须", "熟练", "精通", "掌握", "要求"]) for alias in aliases if alias and alias in jd_text):
+        if any(any(marker in jd_text[max(0, jd_text.find(alias) - 24): jd_text.find(alias) + len(alias) + 24] for marker in STRONG_REQUIREMENT_MARKERS) for alias in aliases if alias and alias in jd_text):
             must_have.append(keyword)
-    if not must_have:
-        must_have = list(jd_structured.get("skills", [])[:4])
     must_have = unique_items(must_have, services, 18)
     important = unique_items([item for item in jd_structured.get("skills", []) + jd_structured.get("tools", []) if item not in must_have], services, 24)
     nice = unique_items([item for item in jd_structured.get("soft_skills", []) + jd_structured.get("industry_background", []) if item not in must_have and item not in important], services, 18)

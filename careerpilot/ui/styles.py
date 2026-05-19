@@ -55,6 +55,8 @@ def inject_global_styles() -> None:
           --cp-warning: var(--cp-warn);
           --cp-warning-soft: #FFF4E5;
           --cp-radius: 28px;
+          --cp-sidebar-width: 300px;
+          --cp-sidebar-gap: 12px;
         }
 
         * {
@@ -71,7 +73,8 @@ def inject_global_styles() -> None:
 
         #MainMenu,
         footer {
-          visibility: hidden;
+          display: none !important;
+          visibility: hidden !important;
         }
 
         header[data-testid="stHeader"],
@@ -160,26 +163,99 @@ def inject_global_styles() -> None:
           line-height: 1.55 !important;
         }
 
+        section[data-testid="stSidebar"],
         [data-testid="stSidebar"] {
-          width: 292px !important;
-          min-width: 292px !important;
-          padding: 18px 0 18px 18px !important;
+          width: var(--cp-sidebar-width) !important;
+          min-width: var(--cp-sidebar-width) !important;
+          padding: 12px 0 12px 12px !important;
           border-right: 0 !important;
           background: transparent !important;
+          overflow: visible !important;
         }
 
-        [data-testid="stSidebar"] > div,
+        section[data-testid="stSidebar"] > div:first-child,
+        [data-testid="stSidebar"] > div:first-child {
+          width: var(--cp-sidebar-width) !important;
+          min-width: var(--cp-sidebar-width) !important;
+          height: 100vh !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          border: 0 !important;
+          overflow: visible !important;
+        }
+
         [data-testid="stSidebarContent"] {
-          width: 292px !important;
-          margin: 0 0 0 0;
-          padding: 24px 18px !important;
-          border: 1px solid var(--cp-border) !important;
+          width: calc(var(--cp-sidebar-width) - var(--cp-sidebar-gap)) !important;
+          min-width: calc(var(--cp-sidebar-width) - var(--cp-sidebar-gap)) !important;
+          height: calc(100vh - 24px) !important;
+          max-height: calc(100vh - 24px) !important;
+          margin: 0 !important;
+          padding: 18px 14px 22px !important;
+          border: 1px solid rgba(255,255,255,0.66) !important;
           border-left: 0 !important;
-          border-radius: 0 30px 30px 0 !important;
-          background: rgba(255,255,255,0.52) !important;
-          backdrop-filter: blur(24px) saturate(160%);
-          -webkit-backdrop-filter: blur(24px) saturate(160%);
-          box-shadow: 0 20px 60px rgba(15,55,43,0.08) !important;
+          border-radius: 0 28px 28px 0 !important;
+          background: rgba(255,255,255,0.46) !important;
+          backdrop-filter: blur(22px) saturate(160%) !important;
+          -webkit-backdrop-filter: blur(22px) saturate(160%) !important;
+          box-shadow: 0 18px 50px rgba(15,55,43,0.075) !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          overscroll-behavior: contain !important;
+          scrollbar-width: thin !important;
+          scrollbar-color: rgba(15,107,87,0.30) transparent !important;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: rgba(15,107,87,0.26);
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-thumb:hover {
+          background: rgba(15,107,87,0.38);
+        }
+
+        section[data-testid="stSidebar"][aria-expanded="false"],
+        [data-testid="stSidebar"][aria-expanded="false"] {
+          width: 0 !important;
+          min-width: 0 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          border: 0 !important;
+          overflow: visible !important;
+          background: transparent !important;
+          box-shadow: none !important;
+        }
+
+        section[data-testid="stSidebar"][aria-expanded="false"] > div,
+        section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
+        [data-testid="stSidebar"][aria-expanded="false"] > div,
+        [data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] {
+          width: 0 !important;
+          min-width: 0 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          border: 0 !important;
+          box-shadow: none !important;
+          background: transparent !important;
+          pointer-events: none !important;
+        }
+
+        [data-testid="collapsedControl"] {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          z-index: 999999 !important;
         }
 
         [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
@@ -191,16 +267,17 @@ def inject_global_styles() -> None:
         .cp-sidebar-toolbox,
         .cp-sidebar-profile-card,
         .cp-sidebar-status {
-          border: 1px solid var(--cp-border) !important;
-          border-radius: var(--cp-radius-lg) !important;
-          background: var(--cp-glass) !important;
-          backdrop-filter: blur(24px) saturate(165%);
-          -webkit-backdrop-filter: blur(24px) saturate(165%);
-          box-shadow: var(--cp-shadow-card) !important;
+          border: 1px solid rgba(255,255,255,0.68) !important;
+          border-radius: 24px !important;
+          background: rgba(255,255,255,0.50) !important;
+          backdrop-filter: blur(18px) saturate(150%) !important;
+          -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+          box-shadow: 0 12px 30px rgba(18,45,36,0.055) !important;
         }
 
         .cp-sidebar-brand {
-          padding: 20px;
+          padding: 16px !important;
+          margin-bottom: 10px !important;
         }
 
         .cp-sidebar-brand-row {
@@ -242,15 +319,16 @@ def inject_global_styles() -> None:
         }
 
         .cp-sidebar-status-card {
-          padding: 20px 22px;
+          padding: 16px 16px !important;
+          margin-bottom: 12px !important;
         }
 
         .cp-sidebar-status-row {
           display: grid;
           grid-template-columns: 74px minmax(0, 1fr);
-          gap: 9px;
+          gap: 10px !important;
           align-items: center;
-          min-height: 32px;
+          min-height: 28px !important;
         }
 
         .cp-sidebar-status-row span {
@@ -282,54 +360,89 @@ def inject_global_styles() -> None:
           background: transparent !important;
         }
 
-        [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
-          display: grid !important;
-          gap: 7px !important;
+        [data-testid="stSidebar"] [data-baseweb="radio"],
+        [data-testid="stSidebar"] [role="radiogroup"] {
+          background: transparent !important;
         }
 
-        [data-testid="stSidebar"] [data-testid="stRadio"] label {
-          position: relative;
-          min-height: 46px !important;
+        [data-testid="stSidebar"] [role="radiogroup"] input[type="radio"],
+        [data-testid="stSidebar"] [role="radiogroup"] svg,
+        [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child,
+        [data-testid="stSidebar"] label [data-baseweb="radio"] > div:first-child {
+          display: none !important;
+          opacity: 0 !important;
+          width: 0 !important;
+          height: 0 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
+          display: grid !important;
+          gap: 6px !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label,
+        [data-testid="stSidebar"] label[data-baseweb="radio"] {
+          position: relative !important;
+          display: flex !important;
+          align-items: center !important;
+          min-height: 42px !important;
           margin: 0 !important;
-          padding: 0 15px 0 38px !important;
-          border: 0 !important;
-          border-radius: var(--cp-radius-pill) !important;
+          padding: 0 14px 0 34px !important;
+          border: 1px solid transparent !important;
+          border-radius: 999px !important;
           background: transparent !important;
           color: var(--cp-text-2) !important;
           font-size: 14px !important;
           font-weight: 680 !important;
-          transition: background .18s ease, color .18s ease, transform .18s ease;
+          line-height: 1.2 !important;
+          transition: background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease;
         }
 
-        [data-testid="stSidebar"] [data-testid="stRadio"] label::before {
-          content: "";
-          position: absolute;
-          left: 15px;
-          top: 50%;
-          width: 11px;
-          height: 11px;
-          border: 1px solid rgba(20,35,30,0.16);
-          border-radius: 50%;
-          transform: translateY(-50%);
-          background: transparent;
+        [data-testid="stSidebar"] [data-testid="stRadio"] label::before,
+        [data-testid="stSidebar"] label[data-baseweb="radio"]::before {
+          content: "" !important;
+          position: absolute !important;
+          left: 13px !important;
+          top: 50% !important;
+          width: 4px !important;
+          height: 18px !important;
+          border: 0 !important;
+          border-radius: 999px !important;
+          transform: translateY(-50%) !important;
+          background: transparent !important;
+          box-shadow: none !important;
         }
 
-        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
-          background: rgba(234,245,240,0.82) !important;
-          color: var(--cp-brand) !important;
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover,
+        [data-testid="stSidebar"] label[data-baseweb="radio"]:hover {
+          background: rgba(255,255,255,0.48) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked),
+        [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
+          border-color: rgba(15,107,87,0.12) !important;
+          background: rgba(238,248,243,0.86) !important;
+          color: var(--cp-brand-deep) !important;
           font-weight: 760 !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.80), 0 8px 20px rgba(15,55,43,0.045) !important;
         }
 
-        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked)::before {
-          width: 13px;
-          height: 13px;
-          border: 3px solid #fff;
-          background: var(--cp-accent);
-          box-shadow: 0 0 0 1px rgba(255,90,95,0.24);
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked)::before,
+        [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked)::before {
+          background: var(--cp-accent) !important;
+          box-shadow: 0 0 0 4px rgba(255,90,95,0.10) !important;
         }
 
         [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) * {
-          color: var(--cp-brand) !important;
+          color: var(--cp-brand-deep) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label p,
+        [data-testid="stSidebar"] label[data-baseweb="radio"] p,
+        [data-testid="stSidebar"] [data-testid="stRadio"] label span,
+        [data-testid="stSidebar"] label[data-baseweb="radio"] span {
+          margin: 0 !important;
+          line-height: 1.2 !important;
         }
 
         [data-testid="stRadio"] input[type="radio"] {
@@ -338,7 +451,7 @@ def inject_global_styles() -> None:
 
         .cp-sidebar-toolbox {
           margin-top: 12px;
-          padding: 16px;
+          padding: 16px !important;
         }
 
         .cp-topbar {
@@ -1188,16 +1301,42 @@ def inject_global_styles() -> None:
           }
         }
         /* Refinement pass: lighter Apple-like controls, quieter selection states. */
-        [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stDeployButton"],
-        header [kind="header"],
-        header[data-testid="stHeader"],
+        #MainMenu,
+        footer,
         .stDeployButton {
           display: none !important;
           visibility: hidden !important;
           pointer-events: none !important;
+        }
+
+        header[data-testid="stHeader"] {
+          display: block !important;
+          visibility: visible !important;
+          pointer-events: auto !important;
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stToolbar"] {
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="collapsedControl"],
+        button[data-testid="collapsedControl"],
+        header[data-testid="stHeader"] button,
+        header[data-testid="stHeader"] [role="button"],
+        header[data-testid="stHeader"] [data-testid="collapsedControl"],
+        header[data-testid="stHeader"] [data-testid="baseButton-headerNoPadding"] {
+          visibility: visible !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          z-index: 999999 !important;
         }
 
         .stApp {
@@ -1208,9 +1347,6 @@ def inject_global_styles() -> None:
             linear-gradient(135deg, #F7F9F5 0%, #FBFCF8 45%, #EEF6F1 100%) !important;
         }
 
-        .cp-sidebar-brand,
-        .cp-sidebar-status-card,
-        .cp-sidebar-toolbox,
         .cp-workspace-card,
         .cp-panel,
         .cp-result-panel,
@@ -1225,64 +1361,6 @@ def inject_global_styles() -> None:
         [data-testid="stMetric"],
         [data-testid="stAlert"] {
           box-shadow: 0 16px 45px rgba(18,45,36,0.07) !important;
-        }
-
-        [data-testid="stSidebar"] [data-baseweb="radio"],
-        [data-testid="stSidebar"] [role="radiogroup"] {
-          background: transparent !important;
-        }
-
-        [data-testid="stSidebar"] [role="radiogroup"] input[type="radio"],
-        [data-testid="stSidebar"] [role="radiogroup"] svg,
-        [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child,
-        [data-testid="stSidebar"] label [data-baseweb="radio"] > div:first-child {
-          display: none !important;
-          opacity: 0 !important;
-          width: 0 !important;
-          height: 0 !important;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stRadio"] label,
-        [data-testid="stSidebar"] label[data-baseweb="radio"] {
-          min-height: 48px !important;
-          padding: 0 16px 0 28px !important;
-          margin: 2px 0 !important;
-          border-radius: var(--cp-radius-pill) !important;
-          border: 1px solid transparent !important;
-          color: var(--cp-text-2) !important;
-          font-weight: 620 !important;
-          gap: 12px !important;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stRadio"] label::before {
-          width: 4px !important;
-          height: 20px !important;
-          left: 12px !important;
-          border: 0 !important;
-          border-radius: var(--cp-radius-pill) !important;
-          background: transparent !important;
-          box-shadow: none !important;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
-          background: rgba(255,255,255,0.46) !important;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked),
-        [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
-          background: rgba(238,248,243,0.82) !important;
-          border: 1px solid rgba(15,107,87,0.10) !important;
-          color: var(--cp-brand-deep) !important;
-          font-weight: 760 !important;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.75) !important;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked)::before {
-          width: 4px !important;
-          height: 20px !important;
-          border: 0 !important;
-          background: var(--cp-accent) !important;
-          box-shadow: 0 0 0 4px rgba(255,90,95,0.10) !important;
         }
 
         [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]),
@@ -1327,6 +1405,12 @@ def inject_global_styles() -> None:
         div[data-testid="stDownloadButton"] button,
         [data-testid="stFormSubmitButton"] button,
         [data-testid="stFormSubmitButton"] button[kind="primary"] {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+          line-height: 1.2 !important;
+          gap: 0.4rem !important;
           min-height: 48px !important;
           padding: 0 24px !important;
           border: 1px solid rgba(15,107,87,0.18) !important;
@@ -1336,6 +1420,17 @@ def inject_global_styles() -> None:
           box-shadow: 0 10px 26px rgba(18,45,36,0.08), inset 0 1px 0 rgba(255,255,255,0.85) !important;
           font-weight: 750 !important;
           transition: all .18s ease !important;
+        }
+
+        div.stButton > button p,
+        div[data-testid="stDownloadButton"] button p,
+        [data-testid="stFormSubmitButton"] button p,
+        div.stButton > button span,
+        div[data-testid="stDownloadButton"] button span,
+        [data-testid="stFormSubmitButton"] button span {
+          margin: 0 !important;
+          line-height: 1.2 !important;
+          text-align: center !important;
         }
 
         div.stButton > button:hover,
@@ -1627,6 +1722,669 @@ def inject_global_styles() -> None:
           }
           .cp-auth-card .stTabs {
             padding: 18px;
+          }
+        }
+
+        /* =========================================================
+           CareerPilot hotfix
+           Sidebar real scroll area + decision page visual polish
+           Keep this block at the very end of the global CSS.
+           ========================================================= */
+
+        /* ---------- sidebar scroll hotfix ---------- */
+
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebar"] {
+          height: 100dvh !important;
+          max-height: 100dvh !important;
+          min-height: 0 !important;
+          padding: 12px 0 12px 12px !important;
+          overflow: hidden !important;
+          pointer-events: auto !important;
+        }
+
+        section[data-testid="stSidebar"] > div:first-child,
+        [data-testid="stSidebar"] > div:first-child {
+          height: 100% !important;
+          max-height: 100% !important;
+          min-height: 0 !important;
+          display: flex !important;
+          flex-direction: column !important;
+          overflow: hidden !important;
+          pointer-events: auto !important;
+        }
+
+        [data-testid="stSidebarContent"] {
+          width: calc(var(--cp-sidebar-width) - var(--cp-sidebar-gap)) !important;
+          min-width: calc(var(--cp-sidebar-width) - var(--cp-sidebar-gap)) !important;
+          height: calc(100dvh - 24px) !important;
+          max-height: calc(100dvh - 24px) !important;
+          min-height: 0 !important;
+          margin: 0 !important;
+          padding: 18px 14px 22px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          border: 1px solid rgba(255,255,255,0.66) !important;
+          border-left: 0 !important;
+          border-radius: 0 28px 28px 0 !important;
+          background: rgba(255,255,255,0.48) !important;
+          backdrop-filter: blur(22px) saturate(160%) !important;
+          -webkit-backdrop-filter: blur(22px) saturate(160%) !important;
+          box-shadow: 0 18px 50px rgba(15,55,43,0.075) !important;
+          overflow: hidden !important;
+          pointer-events: auto !important;
+        }
+
+        /* Streamlit 新版本常用的真实滚动层 */
+        [data-testid="stSidebarUserContent"] {
+          flex: 1 1 auto !important;
+          min-height: 0 !important;
+          height: auto !important;
+          max-height: 100% !important;
+          padding: 0 4px 24px 0 !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          overscroll-behavior: contain !important;
+          scrollbar-gutter: stable !important;
+          scrollbar-width: thin !important;
+          scrollbar-color: rgba(15,107,87,0.34) transparent !important;
+          pointer-events: auto !important;
+        }
+
+        /* 兼容没有 stSidebarUserContent 的 Streamlit DOM */
+        [data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarUserContent"])) {
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          overscroll-behavior: contain !important;
+          scrollbar-gutter: stable !important;
+          scrollbar-width: thin !important;
+          scrollbar-color: rgba(15,107,87,0.34) transparent !important;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar,
+        [data-testid="stSidebarUserContent"]::-webkit-scrollbar {
+          width: 8px !important;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-track,
+        [data-testid="stSidebarUserContent"]::-webkit-scrollbar-track {
+          background: transparent !important;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-thumb,
+        [data-testid="stSidebarUserContent"]::-webkit-scrollbar-thumb {
+          min-height: 48px !important;
+          border: 2px solid transparent !important;
+          border-radius: 999px !important;
+          background: rgba(15,107,87,0.30) !important;
+          background-clip: padding-box !important;
+        }
+
+        [data-testid="stSidebarContent"]::-webkit-scrollbar-thumb:hover,
+        [data-testid="stSidebarUserContent"]::-webkit-scrollbar-thumb:hover {
+          background: rgba(15,107,87,0.48) !important;
+          background-clip: padding-box !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+          min-height: max-content !important;
+        }
+
+        section[data-testid="stSidebar"][aria-expanded="false"],
+        [data-testid="stSidebar"][aria-expanded="false"] {
+          width: 0 !important;
+          min-width: 0 !important;
+          padding: 0 !important;
+          overflow: visible !important;
+        }
+
+        section[data-testid="stSidebar"][aria-expanded="false"] > div,
+        section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
+        [data-testid="stSidebar"][aria-expanded="false"] > div,
+        [data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] {
+          width: 0 !important;
+          min-width: 0 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          border: 0 !important;
+          box-shadow: none !important;
+          background: transparent !important;
+          pointer-events: none !important;
+        }
+
+        /* ---------- decision page polish ---------- */
+
+        .block-container {
+          max-width: 1360px !important;
+          padding: 2rem min(4vw, 4.2rem) 4rem !important;
+        }
+
+        .cp-topbar {
+          min-height: unset !important;
+          margin: 0 0 28px !important;
+          padding: 12px 0 28px !important;
+          border-bottom: 1px solid rgba(20,35,30,0.07) !important;
+        }
+
+        .cp-topbar h1 {
+          font-size: clamp(44px, 4.2vw, 60px) !important;
+          line-height: 1.04 !important;
+          font-weight: 860 !important;
+          letter-spacing: -0.04em !important;
+        }
+
+        .cp-topbar p {
+          max-width: 780px !important;
+          margin-top: 18px !important;
+          color: rgba(43,58,52,0.70) !important;
+          font-size: clamp(17px, 1.35vw, 22px) !important;
+          line-height: 1.55 !important;
+          font-weight: 600 !important;
+        }
+
+        .cp-topbar-chips {
+          gap: 12px !important;
+          padding-top: 0 !important;
+        }
+
+        .cp-topbar-chip {
+          min-height: 48px !important;
+          padding: 0 22px !important;
+          border-radius: 999px !important;
+          background: rgba(255,255,255,0.70) !important;
+          box-shadow: 0 16px 42px rgba(18,45,36,0.08) !important;
+          color: var(--cp-brand-deep) !important;
+          font-size: 15px !important;
+          font-weight: 820 !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) {
+          margin: 4px 0 34px !important;
+          padding: 7px !important;
+          border-radius: 999px !important;
+          background: rgba(255,255,255,0.62) !important;
+          border: 1px solid rgba(24,43,36,0.08) !important;
+          box-shadow: 0 18px 44px rgba(18,45,36,0.07) !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) div[role="radiogroup"] {
+          display: flex !important;
+          gap: 8px !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label {
+          min-width: 190px !important;
+          min-height: 52px !important;
+          justify-content: center !important;
+          padding: 0 28px !important;
+          border-radius: 999px !important;
+          color: rgba(24,43,36,0.82) !important;
+          font-size: 16px !important;
+          font-weight: 760 !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:has(input:checked) {
+          border: 1px solid rgba(15,107,87,0.16) !important;
+          background: rgba(238,248,243,0.98) !important;
+          color: var(--cp-brand-deep) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.92), 0 10px 28px rgba(18,45,36,0.08) !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:has(input:checked)::before {
+          content: "" !important;
+          width: 12px !important;
+          height: 12px !important;
+          margin-right: 10px !important;
+          border-radius: 999px !important;
+          background: var(--cp-accent) !important;
+          box-shadow: 0 0 0 6px rgba(255,90,95,0.12) !important;
+        }
+
+        .cp-decision-page {
+          width: min(100%, 1080px);
+          margin: 0 auto;
+        }
+
+        .cp-empty-state {
+          width: min(100%, 760px) !important;
+          min-height: 230px !important;
+          margin: clamp(38px, 6vh, 76px) auto 0 !important;
+          padding: 40px 46px !important;
+          border-radius: 34px !important;
+          background:
+            linear-gradient(135deg, rgba(255,255,255,0.86), rgba(247,251,248,0.74)) !important;
+          border: 1px solid rgba(255,255,255,0.78) !important;
+          box-shadow: 0 26px 78px rgba(18,45,36,0.10) !important;
+          backdrop-filter: blur(28px) saturate(170%) !important;
+          -webkit-backdrop-filter: blur(28px) saturate(170%) !important;
+        }
+
+        .cp-empty-state-decision {
+          display: grid !important;
+          grid-template-columns: 62px minmax(0, 1fr) !important;
+          align-items: center !important;
+          justify-content: stretch !important;
+          gap: 24px !important;
+        }
+
+        .cp-empty-state-decision .cp-empty-icon {
+          width: 62px !important;
+          height: 62px !important;
+          border-radius: 22px !important;
+          background: linear-gradient(135deg, rgba(238,248,243,1), rgba(213,234,224,0.88)) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 14px 32px rgba(15,107,87,0.10) !important;
+        }
+
+        .cp-empty-state-decision .cp-empty-icon::after {
+          width: 14px !important;
+          height: 14px !important;
+          background: var(--cp-accent) !important;
+          box-shadow: 0 0 0 7px rgba(255,90,95,0.14) !important;
+        }
+
+        .cp-empty-badge {
+          display: inline-flex;
+          align-items: center;
+          width: fit-content;
+          min-height: 30px;
+          margin-bottom: 12px;
+          padding: 0 12px;
+          border-radius: 999px;
+          background: rgba(238,248,243,0.96);
+          color: var(--cp-brand-deep) !important;
+          font-size: 13px;
+          font-weight: 820;
+        }
+
+        .cp-empty-state-decision strong {
+          margin: 0 !important;
+          color: var(--cp-text) !important;
+          font-size: clamp(24px, 2vw, 30px) !important;
+          line-height: 1.22 !important;
+          font-weight: 860 !important;
+        }
+
+        .cp-empty-state-decision p {
+          max-width: 560px;
+          margin: 10px 0 0 !important;
+          color: rgba(43,58,52,0.70) !important;
+          font-size: 17px !important;
+          line-height: 1.7 !important;
+          font-weight: 560 !important;
+        }
+
+        .cp-decision-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+          gap: 18px;
+          align-items: start;
+        }
+
+        .cp-decision-card-main,
+        .cp-decision-side-card {
+          border: 1px solid rgba(255,255,255,0.72);
+          border-radius: 32px;
+          background: rgba(255,255,255,0.66);
+          box-shadow: 0 22px 64px rgba(18,45,36,0.08);
+          backdrop-filter: blur(26px) saturate(165%);
+          -webkit-backdrop-filter: blur(26px) saturate(165%);
+        }
+
+        .cp-decision-card-main {
+          padding: 30px 34px;
+        }
+
+        .cp-decision-side-card {
+          padding: 24px 26px;
+        }
+
+        @media (max-width: 900px) {
+          .block-container {
+            padding: 1.3rem 1rem 3rem !important;
+          }
+
+          .cp-topbar h1 {
+            font-size: 42px !important;
+          }
+
+          .cp-topbar-chips {
+            justify-content: flex-start !important;
+          }
+
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) {
+            width: 100% !important;
+          }
+
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) div[role="radiogroup"] {
+            width: 100% !important;
+            flex-direction: column !important;
+          }
+
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label {
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .cp-empty-state-decision {
+            grid-template-columns: 1fr !important;
+            text-align: left !important;
+          }
+
+          .cp-decision-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        /* =========================================================
+           CareerPilot final visual consistency pass
+           Sidebar controls + segmented nav cleanup
+           Keep this block at the very end of the global CSS.
+           ========================================================= */
+
+        /* ---------- global density refinement ---------- */
+
+        .block-container {
+          max-width: 1340px !important;
+          padding: 2rem min(3.8vw, 4rem) 4rem !important;
+        }
+
+        .cp-topbar {
+          margin-bottom: 26px !important;
+          padding-bottom: 26px !important;
+        }
+
+        .cp-topbar h1 {
+          letter-spacing: -0.045em !important;
+        }
+
+        .cp-topbar-chip {
+          min-height: 46px !important;
+          padding: 0 22px !important;
+          background: rgba(255,255,255,0.68) !important;
+          border-color: rgba(255,255,255,0.70) !important;
+          box-shadow: 0 12px 34px rgba(18,45,36,0.075) !important;
+        }
+
+        /* ---------- sidebar compact controls ---------- */
+
+        [data-testid="stSidebar"] {
+          --cp-sidebar-control-radius: 18px;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+          gap: 0.55rem !important;
+        }
+
+        [data-testid="stSidebar"] .cp-sidebar-block-title,
+        [data-testid="stSidebar"] .cp-sidebar-toolbox-title {
+          margin: 16px 8px 8px !important;
+          color: rgba(43,58,52,0.62) !important;
+          font-size: 12px !important;
+          line-height: 1.2 !important;
+          font-weight: 820 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] {
+          margin: 7px 0 !important;
+          overflow: hidden !important;
+          border: 1px solid rgba(15,107,87,0.10) !important;
+          border-radius: var(--cp-sidebar-control-radius) !important;
+          background: rgba(255,255,255,0.38) !important;
+          box-shadow: none !important;
+          backdrop-filter: blur(16px) saturate(145%) !important;
+          -webkit-backdrop-filter: blur(16px) saturate(145%) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"]:hover {
+          border-color: rgba(15,107,87,0.16) !important;
+          background: rgba(255,255,255,0.52) !important;
+          box-shadow: 0 8px 22px rgba(18,45,36,0.045) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] details {
+          background: transparent !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] details summary {
+          min-height: 46px !important;
+          padding: 0 14px !important;
+          border-radius: var(--cp-sidebar-control-radius) !important;
+          color: var(--cp-text-2) !important;
+          font-size: 14px !important;
+          font-weight: 760 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] details summary:hover {
+          background: rgba(238,248,243,0.58) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] details summary p,
+        [data-testid="stSidebar"] [data-testid="stExpander"] details summary span {
+          margin: 0 !important;
+          color: var(--cp-text-2) !important;
+          font-size: 14px !important;
+          line-height: 1.25 !important;
+          font-weight: 760 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpander"] details[open] summary {
+          border-bottom: 1px solid rgba(15,107,87,0.08) !important;
+          border-radius: var(--cp-sidebar-control-radius) var(--cp-sidebar-control-radius) 0 0 !important;
+          background: rgba(238,248,243,0.52) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+          padding: 12px 14px 14px !important;
+          background: rgba(255,255,255,0.28) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] small {
+          color: rgba(43,58,52,0.66) !important;
+          font-size: 12px !important;
+          line-height: 1.55 !important;
+        }
+
+        [data-testid="stSidebar"] div.stButton > button,
+        [data-testid="stSidebar"] div[data-testid="stDownloadButton"] button,
+        [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
+          width: 100% !important;
+          min-height: 42px !important;
+          padding: 0 14px !important;
+          border: 1px solid rgba(15,107,87,0.12) !important;
+          border-radius: 16px !important;
+          background: rgba(255,255,255,0.46) !important;
+          color: var(--cp-brand-deep) !important;
+          box-shadow: none !important;
+          font-size: 13px !important;
+          font-weight: 760 !important;
+        }
+
+        [data-testid="stSidebar"] div.stButton > button:hover,
+        [data-testid="stSidebar"] div[data-testid="stDownloadButton"] button:hover,
+        [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:hover {
+          transform: none !important;
+          border-color: rgba(15,107,87,0.22) !important;
+          background: rgba(238,248,243,0.76) !important;
+          box-shadow: 0 8px 20px rgba(18,45,36,0.05) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stTextInput"] input,
+        [data-testid="stSidebar"] [data-testid="stNumberInput"] input,
+        [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+          min-height: 42px !important;
+          border-radius: 14px !important;
+          font-size: 13px !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stTextArea"] textarea {
+          min-height: 128px !important;
+          padding: 14px !important;
+          border-radius: 16px !important;
+          font-size: 13px !important;
+        }
+
+        /* 旧的 cp-sidebar-toolbox 不再作为卡片使用，避免底部工具区显得很重 */
+        .cp-sidebar-toolbox {
+          margin: 0 !important;
+          padding: 0 !important;
+          border: 0 !important;
+          border-radius: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+
+        /* ---------- main segmented nav cleanup ---------- */
+
+        /* 不要让右侧功能区出现原生 radio 圆点 */
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) input[type="radio"],
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) svg,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label[data-baseweb="radio"] > div:first-child,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) [data-baseweb="radio"] > div:first-child {
+          display: none !important;
+          visibility: hidden !important;
+          width: 0 !important;
+          min-width: 0 !important;
+          height: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          opacity: 0 !important;
+        }
+
+        /* 不要再额外画选中红点，解决大圈套小圈 */
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label::before,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:has(input:checked)::before {
+          content: none !important;
+          display: none !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) {
+          display: flex !important;
+          width: min(100%, 760px) !important;
+          margin: 2px 0 34px !important;
+          padding: 7px !important;
+          border: 1px solid rgba(24,43,36,0.08) !important;
+          border-radius: 999px !important;
+          background: rgba(255,255,255,0.58) !important;
+          box-shadow: 0 18px 46px rgba(18,45,36,0.07) !important;
+          backdrop-filter: blur(22px) saturate(160%) !important;
+          -webkit-backdrop-filter: blur(22px) saturate(160%) !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) div[role="radiogroup"] {
+          display: flex !important;
+          width: 100% !important;
+          gap: 8px !important;
+          align-items: center !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label[data-baseweb="radio"] {
+          position: relative !important;
+          display: inline-flex !important;
+          flex: 1 1 0 !important;
+          align-items: center !important;
+          justify-content: center !important;
+          min-width: 0 !important;
+          min-height: 52px !important;
+          margin: 0 !important;
+          padding: 0 22px !important;
+          border: 1px solid transparent !important;
+          border-radius: 999px !important;
+          background: transparent !important;
+          color: rgba(24,43,36,0.78) !important;
+          box-shadow: none !important;
+          font-size: 16px !important;
+          font-weight: 760 !important;
+          line-height: 1.2 !important;
+          transition: background .18s ease, color .18s ease, box-shadow .18s ease, border-color .18s ease !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label p,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label span {
+          margin: 0 !important;
+          color: inherit !important;
+          font-size: inherit !important;
+          line-height: 1.2 !important;
+          font-weight: inherit !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:hover {
+          background: rgba(238,248,243,0.62) !important;
+          color: var(--cp-brand-deep) !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:has(input:checked),
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label[data-baseweb="radio"]:has(input:checked) {
+          border-color: rgba(15,107,87,0.14) !important;
+          background: rgba(238,248,243,0.98) !important;
+          color: var(--cp-brand-deep) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.92), 0 10px 28px rgba(18,45,36,0.08) !important;
+        }
+
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label:has(input:checked) *,
+        [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label[data-baseweb="radio"]:has(input:checked) * {
+          color: var(--cp-brand-deep) !important;
+        }
+
+        /* tabs 和 segmented nav 的视觉统一，但不使用圆形指示器 */
+        div[data-baseweb="tab-list"],
+        .stTabs [data-baseweb="tab-list"] {
+          border-radius: 999px !important;
+        }
+
+        div[data-baseweb="tab"],
+        .stTabs [data-baseweb="tab"] {
+          border-radius: 999px !important;
+        }
+
+        /* ---------- content cards are lighter and less bulky ---------- */
+
+        .cp-workspace-card,
+        .cp-panel,
+        .cp-result-panel,
+        .cp-decision-card,
+        .cp-empty-state,
+        .cp-revision-card,
+        .cp-job-card,
+        .cp-note-card,
+        .cp-score-card,
+        .cp-score-pill,
+        [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stMetric"],
+        [data-testid="stAlert"] {
+          border-color: rgba(255,255,255,0.68) !important;
+          background: rgba(255,255,255,0.58) !important;
+          box-shadow: 0 16px 46px rgba(18,45,36,0.065) !important;
+        }
+
+        [data-testid="stVerticalBlockBorderWrapper"] > div {
+          padding: 24px 26px !important;
+        }
+
+        .cp-panel-title {
+          margin: 0 0 14px !important;
+          color: var(--cp-text) !important;
+          font-size: 20px !important;
+          line-height: 1.25 !important;
+          font-weight: 840 !important;
+        }
+
+        @media (max-width: 900px) {
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) {
+            width: 100% !important;
+          }
+
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) div[role="radiogroup"] {
+            flex-direction: column !important;
+          }
+
+          [data-testid="stRadio"]:not([data-testid="stSidebar"] [data-testid="stRadio"]) label {
+            width: 100% !important;
+            min-height: 46px !important;
           }
         }
         </style>

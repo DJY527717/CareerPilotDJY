@@ -5,12 +5,10 @@ from typing import Any
 
 JsonDict = dict[str, Any]
 CORE_REVISION_CATEGORIES = {
-    "hard_requirement",
     "core_responsibility",
     "skill",
     "tool",
     "project_experience",
-    "industry_background",
 }
 SUPPORTED_CORE_CATEGORIES = {"core_responsibility", "project_experience", "skill", "tool"}
 STATUS_SCORES = {"STRONG": 100, "MEDIUM": 70, "WEAK": 35, "MISSING": 0}
@@ -268,12 +266,12 @@ def generate_targeted_resume_revision(
             {
                 "target_requirement": requirement,
                 "original_bullet": source_text,
-                "suggested_bullet": f"Evidence-backed rewrite for {requirement}: {source_text}",
+                "suggested_bullet": f"基于当前简历原文，可围绕「{requirement}」补充任务背景、个人动作、使用方法或工具、可验证结果；请只在真实经历存在时改写。原始证据：{source_text}",
                 "evidence_source": evidence.get("evidence_type", ""),
                 "evidence_strength": evidence.get("strength", 0.0),
                 "rewrite_potential": item.get("rewrite_potential", "MEDIUM"),
-                "risk_warning": "Medium evidence: keep wording cautious and avoid claiming ownership or mastery." if cautious else "",
-                "reason": "Generated from supported resume evidence.",
+                "risk_warning": "中等证据：表达应保持谨慎，避免声称未被原文支持的主导权或精通程度。" if cautious else "",
+                "reason": "基于已有简历证据生成改写方向，不新增未证明经历。",
             }
         )
     for item in weak[:4]:
@@ -282,12 +280,12 @@ def generate_targeted_resume_revision(
             {
                 "target_requirement": _clean(item.get("requirement")),
                 "original_bullet": _clean(evidence.get("source_text")),
-                "suggested_bullet": "",
+                "suggested_bullet": "当前证据较弱，只建议补充真实信息：任务背景、个人动作、使用方法或工具、可验证结果。不要写成已经稳定具备该能力。",
                 "evidence_source": evidence.get("evidence_type", ""),
                 "evidence_strength": evidence.get("strength", 0.0),
                 "rewrite_potential": "LOW",
-                "risk_warning": "Weak evidence: add facts first; do not turn this into a confident target-JD bullet.",
-                "reason": "Only fact supplementation or expression cleanup is safe.",
+                "risk_warning": "弱证据：先补事实，不要改写成自信的目标 JD 经历句。",
+                "reason": "只适合补充事实或清理表达，不适合生成可复制经历。",
             }
         )
 

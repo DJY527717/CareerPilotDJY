@@ -210,14 +210,11 @@ def build_structured_jd(jd_analysis: JsonDict, optional_job_family: str | None, 
         if any(marker in sentence for marker in responsibility_markers)
         and not re.match(r"^(任职要求|岗位要求|要求|资格)", sentence)
     ]
-    if len(core_responsibilities) < 2:
-        core_responsibilities.extend(template["responsibilities"])
-
     exact_jd_skills = [
         skill for skill in services.jd_skill_list(jd_analysis)
         if any(services.text_contains(text, alias) for alias in services.skill_aliases.get(skill, [skill]))
     ]
-    skills = unique_items(exact_jd_skills + template["skills"], services, 18)
+    skills = unique_items(exact_jd_skills, services, 18)
     tools = extract_match_tools(text, services)
     industry_background = extract_match_industries(text, services)
     project_experience = [
@@ -255,7 +252,13 @@ def build_structured_jd(jd_analysis: JsonDict, optional_job_family: str | None, 
         "project_experience": unique_items(project_experience, services, 10),
         "soft_skills": soft_skills,
         "bonus_requirements": bonus_requirements,
-        "hidden_requirements": list(template["hidden"]),
+        "hidden_requirements": [],
+        "template_hints": {
+            "job_family": job_family,
+            "responsibilities": list(template.get("responsibilities", [])),
+            "skills": list(template.get("skills", [])),
+            "hidden": list(template.get("hidden", [])),
+        },
         "keywords": keywords,
     }
 

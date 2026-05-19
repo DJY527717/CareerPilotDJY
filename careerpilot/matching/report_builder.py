@@ -275,8 +275,7 @@ def generate_match_report(
 ) -> JsonDict:
     resume_only, resume_duplicate_count = services.remove_duplicate_information(resume_text)
     resume_for_scoring = services.normalize_text(resume_only)
-    selected_family = optional_job_family or (preferences or {}).get("job_family") or (preferences or {}).get("optional_job_family")
-    jd_structured = build_structured_jd(jd_analysis, selected_family, services)
+    jd_structured = build_structured_jd(jd_analysis, optional_job_family, services)
     resume_structured = build_structured_resume(resume_for_scoring, services)
     evidence_items = resume_structured.get("evidence_items", [])
     keyword_coverage = build_keyword_coverage(jd_structured, resume_for_scoring, evidence_items, services, fast=fast)
@@ -293,7 +292,10 @@ def generate_match_report(
     result = build_match_result(jd_analysis, jd_structured, resume_structured, resume_for_scoring, keyword_coverage, requirement_evidence_map, score_result, services)
     # LEGACY ONLY: these fields are exported for historical compatibility and
     # must not feed current scoring, ranking, recommendations, or resume rewrites.
-    legacy = legacy_skill_coverage_match(jd_analysis, resume_text, services, profile_text, preferences, fast=fast)
+    try:
+        legacy = legacy_skill_coverage_match(jd_analysis, resume_for_scoring, services, profile_text, None, fast=fast)
+    except Exception:
+        legacy = {}
     result = add_legacy_compat_fields(result, legacy, services)
     result["duplicate_removed"] = int(result.get("duplicate_removed", 0)) + resume_duplicate_count
     overall_score = int(result.get("overall_score", 0) or 0)

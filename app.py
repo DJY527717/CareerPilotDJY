@@ -34,10 +34,8 @@ from careerpilot import user_data as user_data_utils
 from careerpilot.ui import components as ui_components
 from careerpilot.ui.styles import inject_global_styles
 from careerpilot.matching.preference_fit import (
-    apply_preference_ceilings,
     calculate_preference_fit,
     extract_salary_from_jd,
-    has_meaningful_preferences,
 )
 from careerpilot.matching.report_builder import generate_match_report
 from careerpilot.matching.ranking import sort_batch_rank_rows
@@ -233,21 +231,6 @@ def ensure_embedded_capture_upload_service() -> None:
             records_from_exported_jd_file=records_from_exported_jd_file,
         )
         _CAPTURE_SERVICE_ENSURED = True
-
-APP_NAVIGATION = {
-    "main_tabs": ["岗位工作台", "简历工作台", "求职决策", "面试与报告"],
-    "jd_modes": ["单条JD分析", "批量JD筛选", "行业招聘监测"],
-    "resume_modes": ["简历解析与匹配", "定制简历", "不足与努力方向"],
-    "decision_modes": ["Offer预测", "实习评估", "投递管理"],
-    "report_modes": ["面经分析", "可视化与报告"],
-}
-
-MAIN_WORKSPACE_LABELS = {
-    "jd": "岗位工作台",
-    "resume": "简历工作台",
-    "decision": "求职决策",
-    "report": "面试与报告",
-}
 
 RUNTIME_CACHE_SCHEMA = "2026-05-13-adaptive-match-v1"
 DB_SCHEMA_VERSION = "auth-user-v1"
@@ -11636,7 +11619,6 @@ class PostgresConnection:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()):
         return self._delegate.execute(sql, params)
-        return self.conn.execute(db_sql(sql), params)
 
 
 def db_connect():
@@ -15256,8 +15238,6 @@ def user_table_row_height(df: pd.DataFrame) -> int:
         df,
         normalize_text=normalize_text,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
-    return selected
 
 
 def user_table_height(df: pd.DataFrame, row_height: int) -> int | str:
@@ -16056,12 +16036,26 @@ def render_decision_workspace_heading() -> None:
     )
 
 
-def render_decision_empty_state(message: str, steps: list[str]) -> None:
-    render_utils.render_decision_empty_state(
-        message,
-        steps,
-        streamlit_module=st,
-        safe_html=safe_html,
+def render_decision_empty_state(
+    title: str = "还不能生成决策",
+    detail: str | list[str] = "Offer预测需要先有一个明确的目标JD。请先在岗位工作台选择或录入目标岗位，再回到这里生成判断。",
+    badge: str = "等待目标JD",
+) -> None:
+    if isinstance(detail, list):
+        detail = title
+        title = "还不能生成决策"
+    st.markdown(
+        f"""
+        <section class="cp-empty-state cp-empty-state-decision">
+          <div class="cp-empty-icon" aria-hidden="true"></div>
+          <div>
+            <span class="cp-empty-badge">{html.escape(badge)}</span>
+            <strong>{html.escape(title)}</strong>
+            <p>{html.escape(detail)}</p>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -16124,8 +16118,9 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
 def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
     if not analysis:
         render_decision_empty_state(
-            "填入实习信息后，这里会判断它是否值得去，以及入职前该问清哪些条件。",
-            ["填写公司、岗位、周期和薪资。", "粘贴实习 JD 或导师描述。", "重点看真实项目、导师反馈和可写进简历的产出。"],
+            title="还不能生成实习评估",
+            detail="请先补充实习岗位、工作内容或已投递记录，再生成匹配判断。",
+            badge="等待实习信息",
         )
         return
     score = int(analysis.get("score", 0))
@@ -17407,10 +17402,7 @@ def render_offer_prediction_tab() -> None:
     gap_analysis = st.session_state.get("gap_analysis")
 
     if not jd_analysis:
-        render_decision_empty_state(
-            "Offer 预测需要先有一个明确目标 JD。",
-            ["去岗位工作台导入 JD。", "完成单条 JD 分析。", "回到这里调整公司层级和个人情况。"],
-        )
+        render_decision_empty_state()
         return
 
     inferred_company = jd_basic_value(jd_analysis, "公司名")
@@ -17746,8 +17738,9 @@ def render_applications_tab() -> None:
     df = load_applications()
     if df.empty:
         render_decision_empty_state(
-            "暂无投递记录。可以从岗位工作台的判断结果加入今日队列，也可以在下方手动新增。",
-            ["先分析目标 JD。", "点击加入今日队列，或展开手动新增。", "投递后及时更新面试状态和下一步动作。"],
+            title="还没有投递记录",
+            detail="你可以先在岗位工作台添加岗位，再把投递状态、面试进展和下一步动作放到这里统一管理。",
+            badge="等待投递记录",
         )
     else:
         render_application_summary(df)
@@ -18586,16 +18579,15 @@ def render_sidebar() -> None:
                 st.session_state.active_resume_id = int(selected_resume["id"])
                 clear_resume_dependent_results()
 
-    st.sidebar.markdown('<section class="cp-sidebar-toolbox"><div class="cp-sidebar-toolbox-title">工具区</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="cp-sidebar-block-title cp-sidebar-toolbox-title">工具区</div>', unsafe_allow_html=True)
     if user:
         upload_url = capture_upload_public_url()
         upload_token = get_or_create_capture_upload_token(int(user["id"]))
-        with st.sidebar.expander("一键网页采集", expanded=False):
+        with st.sidebar.expander("网页采集助手", expanded=False):
             render_browser_capture_helper(upload_url, upload_token, key_prefix="sidebar")
         if st.sidebar.button("退出登录", key="logout_user_btn", width="stretch"):
             logout_app_user()
             st.rerun()
-    st.sidebar.markdown("</section>", unsafe_allow_html=True)
 
 
 def render_jd_workspace_tab() -> None:
@@ -18801,7 +18793,12 @@ def render_jd_tab() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title=APP_TITLE, page_icon="🧭", layout="wide")
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="🧭",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     refresh_render_utils_module()
     render_app_styles()
     clear_legacy_runtime_state()

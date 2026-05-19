@@ -3,6 +3,26 @@ from typing import Any, Callable
 import pandas as pd
 
 
+def _render_empty_state(
+    streamlit_module: Any,
+    title: str,
+    copy: str | None = None,
+    safe_html: Callable[[str], str] | None = None,
+) -> None:
+    title_html = safe_html(title) if safe_html else title
+    copy_html = ""
+    if copy is not None:
+        copy_text = safe_html(copy) if safe_html else copy
+        copy_html = f'<div class="cp-empty-state-copy">{copy_text}</div>'
+    streamlit_module.markdown(
+        '<div class="cp-empty-state">'
+        f'<div class="cp-empty-state-title">{title_html}</div>'
+        f"{copy_html}"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_user_dataframe(
     df: pd.DataFrame,
     *,
@@ -140,14 +160,9 @@ def render_decision_empty_state(
     streamlit_module: Any,
     safe_html: Callable[[str], str],
 ) -> None:
+    # steps is retained for compatibility with older call sites.
     del steps
-    streamlit_module.markdown(
-        '<div class="cp-empty-state">'
-        '<div class="cp-empty-state-title">还不能生成决策</div>'
-        f'<div class="cp-empty-state-copy">{safe_html(message)}</div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    _render_empty_state(streamlit_module, "还不能生成决策", message, safe_html)
 
 
 def render_resume_empty_state(
@@ -172,10 +187,4 @@ def render_resume_empty_state(
         steps = ["确认左侧当前简历是最新版本。", "点击使用当前简历分析匹配。", "根据右侧结论进入定制简历。"]
     else:
         return
-    streamlit_module.markdown(
-        '<div class="cp-empty-state">'
-        f'<div class="cp-empty-state-title">{safe_html(title)}</div>'
-        f'<div class="cp-empty-state-copy">{safe_html(copy)}</div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    _render_empty_state(streamlit_module, title, copy, safe_html)
