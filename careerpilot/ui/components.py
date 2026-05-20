@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 from typing import Any, Iterable, Sequence
 
 import pandas as pd
@@ -32,6 +33,15 @@ def _score_text(value: object) -> str:
         return str(max(0, min(100, int(float(value or 0)))))
     except (TypeError, ValueError):
         return _escape(value)
+
+
+def _score_pct(value: object) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        return max(0, min(100, int(float(value or 0))))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _score_level(score: object, level: str | None = None) -> str:
@@ -72,8 +82,17 @@ def _item_text(item: Any, *keys: str, fallback: str = "") -> str:
     return str(item or fallback)
 
 
-def render_app_shell_header() -> None:
-    st.markdown('<div class="cp-shell-spacer"></div>', unsafe_allow_html=True)
+def render_app_shell_header(workspace: str = "default") -> None:
+    import re
+
+    workspace_slug = re.sub(r"[^a-z0-9_-]+", "", str(workspace or "default").lower()) or "default"
+    st.markdown(
+        f'<div class="cp-shell-spacer"></div>'
+        f'<style>body {{ --cp-workspace: "{workspace_slug}"; }}</style>'
+        f'<div id="cp-workspace-scope" class="cp-workspace-scope cp-workspace-{workspace_slug}" '
+        f'style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;"></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_sidebar_brand(version: str = "local") -> None:
@@ -120,12 +139,21 @@ def render_sidebar_nav(options: dict[str, str], selected: str, *, key: str = "ma
     )
 
 
-def render_topbar(title: str, description: str, chips: Sequence[str] | None = None) -> None:
+def render_topbar(title: str, description: str, chips: Sequence[str] | None = None, page_key: str = "default", variant: str = "") -> None:
+    safe_page_key = re.sub(r"[^a-z0-9_-]+", "", str(page_key or "default").lower()) or "default"
     chip_html = "".join(f'<span class="cp-topbar-chip">{_escape(chip)}</span>' for chip in (chips or []) if str(chip).strip())
+    eyebrow_map = {
+        "jd": "JD Workspace",
+        "resume": "Resume Workspace",
+        "decision": "Decision Workspace",
+        "report": "Report Workspace",
+    }
+    eyebrow = eyebrow_map.get(safe_page_key, "CareerPilot Workspace")
     st.markdown(
         f"""
-        <header class="cp-topbar">
-            <div>
+        <header class="cp-topbar cp-topbar-{safe_page_key} {f'cp-topbar-variant-{_escape(variant)}' if variant else ''}">
+            <div class="cp-topbar-main">
+                <span class="cp-topbar-eyebrow">{_escape(eyebrow)}</span>
                 <h1>{_escape(title)}</h1>
                 <p>{_escape(description)}</p>
             </div>
@@ -166,15 +194,16 @@ def render_workspace_card(title: str, subtitle: str | None = None, class_name: s
 
 
 def render_empty_state(title: str, description: str, icon: str | None = None, compact: bool = True) -> None:
-    del icon
     compact_class = " cp-empty-compact" if compact else ""
+    icon_text = str(icon or "").strip()
+    icon_class = " cp-empty-has-icon" if icon_text else ""
+    icon_html = f'<span class="cp-empty-state-icon">{_escape(icon_text)}</span>' if icon_text else ""
     st.markdown(
         f"""
-        <div class="cp-empty-state{compact_class}">
-            <div>
-                <strong>{_escape(title)}</strong>
-                <p>{_escape(description)}</p>
-            </div>
+        <div class="cp-empty-state{compact_class}{icon_class}">
+            {icon_html}
+            <strong>{_escape(title)}</strong>
+            <p>{_escape(description)}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -210,13 +239,22 @@ def render_score_grid(items: Sequence[dict[str, Any] | tuple[Any, ...]]) -> None
             level = item[2] if len(item) > 2 else None
             subtitle = item[3] if len(item) > 3 else None
         tone = _score_level(score, str(level) if level else None)
+        level_html = f'<em class="cp-score-level">{_escape(level)}</em>' if level else ""
+        subtitle_html = f'<p class="cp-score-sub">{_escape(subtitle)}</p>' if subtitle else ""
         cells.append(
             f"""
             <div class="cp-score-card cp-score-{tone}">
-                <span>{_escape(label)}</span>
-                <strong>{_score_text(score)}</strong>
-                {f'<em>{_escape(level)}</em>' if level else ''}
-                {f'<p>{_escape(subtitle)}</p>' if subtitle else ''}
+                <div class="cp-score-card-inner">
+                    <span class="cp-score-label">{_escape(label)}</span>
+                    <div class="cp-score-value-row">
+                        <strong class="cp-score-num">{_score_text(score)}</strong>
+                        <div class="cp-score-ring" style="--pct:{_score_pct(score)}"><span></span></div>
+                    </div>
+                    <div class="cp-score-card-foot">
+                        {level_html}
+                        {subtitle_html}
+                    </div>
+                </div>
             </div>
             """
         )
@@ -261,8 +299,8 @@ def render_decision_card(title: str, value: str, description: str | None = None)
     st.markdown(
         f"""
         <div class="cp-decision-card">
-            <span>{_escape(title)}</span>
-            <strong>{_escape(value)}</strong>
+            <div class="cp-decision-card-label cp-decision-label">{_escape(title)}</div>
+            <div class="cp-decision-card-value cp-decision-value">{_escape(value)}</div>
             {description_html}
         </div>
         """,
@@ -283,18 +321,42 @@ def render_action_list(actions: Sequence[Any]) -> None:
 def render_job_card(row: pd.Series | dict[str, Any], selected: bool = False) -> None:
     get = row.get if hasattr(row, "get") else dict(row).get
     selected_class = " is-selected" if selected else ""
+    score = get("final_rank_score")
+    recommendation = get("recommendation_level") or get("投递建议") or "待判断"
+    tone = _score_level(score, str(recommendation))
+    title = get("岗位") or get("岗位名称") or get("job_title") or get("title") or "未识别岗位"
+    company = get("公司") or get("company") or "未识别公司"
+    city = get("城市") or get("city") or get("location")
+    salary = get("薪资") or get("salary")
+    source = get("来源") or get("source") or get("platform")
+    score_meta_labels = {"简历", "方向", "偏好"}
+    meta_items = [
+        ("简历", get("overall_score") or get("简历匹配分")),
+        ("方向", get("career_target_fit_score")),
+        ("偏好", get("preference_fit_score")),
+    ]
+    for label, value in [("城市", city), ("薪资", salary), ("来源", source)]:
+        if value:
+            meta_items.append((label, value))
+    meta_html = "".join(
+        f'<em><span>{_escape(label)}</span><strong>{_escape(_score_text(value) if label in score_meta_labels else value)}</strong></em>'
+        for label, value in meta_items
+    )
     st.markdown(
         f"""
-        <div class="cp-job-card{selected_class}">
+        <div class="cp-job-card cp-job-card-{tone}{selected_class}">
             <div class="cp-job-card-top">
-                <strong>{_escape(get("岗位") or get("岗位名称") or "未识别岗位")}</strong>
-                <span>{_score_text(get("final_rank_score"))}</span>
+                <div class="cp-job-card-title">
+                    <strong>{_escape(title)}</strong>
+                    <span>{_escape(company)}</span>
+                </div>
+                <div class="cp-job-card-score-wrap">
+                    <span class="cp-job-card-score">{_score_text(score)}</span>
+                    <em>{_escape(recommendation)}</em>
+                </div>
             </div>
-            <p>{_escape(get("公司") or "未识别公司")} · {_escape(get("recommendation_level") or get("投递建议") or "待判断")}</p>
             <div class="cp-job-card-meta">
-                <em>简历 {_score_text(get("overall_score") or get("简历匹配分"))}</em>
-                <em>方向 {_score_text(get("career_target_fit_score"))}</em>
-                <em>偏好 {_score_text(get("preference_fit_score"))}</em>
+                {meta_html}
             </div>
         </div>
         """,
@@ -302,14 +364,39 @@ def render_job_card(row: pd.Series | dict[str, Any], selected: bool = False) -> 
     )
 
 
-def render_revision_card(title: str, before: str, after: str, reason: str | None = None) -> None:
-    reason_html = f'<p>{_escape(reason)}</p>' if reason else ""
+def render_revision_card(title: str, before: str, after: str, reason: str | None = None, tone: str = "default") -> None:
+    reason_html = (
+        f"""
+            <div class="cp-revision-reason">
+                <span>原因</span>
+                <p>{_escape(reason)}</p>
+            </div>
+        """
+        if reason
+        else ""
+    )
     st.markdown(
         f"""
-        <div class="cp-revision-card">
-            <strong>{_escape(title)}</strong>
-            <div><span>原文</span><p>{_escape(before)}</p></div>
-            <div><span>建议</span><p>{_escape(after)}</p></div>
+        <div class="cp-revision-card cp-revision-tone-{_escape(tone)}">
+            <div class="cp-revision-card-head">
+                <div class="cp-revision-badge">✦ 改写建议</div>
+                <strong>{_escape(title)}</strong>
+            </div>
+            <div class="cp-revision-compare">
+                <div class="cp-revision-before">
+                    <div class="cp-revision-label cp-revision-label-before">
+                        <span class="cp-revision-dot"></span>原文
+                    </div>
+                    <p>{_escape(before)}</p>
+                </div>
+                <div class="cp-revision-arrow">→</div>
+                <div class="cp-revision-after">
+                    <div class="cp-revision-label cp-revision-label-after">
+                        <span class="cp-revision-dot"></span>建议
+                    </div>
+                    <p>{_escape(after)}</p>
+                </div>
+            </div>
             {reason_html}
         </div>
         """,
@@ -446,16 +533,65 @@ def render_table_toolbar(title: str, count: int | None = None, filters: Sequence
 
 
 def render_evidence_card(requirement: str, evidence: str, strength: object | None = None, explanation: str | None = None) -> None:
-    render_revision_card(requirement or "匹配证据", evidence or "暂无可展示证据", str(strength or ""), explanation)
+    strength_text = str(strength or "待评估")
+    explanation_html = (
+        f"""
+            <div class="cp-evidence-explanation">
+                <span>解释</span>
+                <p>{_escape(explanation)}</p>
+            </div>
+        """
+        if explanation
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="cp-evidence-card cp-revision-tone-evidence">
+            <div class="cp-evidence-card-head">
+                <span>需求</span>
+                <div>
+                    <strong>{_escape(requirement or "匹配证据")}</strong>
+                </div>
+                <em>{_escape(strength_text)}</em>
+            </div>
+            <blockquote class="cp-evidence-quote">{_escape(evidence or "暂无可展示证据")}</blockquote>
+            {explanation_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_gap_card(requirement: str, reason: str, suggestion: str | None = None, importance: str | None = None) -> None:
-    render_decision_card(requirement or "待补齐要求", importance or "缺口", f"{reason or '暂无原因说明'} {suggestion or ''}".strip())
+    suggestion_html = (
+        f"""
+            <div class="cp-gap-card-suggestion">
+                <span>建议</span>
+                <p>{_escape(suggestion)}</p>
+            </div>
+        """
+        if suggestion
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="cp-gap-card cp-revision-tone-gap">
+            <div class="cp-gap-card-head">
+                <span>{_escape(importance or "缺口")}</span>
+                <div>
+                    <strong>{_escape(requirement or "待补齐要求")}</strong>
+                </div>
+            </div>
+            <p>{_escape(reason or "暂无原因说明")}</p>
+            {suggestion_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_rewrite_card(original_text: str, suggested_text: str, reason: str | None = None, risk_warning: str | None = None, mode: str = "safe") -> None:
-    render_revision_card("简历改写", original_text, suggested_text, risk_warning or reason)
-
+    render_revision_card("简历改写", original_text, suggested_text, risk_warning or reason, tone="rewrite")
 
 def render_compact_breakdown(score_breakdown: dict | list | None) -> None:
     if not score_breakdown:

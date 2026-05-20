@@ -12839,20 +12839,11 @@ def render_auth_welcome_panel() -> None:
             <div class="cp-auth-copy">
                 <div class="cp-auth-kicker">CareerPilot Access</div>
                 <h1 class="cp-auth-title">{safe_html(APP_TITLE)}</h1>
-                <p class="cp-auth-subtitle">一个工作台，管理岗位、简历、投递与判断，让求职推进更清晰</p>
+                <p class="cp-auth-subtitle">把岗位、简历、投递和判断放进一个安静的工作台。</p>
                 <div class="cp-auth-badges">
-                    <span>Resume-ready</span>
-                    <span>Job Capture</span>
-                    <span>Decision Support</span>
-                </div>
-            </div>
-            <div class="cp-auth-spotlight" aria-hidden="true">
-                <div class="cp-auth-orbit cp-auth-orbit-one"></div>
-                <div class="cp-auth-orbit cp-auth-orbit-two"></div>
-                <div class="cp-auth-spotlight-card">
-                    <div class="cp-auth-spotlight-label">Weekly Focus</div>
-                    <strong>Collect faster. Decide calmer.</strong>
-                    <span>从抓取到投递跟进，一条链路更顺手。</span>
+                    <span>岗位采集</span>
+                    <span>简历匹配</span>
+                    <span>求职决策</span>
                 </div>
             </div>
         </section>
@@ -15489,7 +15480,6 @@ def render_dashboard_tab() -> None:
 
 
 def render_auth_screen() -> None:
-    render_auth_welcome_panel()
     left_col, right_col = st.columns([1.08, 0.92], gap="large")
     with left_col:
         st.markdown(
@@ -15498,49 +15488,34 @@ def render_auth_screen() -> None:
                 <div class="cp-auth-showcase-inner">
                     <div class="cp-auth-showcase-kicker">CareerPilot Access</div>
                     <h3 class="cp-login-title"><span class="cp-login-title-brand">CareerPilot</span><span class="cp-login-title-cn">全职业岗位分析</span></h3>
-                    <p class="cp-login-subtitle">一个工作台，管理岗位、简历、投递与判断，让求职推进更清晰</p>
-                    <div class="cp-login-english">Resume-ready Job Capture Decision Support</div>
-                    <div class="cp-weekly-focus">
-                        <span>Weekly Focus</span>
-                        <strong>Collect faster. Decide calmer. 从抓取到投递跟进，一条路径更顺手。</strong>
-                    </div>
-                    <h4>一个更稳的求职驾驶舱</h4>
-                    <p><span class="cp-auth-showcase-copy-line">岗位信息、简历、投递进度与关键判断都会被认真放在同一工作台</span><span class="cp-auth-showcase-copy-line">陪伴每一段求职推进，让每一次选择都清晰从容。</span></p>
+                    <p class="cp-login-subtitle">把岗位、简历、投递和判断放进一个安静的工作台，让求职推进更清晰。</p>
                     <div class="cp-auth-feature-list">
                         <div class="cp-auth-feature">
                             <div class="cp-auth-feature-icon">01</div>
                             <div>
-                                <strong>快速采集与归档</strong>
-                                <span>从招聘页面到岗位详情，信息会顺着同一条路径沉淀下来，少一点反复复制，也少一点来回切换。</span>
+                                <strong>岗位采集</strong>
+                                <span>沉淀JD、公司和来源信息</span>
                             </div>
                         </div>
                         <div class="cp-auth-feature">
                             <div class="cp-auth-feature-icon">02</div>
                             <div>
-                                <strong>围绕简历版本组织工作</strong>
-                                <span>不同岗位方向对应的简历、投递动作和后续跟进，可以放在一条清晰的工作链路里慢慢整理。</span>
+                                <strong>简历匹配</strong>
+                                <span>看清优势、缺口和改写方向</span>
                             </div>
                         </div>
                         <div class="cp-auth-feature">
                             <div class="cp-auth-feature-icon">03</div>
                             <div>
-                                <strong>把下一步留得更清楚</strong>
-                                <span>优先级、时间点和备注会集中留在这里，今天看到的内容，明天也更容易接着往下走。</span>
+                                <strong>求职决策</strong>
+                                <span>用分数和证据辅助判断</span>
                             </div>
                         </div>
                     </div>
                     <div class="cp-auth-showcase-note">
                         <div class="cp-auth-showcase-pill">
-                            <strong>Resume</strong>
-                            <span>围绕不同方向管理简历版本</span>
-                        </div>
-                        <div class="cp-auth-showcase-pill">
-                            <strong>Capture</strong>
-                            <span>把岗位线索顺手收回工作台</span>
-                        </div>
-                        <div class="cp-auth-showcase-pill">
-                            <strong>Workflow</strong>
-                            <span>让投递推进更连续也更安心</span>
+                            <strong>Collect faster. Decide calmer.</strong>
+                            <span>从信息收集到投递判断，保持清晰节奏。</span>
                         </div>
                     </div>
                 </div>
@@ -15645,9 +15620,21 @@ def _current_shell_labels() -> tuple[str, str, str]:
 
 
 def render_app_shell_header(workspace: str = "jd") -> None:
+    workspace_slug = re.sub(r"[^a-z0-9_-]+", "", str(workspace or "default").lower()) or "default"
+    st.markdown(
+        f'<div class="cp-workspace-scope cp-workspace-{workspace_slug}" '
+        f'style="position:absolute;top:0;left:0;width:0;height:0;overflow:hidden;pointer-events:none;"></div>',
+        unsafe_allow_html=True,
+    )
     _user_label, profile_label, resume_label = _current_shell_labels()
     title = MAIN_WORKSPACE_LABELS.get(workspace, "岗位工作台")
     description = WORKSPACE_DESCRIPTIONS.get(workspace, "")
+    page_key = {
+        "jd": "jobs",
+        "resume": "resume",
+        "decision": "decision",
+        "report": "report",
+    }.get(workspace, "default")
     ui_components.render_topbar(
         title,
         description,
@@ -15656,6 +15643,8 @@ def render_app_shell_header(workspace: str = "jd") -> None:
             f"目标档案 {profile_label}",
             f"版本 {APP_BUILD_LABEL}",
         ],
+        page_key=page_key,
+        variant=workspace,
     )
 
 
