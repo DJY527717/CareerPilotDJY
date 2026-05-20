@@ -43,13 +43,104 @@
     return output;
   }
 
+  const CAPTURE_SCHEMA_VERSION = "careerpilot.capture.v1";
+
+  function sourceSiteFromUrl(url) {
+    return siteKeyFromHost(url || (globalThis.location && globalThis.location.href) || "") || "";
+  }
+
+  function normalizeExportedJob(job, context) {
+    const ctx = context || {};
+    const sourceUrl = cleanText(
+      job && (job.sourceUrl || job.source_url)
+      || ctx.sourceUrl
+      || ctx.url
+      || (globalThis.location && globalThis.location.href)
+      || ""
+    );
+    const rawText = cleanText(
+      job && (job.rawText || job.raw_text)
+      || job && job.text
+      || job && job.content
+      || job && job.detailText
+      || job && job.detail_text
+      || ""
+    );
+    const detailText = cleanText(job && (job.detailText || job.detail_text) || "");
+    const text = cleanText(job && job.text || detailText || rawText);
+    const detailUrl = cleanText(
+      job && (job.detailUrl || job.detail_url || job.jobUrl || job.job_url || job.href || job.link)
+      || job && job.url
+      || ctx.detailUrl
+      || ""
+    );
+    const capturedAt = cleanText(job && (job.capturedAt || job.savedAt) || ctx.capturedAt || new Date().toISOString());
+    const normalized = {
+      ...(job || {}),
+      schemaVersion: cleanText(job && job.schemaVersion || ctx.schemaVersion || CAPTURE_SCHEMA_VERSION),
+      captureMode: cleanText(job && job.captureMode || ctx.captureMode || ""),
+      sourceSite: cleanText(job && job.sourceSite || ctx.sourceSite || sourceSiteFromUrl(sourceUrl || detailUrl)),
+      title: cleanText(job && (job.title || job.detailTitle) || ""),
+      company: cleanText(job && job.company || ""),
+      salary: cleanText(job && job.salary || ""),
+      location: cleanText(job && job.location || ""),
+      experience: cleanText(job && job.experience || ""),
+      education: cleanText(job && job.education || ""),
+      url: cleanText(job && job.url || detailUrl || ""),
+      detailUrl,
+      sourceUrl,
+      text,
+      detailText,
+      rawText,
+      detailFetched: job && job.detailFetched === true,
+      capturedAt,
+    };
+    return normalized;
+  }
+
+  function normalizeExportedJobs(jobs, context) {
+    return (jobs || []).filter(Boolean).map((job) => normalizeExportedJob(job, context));
+  }
+
+  function normalizeExportedDetailPayload(detail, context) {
+    const ctx = context || {};
+    const sourceUrl = cleanText((detail && detail.sourceUrl) || ctx.sourceUrl || (detail && detail.url) || (globalThis.location && globalThis.location.href) || "");
+    const detailText = cleanText((detail && (detail.detailText || detail.text || detail.content)) || "");
+    return normalizeExportedJob({
+      ...(detail || {}),
+      captureMode: (detail && detail.captureMode) || ctx.captureMode || "detail",
+      sourceUrl,
+      detailUrl: (detail && (detail.detailUrl || detail.url)) || sourceUrl,
+      url: (detail && detail.url) || sourceUrl,
+      detailText,
+      rawText: (detail && (detail.rawText || detail.content || detail.text)) || detailText,
+      text: (detail && detail.text) || detailText,
+      detailFetched: true,
+    }, {
+      ...ctx,
+      sourceUrl,
+      captureMode: ctx.captureMode || "detail",
+    });
+  }
+
   function salaryPatterns() {
     return [
-      /\d+(?:\.\d+)?\s*[-~\u2014\u81f3\u5230]\s*\d+(?:\.\d+)?\s*[kK](?:\s*[\u00b7*xX]\s*\d+\s*\u85aa)?/,
-      /\d+(?:\.\d+)?\s*[-~\u2014\u81f3\u5230]\s*\d+(?:\.\d+)?\s*\u5143\s*\/?\s*\u5929/,
-      /\d+(?:\.\d+)?\s*[kK]\s*(?:\u4ee5\u4e0a|\+)?/,
-      /\d+(?:\.\d+)?\s*[-~\u2014\u81f3\u5230]\s*\d+(?:\.\d+)?\s*[\u4e07wW]/,
-      /\u9762\u8bae/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*[kK](?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[kK]\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*[kK]?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*千\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*万(?:\s*\/?\s*月)?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*千(?:\s*\/?\s*月)?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*[万wW]\s*\/?\s*年(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[万wW]\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*[万wW]?\s*\/?\s*年(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*[万wW](?:\s*\/?\s*月)?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[万wW]\s*(?:以上|\+)?(?:\s*\/?\s*(?:月|年))?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[kK]\s*(?:以上|\+)?(?:\s*[·*xX]\s*\d+\s*薪)?/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*元\s*\/?\s*天/,
+      /\d+(?:\.\d+)?\s*[-~～—至到]\s*\d+(?:\.\d+)?\s*\/\s*天/,
+      /\d+(?:\.\d+)?\s*元?\s*\/\s*天/,
+      /\d+\s*薪/,
+      /(?:月薪|年薪)\s*[:：]?\s*\d+(?:\.\d+)?\s*[-~～—至到]?\s*\d*(?:\.\d+)?\s*[kK千万元wW]*/,
+      /(?:薪资|工资|待遇)\s*(?:面议|可议|详谈)/,
+      /(?:薪资)?面议/,
     ];
   }
 
@@ -154,13 +245,62 @@
   }
 
   function findLocation(text) {
-    const match = cleanText(text).match(/(\u4e0a\u6d77|\u5317\u4eac|\u6df1\u5733|\u5e7f\u5dde|\u676d\u5dde|\u82cf\u5dde|\u5357\u4eac|\u5b81\u6ce2|\u6210\u90fd|\u6b66\u6c49|\u91cd\u5e86|\u5929\u6d25|\u897f\u5b89|\u957f\u6c99|\u9752\u5c9b)(?:[^\n]{0,12})?/);
-    return match ? cleanText(match[0]) : "";
+    const value = cleanText(text);
+    const cities = [
+      "北京", "上海", "天津", "重庆", "石家庄", "唐山", "秦皇岛", "邯郸", "邢台", "保定", "张家口", "承德", "沧州", "廊坊", "衡水",
+      "太原", "大同", "阳泉", "长治", "晋城", "朔州", "晋中", "运城", "忻州", "临汾", "吕梁",
+      "沈阳", "大连", "鞍山", "抚顺", "本溪", "丹东", "锦州", "营口", "阜新", "辽阳", "盘锦", "铁岭", "朝阳", "葫芦岛",
+      "长春", "吉林", "四平", "辽源", "通化", "白山", "松原", "白城",
+      "哈尔滨", "齐齐哈尔", "鸡西", "鹤岗", "双鸭山", "大庆", "伊春", "佳木斯", "七台河", "牡丹江", "黑河", "绥化",
+      "南京", "无锡", "徐州", "常州", "苏州", "南通", "连云港", "淮安", "盐城", "扬州", "镇江", "泰州", "宿迁",
+      "杭州", "宁波", "温州", "嘉兴", "湖州", "绍兴", "金华", "衢州", "舟山", "台州", "丽水",
+      "合肥", "芜湖", "蚌埠", "淮南", "马鞍山", "淮北", "铜陵", "安庆", "黄山", "滁州", "阜阳", "宿州", "六安", "亳州", "池州", "宣城",
+      "福州", "厦门", "莆田", "三明", "泉州", "漳州", "南平", "龙岩", "宁德",
+      "南昌", "景德镇", "萍乡", "九江", "新余", "鹰潭", "赣州", "吉安", "宜春", "抚州", "上饶",
+      "济南", "青岛", "淄博", "枣庄", "东营", "烟台", "潍坊", "济宁", "泰安", "威海", "日照", "临沂", "德州", "聊城", "滨州", "菏泽",
+      "郑州", "开封", "洛阳", "平顶山", "安阳", "鹤壁", "新乡", "焦作", "濮阳", "许昌", "漯河", "三门峡", "南阳", "商丘", "信阳", "周口", "驻马店",
+      "武汉", "黄石", "十堰", "宜昌", "襄阳", "鄂州", "荆门", "孝感", "荆州", "黄冈", "咸宁", "随州",
+      "长沙", "株洲", "湘潭", "衡阳", "邵阳", "岳阳", "常德", "张家界", "益阳", "郴州", "永州", "怀化", "娄底",
+      "广州", "韶关", "深圳", "珠海", "汕头", "佛山", "江门", "湛江", "茂名", "肇庆", "惠州", "梅州", "汕尾", "河源", "阳江", "清远", "东莞", "中山", "潮州", "揭阳", "云浮",
+      "海口", "三亚", "成都", "自贡", "攀枝花", "泸州", "德阳", "绵阳", "广元", "遂宁", "内江", "乐山", "南充", "眉山", "宜宾", "广安", "达州", "雅安", "巴中", "资阳",
+      "贵阳", "六盘水", "遵义", "安顺", "毕节", "铜仁", "昆明", "曲靖", "玉溪", "保山", "昭通", "丽江", "普洱", "临沧",
+      "西安", "铜川", "宝鸡", "咸阳", "渭南", "延安", "汉中", "榆林", "安康", "商洛",
+      "兰州", "嘉峪关", "金昌", "白银", "天水", "武威", "张掖", "平凉", "酒泉", "庆阳", "定西", "陇南",
+      "呼和浩特", "包头", "乌海", "赤峰", "通辽", "鄂尔多斯", "呼伦贝尔", "巴彦淖尔", "乌兰察布",
+      "南宁", "柳州", "桂林", "梧州", "北海", "防城港", "钦州", "贵港", "玉林", "百色", "贺州", "河池", "来宾", "崇左",
+      "银川", "石嘴山", "吴忠", "固原", "中卫", "乌鲁木齐", "克拉玛依",
+      "香港", "澳门", "台北", "全国", "远程"
+    ];
+    const city = cities.find((item) => value.includes(item));
+    if (!city) return "";
+    const cityIndex = value.indexOf(city);
+    const lineStart = Math.max(0, value.lastIndexOf("\n", cityIndex) + 1);
+    const lineEndRaw = value.indexOf("\n", cityIndex);
+    const lineEnd = lineEndRaw >= 0 ? lineEndRaw : value.length;
+    const line = cleanText(value.slice(lineStart, lineEnd));
+    if (line && line.length <= 28) return line;
+    const suffix = value.slice(cityIndex + city.length).match(/^(?:[-·\s]*(?:[\u4e00-\u9fa5A-Za-z0-9]+区|[\u4e00-\u9fa5A-Za-z0-9]+县|[\u4e00-\u9fa5A-Za-z0-9]+路|[\u4e00-\u9fa5A-Za-z0-9]+街道)){0,2}/);
+    return cleanText(city + (suffix ? suffix[0] : ""));
+  }
+
+  const JOB_TITLE_KEYWORDS = /(?:工程师|开发|前端|后端|全栈|客户端|算法|测试|运维|数据|分析|产品|运营|市场|销售|商务|设计|视觉|交互|用户研究|项目|经理|主管|专员|助理|实习|管培|校招|招聘|人事|HR|财务|会计|法务|顾问|咨询|编辑|文案|内容|教师|讲师|研究员|架构|安全|风控|Java|Python|Go|C\+\+|Android|iOS|Web|AI|AIGC|LLM|BI|SQL)/i;
+  const NON_TITLE_LINE = /^(?:筛选|排序|推荐|立即投递|申请职位|查看详情|职位详情|薪资|地点|城市|经验|学历|公司|福利|发布时间|更新|收藏|沟通|登录|注册|上一页|下一页|加载更多|全部|默认|综合排序|相关度|最新|清空|展开|收起)$/;
+
+  function isLikelyFallbackTitle(line) {
+    const value = cleanText(line);
+    if (!value || value.length > 80) return false;
+    if (findSalary(value) || findLocation(value) === value || findEducation(value) === value || findExperience(value) === value) return false;
+    if (NON_TITLE_LINE.test(value)) return false;
+    if (/^(?:\d+|[·•\-_*#]|[<>])/.test(value)) return false;
+    if (/(?:筛选|排序|推荐|投递|查看详情|薪资|地点|经验|学历)/.test(value) && value.length <= 16) return false;
+    return true;
   }
 
   function fallbackFieldsFromText(text) {
     const lines = cleanText(text).split(/\n+/).map((line) => cleanText(line)).filter(Boolean);
-    const title = lines.find((line) => line.length <= 80 && !findSalary(line)) || "";
+    const title = lines.find((line) => isLikelyFallbackTitle(line) && JOB_TITLE_KEYWORDS.test(line))
+      || lines.find(isLikelyFallbackTitle)
+      || "";
     const company = lines.find((line) => /(\u516c\u53f8|\u96c6\u56e2|\u79d1\u6280|\u54a8\u8be2|\u6709\u9650)/.test(line) && line !== title) || "";
     return {
       title,
@@ -182,6 +322,13 @@
       const current = queue.shift();
       if (!current || seen.has(current)) continue;
       seen.add(current);
+
+      if (current instanceof Element && typeof current.matches === "function") {
+        try {
+          if (current.matches(selector)) nodes.push(current);
+        } catch (_error) {
+        }
+      }
 
       if (typeof current.querySelectorAll === "function") {
         current.querySelectorAll(selector).forEach((node) => nodes.push(node));
@@ -271,10 +418,30 @@
   }
 
   function textFromStructuredValue(value) {
-    if (!value) return "";
-    if (typeof value === "string" || typeof value === "number") return cleanText(String(value));
-    if (Array.isArray(value)) return uniqueValues(value.map(textFromStructuredValue), 8).join("\n");
-    return "";
+    function visit(item, seen, depth) {
+      if (item === null || item === undefined || depth > 8) return [];
+      if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+        const text = cleanText(String(item));
+        return text ? [text] : [];
+      }
+      if (Array.isArray(item)) {
+        return item.flatMap((entry) => visit(entry, seen, depth + 1));
+      }
+      if (typeof item !== "object") return [];
+      if (seen.has(item)) return [];
+      seen.add(item);
+
+      const preferred = [];
+      ["name", "description", "text", "value", "label"].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(item, key)) {
+          preferred.push(...visit(item[key], seen, depth + 1));
+        }
+      });
+      if (preferred.length) return preferred;
+      return Object.values(item).flatMap((entry) => visit(entry, seen, depth + 1));
+    }
+
+    return uniqueValues(visit(value, new Set(), 0), 12).join("\n");
   }
 
   function tryParseJson(text) {
@@ -369,11 +536,17 @@
         const dedupeKey = `${job.url || ""}|${compact(job.title || job.text).slice(0, 220)}`;
         if (seen.has(dedupeKey)) return;
         seen.add(dedupeKey);
-        items.push({
+        items.push(normalizeExportedJob({
           ...job,
           pageIndex,
+          captureMode: "structured",
+          sourceUrl: baseUrl || (globalThis.location && globalThis.location.href) || "",
+          rawText: job.text || "",
           score: 24 + scoreJobCard(job.text || "") + (job.salary ? 5 : 0) + (job.company ? 3 : 0),
-        });
+        }, {
+          captureMode: "structured",
+          sourceUrl: baseUrl || (globalThis.location && globalThis.location.href) || "",
+        }));
       }, new Set(), 0);
     });
     return items;
@@ -497,9 +670,14 @@
       throwIfAborted(signal);
       if (!(container instanceof HTMLElement)) continue;
       const before = container.scrollTop;
-      const target = Math.max(before + Math.max(500, container.clientHeight * 0.9), container.scrollHeight);
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      const step = Math.max(320, Math.floor(container.clientHeight * 0.82));
+      const target = Math.min(before + step, maxTop);
       container.scrollTop = target;
       if (container.scrollTop !== before) moved = true;
+      if (container.scrollTop !== before) {
+        await waitForDomSettled(1400, 260);
+      }
     }
     if (moved) {
       await pause(250, signal);
@@ -560,11 +738,11 @@
         ".j_joblist .e",
         ".job-item",
       ],
-      title: [".jobname", ".jname", ".job-title", "a[title]"],
-      company: [".cname", ".company_name", ".dc", "[class*='company']"],
-      salary: [".sal", ".salary", "[class*='salary']"],
-      location: [".d at span", ".area", ".job-area", "[class*='area']"],
-      meta: [".tags span", ".attribute span", ".labels span"],
+      title: [".jobname", ".jname", ".job-title", ".job-title a", ".joblist-item-jobname", ".e_job_name", "a[title]"],
+      company: [".cname", ".company_name", ".company-name", ".dc", ".e_company_name", "[class*='company']"],
+      salary: [".sal", ".salary", ".job-salary", ".e_salary", "[class*='salary']"],
+      location: [".d.at span", ".d.at", ".area", ".job-area", ".workarea", ".e_area", "[class*='area']"],
+      meta: [".tags span", ".attribute span", ".labels span", ".joblist-item-tags span", ".job-info span"],
       anchors: ["a[href]"],
     },
     shixiseng: {
@@ -575,11 +753,11 @@
         ".position-list-item",
         ".job-item",
       ],
-      title: [".intern-title", ".job-name", ".position-name", "a[title]"],
-      company: [".company-name", ".company", ".title ellipsis", "[class*='company-name']"],
-      salary: [".day-salary", ".salary", "[class*='salary']"],
-      location: [".area", ".city", "[class*='city']", "[class*='location']"],
-      meta: [".more span", ".meta span", ".job-msg span", ".job-info span"],
+      title: [".intern-title", ".job-name", ".position-name", ".title.ellipsis", ".job-title", ".name-box a", "a[title]"],
+      company: [".company-name", ".company", ".company-title", ".title.ellipsis", ".com-name", "[class*='company-name']"],
+      salary: [".day-salary", ".salary", ".job_money", ".money", "[class*='salary']"],
+      location: [".area", ".city", ".addr", ".job_position", "[class*='city']", "[class*='location']"],
+      meta: [".more span", ".meta span", ".job-msg span", ".job-info span", ".job_academic span", ".job_comment span"],
       anchors: ["a[href]"],
     },
   };
@@ -607,18 +785,18 @@
       content: [".job-detail-content", ".content-word", ".job-description-container", ".job-item-main"],
     },
     job51: {
-      title: [".job-title", "h1", ".cn h1"],
-      company: [".company-name", ".com-name", ".com_tag a"],
-      salary: [".salary", ".job-salary", ".cn strong"],
-      meta: [".job-msg span", ".job-tags span", ".jtag span"],
-      content: [".jobdetail-box", ".bmsg", ".jobdetail", ".job-description"],
+      title: [".job-title", ".jobname", ".jname", "h1", ".cn h1"],
+      company: [".company-name", ".com-name", ".company_name", ".com_tag a"],
+      salary: [".salary", ".job-salary", ".sal", ".cn strong"],
+      meta: [".job-msg span", ".job-tags span", ".jtag span", ".d.at span", ".attribute span"],
+      content: [".jobdetail-box", ".bmsg", ".jobdetail", ".job-description", ".job_msg", ".tCompany_main"],
     },
     shixiseng: {
-      title: [".new_job_name", ".job_name", "h1"],
-      company: [".com-name", ".company_name", ".enterprise_name"],
-      salary: [".job_money", ".salary", ".day_salary"],
-      meta: [".job_academic span", ".job_comment span", ".job_msg span"],
-      content: [".job_detail", ".desc", ".job_intro", ".job-content"],
+      title: [".new_job_name", ".job_name", ".intern-title", ".title.ellipsis", "h1"],
+      company: [".com-name", ".company_name", ".enterprise_name", ".company-name", ".company"],
+      salary: [".job_money", ".salary", ".day_salary", ".day-salary"],
+      meta: [".job_academic span", ".job_comment span", ".job_msg span", ".more span", ".meta span"],
+      content: [".job_detail", ".desc", ".job_intro", ".job-content", ".job_detail_module"],
     },
   };
 
@@ -905,7 +1083,7 @@
     const detail = extractDetailFromDocument(document, location.href, document.title || "");
     const detailText = cleanText(detail && detail.text);
     if (detailText.length < 80) return null;
-    return detail;
+    return normalizeExportedDetailPayload(detail, { captureMode: "detail", sourceUrl: location.href });
   }
 
   function findNextHref(doc, baseUrl) {
@@ -1240,7 +1418,10 @@
   async function collectDetailPayload(options) {
     await waitForDomSettled(2800, 500);
     throwIfAborted(options && options.signal);
-    return extractDetailFromDocument(document, location.href, document.title || "");
+    return normalizeExportedDetailPayload(
+      extractDetailFromDocument(document, location.href, document.title || ""),
+      { captureMode: "detail", sourceUrl: location.href }
+    );
   }
 
   async function collectListPayload(options) {
@@ -1258,19 +1439,38 @@
     const detailCount = normalized.detailLimit > 0
       ? await enrichWithDetailPages(limitedJobs, lastUrl || location.href, Math.min(normalized.detailLimit, normalized.maxJobs), signal, normalized.detailConcurrency)
       : 0;
-    const finalJobs = normalized.detailLimit > 0 && detailCount > 0
-      ? limitedJobs.filter((job) => job && job.detailFetched && usableDetailUrl(job.detailUrl || job.url, lastUrl || location.href))
+    const finalJobs = normalized.detailLimit > 0
+      ? limitedJobs.map((job) => {
+        if (!job) return job;
+        if (job.detailFetched === true) return job;
+        return {
+          ...job,
+          detailFetched: false,
+        };
+      })
       : limitedJobs;
+    const capturedAt = new Date().toISOString();
+    const sourceUrl = lastUrl || location.href;
+    const exportedJobs = normalizeExportedJobs(finalJobs, {
+      captureMode: "list",
+      sourceUrl,
+      capturedAt,
+    });
     return {
+      schemaVersion: CAPTURE_SCHEMA_VERSION,
       type: "list_paginated_with_details",
+      captureMode: "list",
+      sourceSite: sourceSiteFromUrl(sourceUrl),
       title: lastTitle || document.title || "paginated_jobs_with_details",
-      url: lastUrl || location.href,
-      savedAt: new Date().toISOString(),
-      jobCount: finalJobs.length,
+      url: sourceUrl,
+      sourceUrl,
+      savedAt: capturedAt,
+      capturedAt,
+      jobCount: exportedJobs.length,
       cardCount: limitedJobs.length,
       detailRequired: normalized.detailLimit > 0,
       detailCount,
-      jobs: finalJobs,
+      jobs: exportedJobs,
       text: cleanText((document.body && document.body.innerText) || "").slice(0, 120000),
     };
   }
@@ -1282,24 +1482,43 @@
     await waitForDomSettled(1200, 250);
     const jobs = collectJobsFromDocument(document, location.href, 1, true).slice(0, maxJobs);
     const text = cleanText((document.body && document.body.innerText) || bodyText(document)).slice(0, 120000);
+    const capturedAt = new Date().toISOString();
     if (jobs.length) {
+      const exportedJobs = normalizeExportedJobs(jobs, {
+        captureMode: "fast_visible",
+        sourceUrl: location.href,
+        capturedAt,
+      });
       return {
+        schemaVersion: CAPTURE_SCHEMA_VERSION,
         type: "list_visible_fast",
+        captureMode: "fast_visible",
+        sourceSite: sourceSiteFromUrl(location.href),
         title: document.title || "visible_jobs",
         url: location.href,
-        savedAt: new Date().toISOString(),
-        jobCount: jobs.length,
+        sourceUrl: location.href,
+        savedAt: capturedAt,
+        capturedAt,
+        jobCount: exportedJobs.length,
         detailCount: 0,
-        jobs,
+        jobs: exportedJobs,
         text,
       };
     }
     return {
+      ...normalizeExportedDetailPayload({
+        type: "detail_visible_fast",
+        title: document.title || "visible_page",
+        url: location.href,
+        sourceUrl: location.href,
+        savedAt: capturedAt,
+        capturedAt,
+        text,
+        detailText: text,
+        rawText: text,
+      }, { captureMode: "fast_visible_detail", sourceUrl: location.href, capturedAt }),
       type: "detail_visible_fast",
-      title: document.title || "visible_page",
-      url: location.href,
-      savedAt: new Date().toISOString(),
-      text,
+      savedAt: capturedAt,
     };
   }
 
@@ -1330,7 +1549,7 @@
               cardCount: quickJobCount,
               detailCount: 0,
               detailRequired: true,
-              jobs: [],
+              jobs: quickPayload.jobs || [],
               error: String(error && error.message ? error.message : error || "detail_capture_failed"),
               text: cleanText(quickPayload.text || "").slice(0, 120000),
             };
@@ -1351,7 +1570,7 @@
             cardCount: quickJobCount,
             detailCount: 0,
             detailRequired: true,
-            jobs: [],
+            jobs: quickPayload.jobs || [],
             error: String(error && error.message ? error.message : error || "detail_capture_failed"),
             text: cleanText(quickPayload.text || "").slice(0, 120000),
           };
@@ -1385,5 +1604,6 @@
     collectDetailPayload,
     collectFastVisiblePayload,
     collectListPayload,
+    normalizeExportedJob,
   };
 })(globalThis);

@@ -110,9 +110,8 @@ def render_sidebar_nav(options: dict[str, str], selected: str, *, key: str = "ma
     keys = list(options.keys())
     if selected not in keys and keys:
         selected = keys[0]
-    st.sidebar.markdown('<div class="cp-sidebar-block-title">主功能</div>', unsafe_allow_html=True)
     return st.sidebar.radio(
-        "主功能导航",
+        "\u200b",
         keys,
         index=keys.index(selected) if selected in keys else 0,
         format_func=lambda item: options.get(item, item),
@@ -142,7 +141,7 @@ def render_segmented_nav(options: Iterable[str], selected: str, *, key: str | No
     if selected not in option_list and option_list:
         selected = option_list[0]
     return st.radio(
-        "二级导航",
+        "\u200b",
         option_list,
         index=option_list.index(selected) if selected in option_list else 0,
         horizontal=True,
@@ -167,12 +166,11 @@ def render_workspace_card(title: str, subtitle: str | None = None, class_name: s
 
 
 def render_empty_state(title: str, description: str, icon: str | None = None, compact: bool = True) -> None:
-    icon_html = f'<span class="cp-empty-icon">{_escape(icon)}</span>' if icon else '<span class="cp-empty-icon">·</span>'
+    del icon
     compact_class = " cp-empty-compact" if compact else ""
     st.markdown(
         f"""
         <div class="cp-empty-state{compact_class}">
-            {icon_html}
             <div>
                 <strong>{_escape(title)}</strong>
                 <p>{_escape(description)}</p>

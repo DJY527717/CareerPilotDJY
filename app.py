@@ -12,7 +12,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
-from threading import Lock
+from threading import Lock, local
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from careerpilot import auth as auth_utils
 from careerpilot import capture as capture_utils
 from careerpilot import database_init as database_init_utils
@@ -69,6 +71,7 @@ _DB_INIT_DONE = False
 _DB_INIT_LOCK = Lock()
 _CAPTURE_SERVICE_ENSURED = False
 _CAPTURE_SERVICE_LOCK = Lock()
+_REQUESTS_THREAD_LOCAL = local()
 
 
 @lru_cache(maxsize=1)
@@ -187,9 +190,10 @@ def sanitize_capture_filename(value: str) -> str:
 
 def lookup_user_id_by_capture_token(token: str) -> int | None:
     init_db()
+    sql = db_sql("SELECT user_id FROM app_settings WHERE key = ? AND value = ?")
     with db_connect() as conn:
         row = conn.execute(
-            "SELECT user_id FROM app_settings WHERE key = ? AND value = ?",
+            sql,
             (CAPTURE_UPLOAD_TOKEN_KEY, token.strip()),
         ).fetchone()
         if row and row[0] is not None:
@@ -200,12 +204,15 @@ def lookup_user_id_by_capture_token(token: str) -> int | None:
 def save_capture_payload_for_user(user_id: int, payload: dict[str, Any], prefix: str) -> Path:
     now = datetime.now()
     date_dir = now.strftime("%Y-%m-%d")
-    stamp = now.strftime("%Y-%m-%dT%H-%M-%S")
+    stamp = now.strftime("%Y-%m-%dT%H-%M-%S-%f")
     title = str(payload.get("title") or payload.get("url") or prefix or "capture_upload")
+    payload_hash = hashlib.sha1(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:8]
     target_dir = cloud_upload_root_for_user(user_id) / date_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / (
-        f"{stamp}_{sanitize_capture_filename(prefix)}_{sanitize_capture_filename(title)}.json"
+        f"{stamp}_{payload_hash}_{sanitize_capture_filename(prefix)}_{sanitize_capture_filename(title)}.json"
     )
     target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target_path
@@ -8116,6 +8123,59 @@ def build_crawler_headers(url: str) -> dict[str, str]:
     return headers
 
 
+def get_crawler_session() -> requests.Session:
+    session = getattr(_REQUESTS_THREAD_LOCAL, "session", None)
+    if session is not None:
+        return session
+    session = requests.Session()
+    retry = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        status=2,
+        backoff_factor=0.35,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD"}),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    _REQUESTS_THREAD_LOCAL.session = session
+    return session
+
+
+def crawler_get(url: str, *, headers: dict[str, str], timeout: int | float | tuple[float, float]) -> requests.Response:
+    return get_crawler_session().get(url, headers=headers, timeout=timeout)
+
+
+def high_quality_crawled_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    quality_records: list[dict[str, Any]] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        text = normalize_multiline_text(str(record.get("text") or ""))
+        field_hits = sum(
+            1 for key in ["title", "company", "salary", "location"]
+            if normalize_text(str(record.get(key) or ""))
+        )
+        if field_hits >= 2 and len(normalize_text(text)) >= 20 and job_card_score(text) >= 5:
+            quality_records.append(record)
+    return quality_records
+
+
+def prepend_structured_text_if_useful(page_text: str, structured_text: str, records: list[dict[str, Any]], source_url: str) -> str:
+    clean_page_text = normalize_multiline_text(page_text)
+    clean_structured_text = normalize_multiline_text(structured_text)
+    if not clean_structured_text or not high_quality_crawled_records(records):
+        return clean_page_text
+    if normalize_text(clean_page_text).startswith(normalize_text(clean_structured_text)[:120]):
+        return clean_page_text
+    if clean_page_text:
+        return normalize_multiline_text(f"{clean_structured_text}\n\n页面原文：\n{clean_page_text[:8000]}")
+    return normalize_multiline_text(f"来源：{source_url}\n{clean_structured_text}")
+
+
 def crawl_records_to_text(records: list[dict[str, Any]], source_url: str = "") -> str:
     chunks: list[str] = []
     for index, record in enumerate(records, start=1):
@@ -8141,16 +8201,17 @@ def crawl_records_to_text(records: list[dict[str, Any]], source_url: str = "") -
 
 
 def fetch_jd_url_with_internal_fallback(url: str, timeout_ms: int = 18000) -> dict[str, Any]:
+    """Enhanced static requests-based parsing; this is not a dynamic browser fetch."""
     normalized = normalize_url(url)
     result = {"url": normalized, "ok": False, "text": "", "error": "", "records": []}
     if not normalized:
         result["error"] = "空链接"
         return result
     try:
-        response = requests.get(
+        response = crawler_get(
             normalized,
             headers=build_crawler_headers(normalized),
-            timeout=max(8, int(timeout_ms / 1000)),
+            timeout=(4, max(8, int(timeout_ms / 1000))),
         )
         response.raise_for_status()
         response.encoding = response.apparent_encoding or response.encoding
@@ -8158,9 +8219,10 @@ def fetch_jd_url_with_internal_fallback(url: str, timeout_ms: int = 18000) -> di
         result["records"] = extract_job_card_records_from_html(html, normalized)
         structured_text = crawl_records_to_text(result["records"], normalized)
         text = html_to_text(html)
+        text = prepend_structured_text_if_useful(text, structured_text, result["records"], normalized)
         if len(normalize_text(text)) < 80 and structured_text:
             result["ok"] = True
-            result["text"] = f"来源：{normalized}\n{structured_text}"
+            result["text"] = f"来源：{normalized}\n{text}"
             return result
         if len(normalize_text(text)) < 80:
             result["error"] = "内置增强解析仍然过短，页面可能需要登录、验证码或站点主动拦截"
@@ -8174,7 +8236,7 @@ def fetch_jd_url_with_internal_fallback(url: str, timeout_ms: int = 18000) -> di
         return result
 
 
-def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False) -> dict[str, Any]:
+def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False, detail_limit: int = 5) -> dict[str, Any]:
     normalized = normalize_url(url)
     result = {"url": normalized, "ok": False, "text": "", "error": "", "records": []}
     if not normalized:
@@ -8182,10 +8244,10 @@ def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False) -> dict
         return result
 
     try:
-        response = requests.get(
+        response = crawler_get(
             normalized,
             headers=build_crawler_headers(normalized),
-            timeout=timeout,
+            timeout=(4, max(8, timeout)),
         )
         response.raise_for_status()
         response.encoding = response.apparent_encoding or response.encoding
@@ -8217,20 +8279,16 @@ def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False) -> dict
                         "text": structured_text,
                     }
                 )
+                effective_detail_limit = max(0, min(int(detail_limit or 0), len(structured_records), 5))
                 enriched_records = enrich_records_with_detail_pages(
                     structured_records,
-                    limit=min(8, max(0, len(structured_records))),
+                    limit=effective_detail_limit,
                 )
                 if enriched_records:
                     result["records"] = enriched_records
                     structured_text = crawl_records_to_text(enriched_records, normalized)
             text = html_to_text(response.text)
-            if len(normalize_text(text)) < 80 and structured_text:
-                text = structured_text
-            elif structured_text and len(result["records"]) >= 2:
-                text = normalize_multiline_text(
-                    f"{structured_text}\n\n页面原文：\n{text[:8000]}"
-                )
+            text = prepend_structured_text_if_useful(text, structured_text, result["records"], normalized)
 
         if len(text) < 80:
             if use_dynamic:
@@ -8255,21 +8313,30 @@ def fetch_jd_url(url: str, timeout: int = 12, use_dynamic: bool = False) -> dict
         return result
 
 
-def crawl_jd_urls(urls: list[str], max_workers: int = 5, use_dynamic: bool = False) -> list[dict[str, Any]]:
-    clean_urls = [url for url in urls if url]
+def crawl_jd_urls(urls: list[str], max_workers: int = 5, use_dynamic: bool = False, detail_limit: int = 5) -> list[dict[str, Any]]:
+    clean_urls: list[str] = []
+    seen_urls: set[str] = set()
+    for url in urls or []:
+        normalized = normalize_url(str(url or ""))
+        if not normalized or normalized in seen_urls:
+            continue
+        clean_urls.append(normalized)
+        seen_urls.add(normalized)
     if not clean_urls:
         return []
 
     workers = max(1, min(max_workers, len(clean_urls), 3 if use_dynamic else 8))
-    results = []
+    result_by_url: dict[str, dict[str, Any]] = {}
+    per_url_detail_limit = max(0, min(int(detail_limit or 0), 5))
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(fetch_jd_url, url, 12, use_dynamic): url for url in clean_urls}
+        futures = {executor.submit(fetch_jd_url, url, 12, use_dynamic, per_url_detail_limit): url for url in clean_urls}
         for future in as_completed(futures):
+            url = futures[future]
             try:
-                results.append(future.result())
+                result_by_url[url] = future.result()
             except Exception as exc:
-                results.append({"url": futures[future], "ok": False, "text": "", "error": str(exc)})
-    return sorted(results, key=lambda item: clean_urls.index(item["url"]) if item["url"] in clean_urls else 999)
+                result_by_url[url] = {"url": url, "ok": False, "text": "", "error": str(exc)}
+    return [result_by_url.get(url, {"url": url, "ok": False, "text": "", "error": "未返回抓取结果"}) for url in clean_urls]
 
 
 def detail_url_is_usable(url: str, source_url: str = "") -> bool:
@@ -8394,7 +8461,15 @@ def read_exported_jd_file(path: Path) -> dict[str, str]:
         title = str(data.get("title") or title)
         url = str(data.get("url") or "")
         jobs = data.get("jobs") or []
-        if isinstance(jobs, list) and jobs:
+        normalized_records = normalize_capture_payload_records(data, source=path.name, base_title=title, base_url=url)
+        if normalized_records:
+            is_batch = True
+            chunks = [record.get("text", "") for record in normalized_records if record.get("text")]
+            text = "\n\n".join(chunks)
+            title = title or str(data.get("title") or path.stem)
+            url = url or str(data.get("sourceUrl") or "")
+            jobs = normalized_records
+        elif isinstance(jobs, list) and jobs:
             is_batch = True
             chunks = []
             for index, job in enumerate(jobs, start=1):
@@ -8468,8 +8543,9 @@ def export_date_label(path: Path) -> str:
 
 def scan_browser_export_folder(limit: int = 80) -> tuple[str, pd.DataFrame]:
     export_dirs = existing_jd_export_dirs()
+    columns = ["文件", "日期", "标题", "链接", "岗位数", "字数", "修改时间", "状态", "错误"]
     if not export_dirs:
-        return "", pd.DataFrame(columns=["文件", "日期", "标题", "链接", "岗位数", "字数", "修改时间"])
+        return "", pd.DataFrame(columns=columns)
 
     supported = {".json", ".txt", ".md", ".html", ".htm", ".pdf", ".docx"}
     files = [
@@ -8486,6 +8562,19 @@ def scan_browser_export_folder(limit: int = 80) -> tuple[str, pd.DataFrame]:
         try:
             item = read_exported_jd_file(path)
             if len(item["text"]) < 30:
+                rows.append(
+                    {
+                        "文件": path.name,
+                        "日期": export_date_label(path),
+                        "标题": "",
+                        "链接": "",
+                        "岗位数": 0,
+                        "字数": len(item.get("text", "")),
+                        "修改时间": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "状态": "失败",
+                        "错误": "可解析文本少于 30 字",
+                    }
+                )
                 continue
             rows.append(
                 {
@@ -8496,12 +8585,26 @@ def scan_browser_export_folder(limit: int = 80) -> tuple[str, pd.DataFrame]:
                     "岗位数": item.get("job_count", 1),
                     "字数": len(item["text"]),
                     "修改时间": item["modified"],
+                    "状态": "成功",
+                    "错误": "",
                 }
             )
             source = item["url"] or item["path"]
             chunks.append(f"来源：{source}\n标题：{item['title']}\n{item['text']}")
-        except Exception:
-            continue
+        except Exception as exc:
+            rows.append(
+                {
+                    "文件": path.name,
+                    "日期": export_date_label(path),
+                    "标题": "",
+                    "链接": "",
+                    "岗位数": 0,
+                    "字数": 0,
+                    "修改时间": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "状态": "失败",
+                    "错误": f"{type(exc).__name__}: {exc}",
+                }
+            )
     return "\n\n".join(chunks), pd.DataFrame(rows)
 
 
@@ -8958,54 +9061,91 @@ def records_from_51job_listing_text(text: str, source: str = "公开链接", url
     lines = split_listing_lines(text)
     if len(lines) < 6:
         return []
-    title = clean_generic_title(lines[0])
-    if not generic_title_line(title):
-        return []
-    salary = strip_listing_marks(lines[1]) if len(lines) > 1 and generic_salary_line(lines[1]) else ""
-    location = strip_listing_marks(lines[2]) if len(lines) > 2 and generic_location_line(lines[2]) else ""
-    company = ""
-    profile = ""
-    stop_words = {"去聊聊", "投递", "申请职位", "立即投递"}
-    for pos in range(len(lines) - 1, max(2, len(lines) - 28), -1):
-        line = strip_listing_marks(lines[pos])
-        if line in stop_words:
+    records: list[dict[str, str]] = []
+    stop_words = {"去聊聊", "投递", "申请职位", "立即投递", "查看详情", "收藏"}
+    index = 0
+    while index < len(lines) - 3:
+        title = clean_generic_title(lines[index])
+        if not generic_title_line(title):
+            index += 1
             continue
-        if job51_company_profile_line(line) and pos > 0:
-            candidate = strip_listing_marks(lines[pos - 1])
-            if generic_company_score(candidate) >= 20:
-                company = candidate
-                profile = line
+
+        window_end = min(len(lines), index + 30)
+        next_title_positions = [
+            pos for pos in range(index + 1, window_end)
+            if generic_title_line(clean_generic_title(lines[pos]))
+            and any(generic_salary_line(lines[next_pos]) for next_pos in range(pos + 1, min(len(lines), pos + 5)))
+        ]
+        if next_title_positions:
+            window_end = min(window_end, next_title_positions[0])
+
+        salary = ""
+        location = ""
+        education = ""
+        experience = ""
+        company = ""
+        profile = ""
+        company_pos = -1
+
+        for pos in range(index + 1, window_end):
+            line = strip_listing_marks(lines[pos])
+            if not line or line in stop_words:
+                continue
+            if not salary and generic_salary_line(line):
+                salary = line
+                continue
+            if not location and generic_location_line(line):
+                location = line
+                continue
+            if not education and boss_education_line(line):
+                education = line
+                continue
+            if not experience and generic_meta_line(line) and not boss_education_line(line):
+                experience = line if not experience else f"{experience} / {line}"
+                continue
+            if job51_company_profile_line(line) and pos > index + 1:
+                candidate = strip_listing_marks(lines[pos - 1])
+                if generic_company_score(candidate) >= 20:
+                    company = candidate
+                    profile = line
+                    company_pos = pos - 1
+                    break
+            if not company and generic_company_score(line) >= 35:
+                company = line
+                company_pos = pos
+                if pos + 1 < window_end and job51_company_profile_line(lines[pos + 1]):
+                    profile = strip_listing_marks(lines[pos + 1])
                 break
-    if not company:
-        for pos in range(3, min(len(lines), 28)):
-            candidate = strip_listing_marks(lines[pos])
-            if generic_company_score(candidate) >= 45:
-                company = candidate
-                profile = strip_listing_marks(lines[pos + 1]) if pos + 1 < len(lines) else ""
-                break
-    if not company:
-        return []
-    block_lines = [
-        f"岗位：{title}",
-        f"公司：{company}",
-        f"薪资：{salary}" if salary else "",
-        f"地点：{location}" if location else "",
-        f"公司信息：{profile}" if profile else "",
-    ]
-    return [
-        {
-            "source": source,
-            "title": title,
-            "url": url,
-            "text": "\n".join(line for line in block_lines if line),
-            "company": company,
-            "salary": salary,
-            "location": location,
-            "education": "",
-            "experience": "",
-            "page_index": page_index,
-        }
-    ]
+
+        if not company:
+            index += 1
+            continue
+
+        block_lines = [
+            f"岗位：{title}",
+            f"公司：{company}",
+            f"薪资：{salary}" if salary else "",
+            f"地点：{location}" if location else "",
+            f"经验：{experience}" if experience else "",
+            f"学历：{education}" if education else "",
+            f"公司信息：{profile}" if profile else "",
+        ]
+        records.append(
+            {
+                "source": source,
+                "title": title,
+                "url": url,
+                "text": "\n".join(line for line in block_lines if line),
+                "company": company,
+                "salary": salary,
+                "location": location,
+                "education": education,
+                "experience": experience,
+                "page_index": page_index,
+            }
+        )
+        index = max(company_pos + 1, index + 1)
+    return dedupe_jd_records(records)
 
 
 def shixiseng_meta_line(value: str) -> bool:
@@ -9528,11 +9668,12 @@ def record_from_captured_job(job: dict[str, Any], source: str, base_title: str, 
         return None
     if not title or not company:
         return None
-    if not salary:
-        return None
 
     record_url = captured_job_detail_url(job, base_url)
-    if not record_url:
+    evidence_text = normalize_multiline_text(
+        "\n".join(line for line in [title, company, salary, location, education, experience, text] if line)
+    )
+    if len(normalize_text(evidence_text)) < 30 or job_card_score(evidence_text) < 5:
         return None
 
     block_lines = [
@@ -9561,6 +9702,176 @@ def record_from_captured_job(job: dict[str, Any], source: str, base_title: str, 
     }
 
 
+def exported_record_quality_score(record: dict[str, str]) -> int:
+    text = normalize_multiline_text(str(record.get("text") or ""))
+    text_compact = normalize_text(text)
+    score = 0
+    for key in ["title", "company", "salary", "location"]:
+        if normalize_text(str(record.get(key) or "")):
+            score += 1
+    if len(text_compact) >= 80:
+        score += 1
+    if job_card_score(text) >= 7:
+        score += 1
+    if preferred_jd_record_url(record):
+        score += 1
+    return score
+
+
+def exported_record_highly_overlaps(a: dict[str, str], b: dict[str, str]) -> bool:
+    title_a = normalize_text(str(a.get("title") or ""))
+    title_b = normalize_text(str(b.get("title") or ""))
+    company_a = normalize_text(str(a.get("company") or ""))
+    company_b = normalize_text(str(b.get("company") or ""))
+    if title_a and title_b and company_a and company_b:
+        if duplicate_text_similarity(title_a, title_b) >= 0.88 and duplicate_text_similarity(company_a, company_b) >= 0.82:
+            return True
+    text_a = duplicate_record_text(a)
+    text_b = duplicate_record_text(b)
+    if len(duplicate_normalized_text(text_a)) < 30 or len(duplicate_normalized_text(text_b)) < 30:
+        return False
+    return duplicate_text_similarity(text_a, text_b) >= 0.9
+
+
+def keep_gentle_exported_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    url_records = [record for record in records if preferred_jd_record_url(record)]
+    if not url_records:
+        return records
+    output: list[dict[str, str]] = []
+    for record in records:
+        if preferred_jd_record_url(record):
+            output.append(record)
+            continue
+        quality = exported_record_quality_score(record)
+        overlaps_url_record = any(exported_record_highly_overlaps(record, url_record) for url_record in url_records)
+        if overlaps_url_record and quality < 5:
+            continue
+        output.append(record)
+    return output
+
+
+def capture_first_text(*values: Any) -> str:
+    for value in values:
+        text = normalize_multiline_text(str(value or ""))
+        if text:
+            return text
+    return ""
+
+
+def capture_first_inline_text(*values: Any) -> str:
+    for value in values:
+        text = normalize_text(str(value or ""))
+        if text:
+            return text
+    return ""
+
+
+def capture_payload_job_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    jobs = payload.get("jobs")
+    if isinstance(jobs, list):
+        return [job for job in jobs if isinstance(job, dict)]
+    if any(
+        payload.get(key)
+        for key in [
+            "schemaVersion",
+            "captureMode",
+            "title",
+            "company",
+            "detailText",
+            "detail_text",
+            "text",
+            "rawText",
+            "content",
+            "url",
+            "detailUrl",
+        ]
+    ):
+        return [payload]
+    return []
+
+
+def capture_record_looks_like_job(record: dict[str, str]) -> bool:
+    title = normalize_text(str(record.get("title") or ""))
+    company = normalize_text(str(record.get("company") or ""))
+    text = normalize_multiline_text(str(record.get("text") or ""))
+    compact_text = normalize_text(text)
+    if title and company and len(compact_text) >= 20:
+        return True
+    if title and company and any(record.get(key) for key in ["location", "education", "experience"]):
+        return True
+    if title and company and job_card_score("\n".join([title, company, text])) >= 3:
+        return True
+    if len(compact_text) >= 80 and job_card_score(text) >= 5:
+        return True
+    return False
+
+
+def normalize_capture_payload_records(payload: dict[str, Any], source: str = "", base_title: str = "", base_url: str = "") -> list[dict[str, str]]:
+    if not isinstance(payload, dict):
+        return []
+    payload_title = capture_first_inline_text(payload.get("title"), base_title)
+    payload_url = capture_first_inline_text(payload.get("sourceUrl"), payload.get("source_url"), payload.get("url"), base_url)
+    payload_source = source or payload_title or "capture_payload"
+    records: list[dict[str, str]] = []
+
+    for index, job in enumerate(capture_payload_job_items(payload), start=1):
+        if not isinstance(job, dict):
+            continue
+        detail_text = capture_first_text(job.get("detailText"), job.get("detail_text"))
+        raw_text = capture_first_text(job.get("rawText"), job.get("raw_text"), job.get("content"), job.get("body"))
+        card_text = capture_first_text(job.get("text"), raw_text)
+        evidence_text = capture_first_text(detail_text, card_text, raw_text)
+        title = capture_first_inline_text(job.get("title"), job.get("detailTitle"), job.get("jobTitle"))
+        company = capture_first_inline_text(job.get("company"))
+        salary = capture_first_inline_text(job.get("salary"))
+        location = capture_first_inline_text(job.get("location"))
+        education = capture_first_inline_text(job.get("education"))
+        experience = capture_first_inline_text(job.get("experience"))
+        if not valid_captured_job_title(title):
+            title = infer_captured_job_title(evidence_text, salary, company)
+        if invalid_captured_company_line(company) or generic_location_line(company) or boss_location_line(company) or bad_generic_card_line(company):
+            company = ""
+        record_url = captured_job_detail_url(job, payload_url)
+        source_url = capture_first_inline_text(job.get("sourceUrl"), job.get("source_url"), payload_url)
+
+        block_lines = [
+            f"岗位：{title}" if title else "",
+            f"公司：{company}" if company else "",
+            f"薪资：{salary}" if salary else "",
+            f"地点：{location}" if location else "",
+            f"经验：{experience}" if experience else "",
+            f"学历：{education}" if education else "",
+            f"链接：{record_url}" if record_url else "",
+            f"来源：{source_url}" if source_url and source_url != record_url else "",
+        ]
+        details = detail_text or card_text or raw_text
+        record_text = normalize_multiline_text("\n".join(line for line in block_lines if line))
+        if details:
+            label = "详情页原文" if detail_text else "卡片原文"
+            record_text = normalize_multiline_text(f"{record_text}\n\n{label}：\n{details}" if record_text else details)
+        record = {
+            "source": payload_source,
+            "title": title or f"{payload_title or '岗位'}-{index}",
+            "url": record_url,
+            "text": record_text,
+            "company": company,
+            "salary": salary,
+            "location": location,
+            "education": education,
+            "experience": experience,
+            "page_index": str(job.get("pageIndex") or job.get("page_index") or ""),
+            "schema_version": str(job.get("schemaVersion") or payload.get("schemaVersion") or ""),
+            "capture_mode": str(job.get("captureMode") or payload.get("captureMode") or payload.get("type") or ""),
+            "source_site": str(job.get("sourceSite") or payload.get("sourceSite") or ""),
+            "source_url": source_url,
+            "detail_fetched": "1" if job.get("detailFetched") is True else "0" if "detailFetched" in job else "",
+        }
+        if capture_record_looks_like_job(record):
+            records.append(record)
+
+    return dedupe_jd_records(records)
+
+
 def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False, detail_limit: int = 60) -> list[dict[str, str]]:
     suffix = path.suffix.lower()
     records = []
@@ -9569,6 +9880,9 @@ def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False,
         base_title = str(data.get("title") or path.stem)
         base_url = str(data.get("url") or "")
         jobs = data.get("jobs") or []
+        normalized_records = normalize_capture_payload_records(data, source=path.name, base_title=base_title, base_url=base_url)
+        if normalized_records:
+            return enrich_records_with_detail_pages(normalized_records, detail_limit) if enrich_detail_pages else normalized_records
         if isinstance(jobs, list) and jobs:
             parsed_records: list[dict[str, str]] = []
             fallback_records: list[dict[str, str]] = []
@@ -9653,12 +9967,9 @@ def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False,
             text = normalize_text(str(data.get("text") or data.get("content") or data.get("body") or ""))
             if len(text) >= 20:
                 records.append({"source": path.name, "title": base_title, "url": base_url, "text": text})
-        records = dedupe_jd_records(records)
         if isinstance(jobs, list) and jobs:
-            records_with_detail_urls = [record for record in records if preferred_jd_record_url(record)]
-            if records_with_detail_urls:
-                records = records_with_detail_urls
-            records = dedupe_jd_records(records)
+            records = keep_gentle_exported_records(records)
+        records = dedupe_jd_records(records)
         return enrich_records_with_detail_pages(records, detail_limit) if enrich_detail_pages else records
 
     item = read_exported_jd_file(path)
@@ -9689,8 +10000,9 @@ def scan_exported_jd_records(
     detail_limit: int = 60,
 ) -> tuple[list[dict[str, str]], pd.DataFrame]:
     export_dirs = existing_jd_export_dirs()
+    columns = ["信息集ID", "文件", "日期", "岗位数", "修改时间", "状态", "错误"]
     if not export_dirs:
-        return [], pd.DataFrame(columns=["文件", "日期", "岗位数", "修改时间"])
+        return [], pd.DataFrame(columns=columns)
     supported = {".json", ".txt", ".md", ".html", ".htm", ".pdf", ".docx"}
     files = [
         path
@@ -9710,6 +10022,7 @@ def scan_exported_jd_records(
     rows = []
     remaining_detail_limit = max(0, detail_limit)
     for path in files:
+        file_id = str(path)
         try:
             file_records = records_from_exported_jd_file(
                 path,
@@ -9718,11 +10031,32 @@ def scan_exported_jd_records(
             )
             if enrich_detail_pages:
                 remaining_detail_limit = max(0, remaining_detail_limit - sum(1 for record in file_records if record.get("detail_enriched")))
-        except Exception:
+        except Exception as exc:
+            rows.append(
+                {
+                    "信息集ID": file_id,
+                    "文件": path.name,
+                    "日期": export_date_label(path),
+                    "岗位数": 0,
+                    "修改时间": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "状态": "失败",
+                    "错误": f"{type(exc).__name__}: {exc}",
+                }
+            )
             continue
         if not file_records:
+            rows.append(
+                {
+                    "信息集ID": file_id,
+                    "文件": path.name,
+                    "日期": export_date_label(path),
+                    "岗位数": 0,
+                    "修改时间": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "状态": "失败",
+                    "错误": "未解析到有效岗位记录",
+                }
+            )
             continue
-        file_id = str(path)
         file_records = [
             {
                 **record,
@@ -9739,6 +10073,8 @@ def scan_exported_jd_records(
                 "日期": export_date_label(path),
                 "岗位数": len(file_records),
                 "修改时间": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "状态": "成功",
+                "错误": "",
             }
         )
     records = dedupe_jd_records(records)
@@ -10026,11 +10362,13 @@ def merge_deduped_jd_record(existing: dict[str, str], candidate: dict[str, str])
         if not current and incoming:
             merged[key] = incoming
 
-    current_text = normalize_text(str(merged.get("text") or ""))
-    incoming_text = normalize_text(str(candidate.get("text") or ""))
-    incoming_has_detail = bool(re.search(r"(?:岗位职责|职位描述|任职要求|工作内容|岗位要求)", incoming_text))
-    current_has_detail = bool(re.search(r"(?:岗位职责|职位描述|任职要求|工作内容|岗位要求)", current_text))
-    if incoming_text and (not current_text or (incoming_has_detail and not current_has_detail) or len(incoming_text) > len(current_text) * 1.8):
+    current_text = normalize_multiline_text(str(merged.get("text") or ""))
+    incoming_text = normalize_multiline_text(str(candidate.get("text") or ""))
+    current_text_compact = normalize_text(current_text)
+    incoming_text_compact = normalize_text(incoming_text)
+    incoming_has_detail = bool(re.search(r"(?:岗位职责|职位描述|任职要求|工作内容|岗位要求)", incoming_text_compact))
+    current_has_detail = bool(re.search(r"(?:岗位职责|职位描述|任职要求|工作内容|岗位要求)", current_text_compact))
+    if incoming_text and (not current_text or (incoming_has_detail and not current_has_detail) or len(incoming_text_compact) > len(current_text_compact) * 1.8):
         merged["text"] = incoming_text
     elif current_text:
         merged["text"] = current_text
@@ -10045,12 +10383,13 @@ def dedupe_jd_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
     output: list[dict[str, str]] = []
     for record in records:
         text, _duplicate_count = remove_duplicate_information(record.get("text", ""))
-        text = normalize_text(text)
-        if len(text) < 20:
+        text = normalize_multiline_text(text)
+        compact_text = normalize_text(text)
+        if len(compact_text) < 20:
             continue
-        if not valid_jd_record(record, text):
+        if not valid_jd_record(record, compact_text):
             continue
-        keys = jd_record_dedupe_keys(record, text)
+        keys = jd_record_dedupe_keys(record, compact_text)
         duplicate_index = next((key_to_index[key] for key in keys if key in key_to_index), None)
         clean_record = dict(record)
         clean_record["text"] = text
@@ -11802,6 +12141,7 @@ def render_browser_capture_helper(upload_url: str, upload_token: str, *, key_pre
         upload_url,
         upload_token,
         capture_core_path=CAPTURE_CORE_PATH,
+        app_dir=APP_DIR,
         key_prefix=key_prefix,
         container=container,
     )
@@ -11840,9 +12180,20 @@ def repair_default_profiles(conn: Any) -> None:
 
 
 def clear_runtime_data_cache() -> None:
+    def clear_known_runtime_caches() -> None:
+        for cached_func_name in (
+            "_load_user_profiles_cached",
+            "_load_user_resumes_cached",
+            "_load_app_setting_cached",
+            "_load_applications_cached",
+        ):
+            cached_func = globals().get(cached_func_name)
+            if cached_func is not None and hasattr(cached_func, "clear"):
+                cached_func.clear()
+
     session_data_utils.clear_runtime_data_cache(
         session_state=st.session_state,
-        cache_clear=st.cache_data.clear,
+        cache_clear=clear_known_runtime_caches,
     )
 
 
@@ -16041,22 +16392,11 @@ def render_decision_empty_state(
     detail: str | list[str] = "Offer预测需要先有一个明确的目标JD。请先在岗位工作台选择或录入目标岗位，再回到这里生成判断。",
     badge: str = "等待目标JD",
 ) -> None:
+    del badge
     if isinstance(detail, list):
         detail = title
         title = "还不能生成决策"
-    st.markdown(
-        f"""
-        <section class="cp-empty-state cp-empty-state-decision">
-          <div class="cp-empty-icon" aria-hidden="true"></div>
-          <div>
-            <span class="cp-empty-badge">{html.escape(badge)}</span>
-            <strong>{html.escape(title)}</strong>
-            <p>{html.escape(detail)}</p>
-          </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
+    ui_components.empty_state(title, str(detail))
 
 
 def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
@@ -16851,7 +17191,7 @@ def render_batch_jd_tab() -> None:
     if df is None or df.empty:
         ui_components.empty_state(
             "还没有批量结果",
-            "导入多条JD后，会按推荐分排序，并标出方向、城市和薪资风险。",
+            "粘贴或导入多条JD后，会按推荐分排序，并标出方向、城市和薪资风险。",
         )
         return
 
@@ -17142,12 +17482,12 @@ def render_custom_resume_tab() -> None:
     resume_match = st.session_state.get("resume_match")
     if not jd_analysis:
         ui_components.empty_state(
-            "还没有目标岗位",
-            "选择一个目标JD后，会判断是否适合定制，并生成分段修改建议。",
+            "先选择一个目标岗位",
+            "在岗位工作台导入并分析一条JD后，这里会判断是否适合定制，并生成分段修改建议。",
         )
         return
     if not active_resume["content"].strip():
-        ui_components.warning_card("还没有当前简历", "请先在左侧上传或粘贴真实简历。")
+        ui_components.warning_card("先补充当前简历", "保存一份真实简历后，再生成贴合目标岗位的定制表达。")
         return
 
     with st.expander(f"当前简历：{active_resume['name']}", expanded=False):
@@ -17162,7 +17502,7 @@ def render_custom_resume_tab() -> None:
     if st.button("生成定制版简历内容", type="primary"):
         full_resume = active_resume["content"].strip()
         if not full_resume:
-            ui_components.warning_card("还没有当前简历", "请先在左侧维护当前简历。")
+            ui_components.warning_card("先补充当前简历", "保存一份真实简历后，再生成贴合目标岗位的定制表达。")
         else:
             st.session_state.custom_resume = build_custom_resume(full_resume, jd_analysis, profile_text_for_analysis())
             st.session_state.custom_resume_jd_fingerprint = current_jd_fingerprint()
@@ -17671,7 +18011,7 @@ def render_gap_tab() -> None:
         st.warning("请先在“岗位工作台 > 单条JD分析”完成目标 JD 分析。")
         return
     if not st.session_state.get("resume_match"):
-        st.info("请先在“简历解析与匹配”中使用当前简历完成匹配分析。")
+        st.info("请先在“简历匹配 > 简历解析与匹配”中使用当前简历完成匹配分析。")
         return
     if st.button("生成不足清单与努力方向", type="primary"):
         st.session_state.gap_analysis = build_gap_analysis(
@@ -18458,23 +18798,23 @@ def render_auth_screen() -> None:
 # ---------------------------------------------------------------------------
 
 APP_NAVIGATION = {
-    "main_tabs": ["岗位工作台", "简历工作台", "求职决策", "面试与报告"],
+    "main_tabs": ["岗位工作台", "简历匹配", "求职决策", "面试与报告"],
     "jd_modes": ["单条JD分析", "批量JD筛选", "行业招聘监测"],
-    "resume_modes": ["简历解析与匹配", "定制简历", "不足与努力方向"],
+    "resume_modes": ["简历解析与匹配", "目标JD改简历", "不足补强"],
     "decision_modes": ["Offer预测", "实习评估", "投递管理"],
     "report_modes": ["面经分析", "可视化与报告"],
 }
 
 MAIN_WORKSPACE_LABELS = {
     "jd": "岗位工作台",
-    "resume": "简历工作台",
+    "resume": "简历匹配",
     "decision": "求职决策",
     "report": "面试与报告",
 }
 
 WORKSPACE_DESCRIPTIONS = {
     "jd": "判断岗位价值，筛选更值得投递的机会。",
-    "resume": "围绕目标岗位，看简历匹配、定制版本和证据缺口。",
+    "resume": "基于当前简历和目标JD做匹配、改写和短板补强。",
     "decision": "把投递、实习、Offer 概率和下一步动作放到同一处判断。",
     "report": "整理面试准备、复盘材料和可导出的求职报告。",
 }
@@ -18517,11 +18857,273 @@ def render_app_shell_header(workspace: str = "jd") -> None:
     )
 
 
+def _sidebar_choice_signature(items: list[str]) -> str:
+    return "||".join(str(item) for item in split_preference_items(items))
+
+
+def _sidebar_chip_selector(
+    label: str,
+    options: list[str],
+    selected: list[str] | str,
+    *,
+    key: str,
+    placeholder: str,
+    help_text: str | None = None,
+    allow_custom: bool = False,
+    empty_text: str = "暂未选择",
+) -> list[str]:
+    default_items = list(dict.fromkeys(split_preference_items(selected)))
+    state_key = f"{key}_multiselect"
+    signature_key = f"{key}_signature"
+    signature = _sidebar_choice_signature(default_items)
+
+    if st.session_state.get(signature_key) != signature:
+        st.session_state[state_key] = default_items
+        st.session_state[signature_key] = signature
+
+    values = list(dict.fromkeys(split_preference_items(st.session_state.get(state_key, default_items))))
+
+    st.markdown(f'<div class="cp-field-label">{safe_html(label)}</div>', unsafe_allow_html=True)
+    if not values:
+        st.caption(empty_text)
+
+    selected_values = st.multiselect(
+        label,
+        options,
+        default=values,
+        key=state_key,
+        placeholder=placeholder,
+        label_visibility="collapsed",
+        help=help_text,
+        accept_new_options=allow_custom,
+        filter_mode="fuzzy",
+    )
+    return list(dict.fromkeys(split_preference_items(selected_values)))
+
+
+def _reset_sidebar_selector_state() -> None:
+    prefixes = (
+        "sidebar_target_industries_",
+        "sidebar_target_cities_",
+        "sidebar_direction_",
+    )
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith(prefixes):
+            st.session_state.pop(state_key, None)
+
+
+def _sidebar_has_basic_preferences(prefs: dict[str, Any]) -> bool:
+    checker = globals().get("has_meaningful_preferences")
+    if callable(checker):
+        return bool(checker(prefs))
+    return bool(
+        prefs.get("preferred_industries")
+        or prefs.get("target_roles")
+        or prefs.get("target_cities")
+        or prefs.get("job_keywords")
+        or prefs.get("avoid_keywords")
+        or prefs.get("notes")
+    )
+
+
+def _sync_sidebar_widget_pair(marker_key: str, current_id: Any, values: dict[str, str]) -> None:
+    marker = str(current_id or "new")
+    if st.session_state.get(marker_key) == marker:
+        return
+    for key, value in values.items():
+        st.session_state[key] = value or ""
+    st.session_state[marker_key] = marker
+
+
+def render_sidebar_target_profile_editor() -> None:
+    profiles = load_user_profiles()
+    active_profile = get_active_profile()
+
+    if profiles.empty:
+        st.caption("还没有目标档案，填写后保存即可创建。")
+    else:
+        profile_ids = profiles["id"].astype(int).tolist()
+        current_id = int(active_profile["id"]) if active_profile.get("id") in profile_ids else profile_ids[0]
+        selected_profile_id = st.selectbox(
+            "当前目标档案",
+            profile_ids,
+            index=profile_ids.index(current_id),
+            key="sidebar_target_profile_select",
+            format_func=lambda profile_id: str(
+                profiles.loc[profiles["id"].astype(int) == int(profile_id), "name"].iloc[0]
+            ),
+        )
+        if int(selected_profile_id) != st.session_state.get("active_profile_id"):
+            st.session_state.active_profile_id = int(selected_profile_id)
+            st.rerun()
+        active_profile = get_active_profile()
+
+    profile_id = active_profile.get("id")
+    name_key = "sidebar_target_profile_name"
+    content_key = "sidebar_target_profile_content"
+    _sync_sidebar_widget_pair(
+        "sidebar_target_profile_marker",
+        profile_id,
+        {
+            name_key: active_profile.get("name", "") or "目标档案",
+            content_key: active_profile.get("content", "") or "",
+        },
+    )
+
+    profile_name = st.text_input("档案名称", key=name_key)
+    profile_content = st.text_area(
+        "目标说明",
+        key=content_key,
+        height=180,
+        placeholder="例如：目标岗位、阶段性求职策略、机会判断标准和需要避开的方向。",
+    )
+    cols = st.columns(2)
+    if cols[0].button("保存目标档案", type="primary", width="stretch", key="sidebar_save_target_profile"):
+        try:
+            if profile_id:
+                save_user_profile(int(profile_id), profile_name.strip() or "目标档案", profile_content)
+            else:
+                new_id = create_user_profile(profile_name.strip() or "目标档案", profile_content)
+                st.session_state.active_profile_id = int(new_id)
+            st.success("目标档案已保存。")
+            st.rerun()
+        except db_integrity_errors():
+            st.error("档案名称已存在，请换一个名称。")
+
+    can_delete = bool(profile_id) and not profiles.empty
+    if cols[1].button("删除目标档案", width="stretch", key="sidebar_delete_target_profile", disabled=not can_delete):
+        if delete_user_profile(int(profile_id)):
+            st.success("目标档案已删除。")
+            st.rerun()
+        else:
+            st.warning("没有可删除的目标档案。")
+
+
+def render_sidebar_resume_manager() -> None:
+    resumes = load_user_resumes()
+    active_resume = get_active_resume()
+
+    if resumes.empty:
+        st.caption("还没有简历，上传或粘贴后保存即可创建。")
+    else:
+        resume_ids = resumes["id"].astype(int).tolist()
+        current_id = int(active_resume["id"]) if active_resume.get("id") in resume_ids else resume_ids[0]
+        selected_resume_id = st.selectbox(
+            "当前简历",
+            resume_ids,
+            index=resume_ids.index(current_id),
+            key="sidebar_resume_manager_select",
+            format_func=lambda resume_id: str(
+                resumes.loc[resumes["id"].astype(int) == int(resume_id), "name"].iloc[0]
+            ),
+        )
+        if int(selected_resume_id) != st.session_state.get("active_resume_id"):
+            st.session_state.active_resume_id = int(selected_resume_id)
+            clear_resume_dependent_results()
+            st.rerun()
+        active_resume = get_active_resume()
+
+    resume_id = active_resume.get("id")
+    name_key = "sidebar_resume_manager_name"
+    content_key = "sidebar_resume_manager_content"
+    _sync_sidebar_widget_pair(
+        "sidebar_resume_manager_marker",
+        resume_id,
+        {
+            name_key: active_resume.get("name", "") or "当前简历",
+            content_key: active_resume.get("content", "") or "",
+        },
+    )
+
+    resume_name = st.text_input("简历名称", key=name_key)
+    uploaded_resume = st.file_uploader(
+        "上传 PDF / Word / TXT / MD 更新当前简历",
+        type=["pdf", "docx", "doc", "txt", "md"],
+        key=f"sidebar_resume_manager_upload_{resume_id or 'new'}",
+    )
+    if uploaded_resume is not None:
+        parsed_resume = parsed_resume_from_upload(uploaded_resume)
+        parsed_resume_text = resume_text_from_parsed(parsed_resume).strip()
+        if parsed_resume_text:
+            st.session_state[content_key] = parsed_resume_text
+            st.success("已读取上传文件，并填入当前简历内容。")
+        else:
+            st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
+
+    resume_content = st.text_area("简历内容", key=content_key, height=190)
+    action_cols = st.columns(3)
+    if action_cols[0].button("保存", type="primary", width="stretch", key="sidebar_save_resume"):
+        try:
+            if resume_id:
+                save_user_resume(int(resume_id), resume_name.strip() or "当前简历", resume_content)
+            else:
+                new_id = create_user_resume(unique_resume_name(resume_name.strip() or "当前简历"), resume_content, is_default=1)
+                st.session_state.active_resume_id = int(new_id)
+            clear_resume_dependent_results()
+            st.success("简历已保存。")
+            st.rerun()
+        except db_integrity_errors():
+            st.error("简历名称已存在，请换一个名称。")
+
+    if action_cols[1].button("复制", width="stretch", key="sidebar_copy_resume", disabled=not resume_content.strip()):
+        try:
+            new_id = create_user_resume(unique_resume_name(f"{resume_name.strip() or '当前简历'} - 副本"), resume_content, is_default=1)
+            st.session_state.active_resume_id = int(new_id)
+            clear_resume_dependent_results()
+            st.success("已复制为新简历。")
+            st.rerun()
+        except db_integrity_errors():
+            st.error("副本名称已存在，请换一个名称。")
+
+    can_delete = bool(resume_id) and len(resumes) > 1
+    if action_cols[2].button("删除", width="stretch", key="sidebar_delete_resume", disabled=not can_delete):
+        if delete_user_resume(int(resume_id)):
+            clear_resume_dependent_results()
+            st.success("简历已删除。")
+            st.rerun()
+        else:
+            st.warning("至少保留一个简历。")
+
+    st.markdown("##### 新增简历")
+    new_name = st.text_input("新简历名称", key="sidebar_new_resume_manager_name", placeholder="例如：数据分析岗位简历")
+    new_upload = st.file_uploader(
+        "上传新简历 PDF / Word / TXT / MD",
+        type=["pdf", "docx", "doc", "txt", "md"],
+        key="sidebar_new_resume_manager_upload",
+    )
+    new_content_key = "sidebar_new_resume_manager_content"
+    ensure_widget_text(new_content_key)
+    if new_upload is not None:
+        parsed_new = parsed_resume_from_upload(new_upload)
+        parsed_new_text = resume_text_from_parsed(parsed_new).strip()
+        if parsed_new_text:
+            st.session_state[new_content_key] = parsed_new_text
+            st.success("已读取上传文件，并填入新简历内容。")
+        else:
+            st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
+    new_content = st.text_area("新简历内容", key=new_content_key, height=160)
+    if st.button("新增并设为当前简历", type="primary", width="stretch", key="sidebar_create_resume"):
+        if not new_content.strip():
+            st.warning("请先填写或上传简历内容。")
+        else:
+            try:
+                new_id = create_user_resume(unique_resume_name(new_name.strip() or "新简历"), new_content, is_default=1)
+                st.session_state.active_resume_id = int(new_id)
+                st.session_state[new_content_key] = ""
+                clear_resume_dependent_results()
+                st.success("新简历已创建。")
+                st.rerun()
+            except db_integrity_errors():
+                st.error("简历名称已存在，请换一个名称。")
+
+
 def render_sidebar() -> None:
     user = st.session_state.get(AUTH_SESSION_KEY) or {}
     prefs = load_target_preferences()
     active_profile = get_active_profile()
     active_resume = get_active_resume()
+    profiles = load_user_profiles()
+    resumes = load_user_resumes()
     user_label, profile_label, resume_label = _current_shell_labels()
     selected_industries, selected_directions = normalize_industry_direction_selection(
         prefs.get("preferred_industries", []),
@@ -18536,50 +19138,133 @@ def render_sidebar() -> None:
         key="main_workspace",
     )
 
-    st.sidebar.markdown('<div class="cp-sidebar-block-title">偏好设置</div>', unsafe_allow_html=True)
-    with st.sidebar.expander("目标行业与方向", expanded=False):
-        st.caption(industry_selection_summary(selected_industries, selected_directions) or "未设置")
-        if active_profile.get("content"):
-            st.write(compact_profile_summary(active_profile.get("content", "")))
-    with st.sidebar.expander("意向城市", expanded=False):
-        st.caption(compact_list_text(prefs.get("target_cities", [])) or "未设置")
-        st.caption("严格匹配：" + ("开启" if prefs.get("target_city_strict") else "关闭"))
-    with st.sidebar.expander("目标薪资", expanded=False):
-        salary_enabled = bool(prefs.get("target_salary_enabled"))
-        min_salary = int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"])
-        max_salary = int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"])
-        st.caption("已启用" if salary_enabled else "未启用")
-        st.caption(f"{min_salary} - {max_salary or '不限'} / 月")
-    with st.sidebar.expander("其他偏好", expanded=False):
-        job_keywords = split_preference_items(prefs.get("job_keywords", []))
-        st.caption("岗位关键词：" + (compact_list_text(job_keywords) or "未设置"))
-        st.caption("补充偏好：" + (str(prefs.get("notes") or "未设置")))
+    with st.sidebar.expander(
+        "目标档案",
+        expanded=profiles.empty or not active_profile.get("content", "").strip(),
+    ):
+        render_sidebar_target_profile_editor()
 
-    with st.sidebar.expander("编辑目标/简历", expanded=False):
-        st.caption("完整编辑入口保留在这里，避免主导航和用户状态重复堆叠。")
-        profiles = load_user_profiles()
-        resumes = load_user_resumes()
-        if profiles.empty:
-            st.caption("尚未创建求职目标。")
-        else:
-            profile_names = profiles["name"].tolist()
-            current_profile_name = active_profile.get("name") if active_profile.get("name") in profile_names else profile_names[0]
-            selected_profile_name = st.selectbox("选择目标档案", profile_names, index=profile_names.index(current_profile_name), key="sidebar_profile_select")
-            selected_profile = profiles[profiles["name"] == selected_profile_name].iloc[0]
-            if int(selected_profile["id"]) != st.session_state.get("active_profile_id"):
-                st.session_state.active_profile_id = int(selected_profile["id"])
-        if resumes.empty:
-            st.caption("尚未设置当前简历。")
-        else:
-            resume_names = resumes["name"].tolist()
-            current_resume_name = active_resume.get("name") if active_resume.get("name") in resume_names else resume_names[0]
-            selected_resume_name = st.selectbox("选择简历", resume_names, index=resume_names.index(current_resume_name), key="sidebar_resume_select")
-            selected_resume = resumes[resumes["name"] == selected_resume_name].iloc[0]
-            if int(selected_resume["id"]) != st.session_state.get("active_resume_id"):
-                st.session_state.active_resume_id = int(selected_resume["id"])
-                clear_resume_dependent_results()
+    with st.sidebar.expander(
+        "简历管理",
+        expanded=resumes.empty or not active_resume.get("content", "").strip(),
+    ):
+        render_sidebar_resume_manager()
 
-    st.sidebar.markdown('<div class="cp-sidebar-block-title cp-sidebar-toolbox-title">工具区</div>', unsafe_allow_html=True)
+    with st.sidebar.expander("求职偏好", expanded=not _sidebar_has_basic_preferences(prefs)):
+        selected_industries = _sidebar_chip_selector(
+            "目标行业",
+            RECRUITMENT_INDUSTRY_OPTIONS,
+            selected_industries,
+            key="sidebar_target_industries",
+            placeholder="选择目标行业",
+            empty_text="先选择一个或多个目标行业。",
+        )
+        selected_industries, selected_directions = normalize_industry_direction_selection(
+            selected_industries,
+            selected_directions,
+        )
+        if selected_industries:
+            updated_directions: list[str] = []
+            for industry in selected_industries:
+                active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
+                current_directions = [
+                    direction for direction in selected_directions
+                    if direction in active_options
+                ]
+                chosen_directions = _sidebar_chip_selector(
+                    f"{industry}方向",
+                    active_options,
+                    current_directions,
+                    key=f"sidebar_direction_{sanitize_capture_filename(industry)}",
+                    placeholder=f"选择{industry}方向",
+                    empty_text="可不选，系统会按行业和JD文本判断。",
+                )
+                updated_directions.extend(chosen_directions)
+            selected_directions = list(dict.fromkeys(updated_directions))
+        else:
+            selected_directions = []
+
+        selected_cities = _sidebar_chip_selector(
+            "意向城市",
+            CHINA_CITY_OPTIONS,
+            split_preference_items(prefs.get("target_cities", [])),
+            key="sidebar_target_cities",
+            placeholder="选择意向城市",
+            help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以用下方输入框添加新城市。",
+            allow_custom=True,
+            empty_text="未选择时，系统不会按城市强限制推荐结果。",
+        )
+        target_city_strict = st.checkbox(
+            "城市严格匹配",
+            value=bool(prefs.get("target_city_strict")),
+            help="开启后，非目标城市岗位会被降级或限制推荐分。远程、全国可投等情况会按岗位文本继续判断。",
+        )
+
+        target_salary_enabled = st.checkbox(
+            "启用目标薪资偏好",
+            value=bool(prefs.get("target_salary_enabled")),
+            help="目标薪资只影响批量 JD 推荐排序，不影响简历匹配分和根据 JD 改简历。",
+        )
+        salary_cols = st.columns([1, 1, 0.8])
+        min_monthly_salary = salary_cols[0].number_input(
+            "最低月薪",
+            min_value=0,
+            max_value=200000,
+            step=1000,
+            value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
+            disabled=not target_salary_enabled,
+        )
+        max_monthly_salary = salary_cols[1].number_input(
+            "期望上限",
+            min_value=0,
+            max_value=300000,
+            step=1000,
+            value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
+            disabled=not target_salary_enabled,
+            help="不填或为 0 表示只看最低要求。",
+        )
+        salary_strict = salary_cols[2].checkbox(
+            "严格",
+            value=bool(prefs.get("salary_strict")),
+            disabled=not target_salary_enabled,
+            help="开启后，明显低于目标薪资的岗位推荐分会封顶到 50。",
+        )
+        job_keywords = st.text_input(
+            "岗位关键词",
+            value="、".join(split_preference_items(prefs.get("job_keywords", []))),
+        )
+        with st.expander("高级偏好", expanded=False):
+            avoid_keywords = st.text_area("排除关键词", value=str(prefs.get("avoid_keywords", "")), height=72)
+            notes = st.text_area("补充偏好", value=str(prefs.get("notes", "")), height=72)
+        pref_cols = st.columns(2)
+        if pref_cols[0].button("保存偏好", width="stretch"):
+            save_target_preferences(
+                {
+                    "target_roles": selected_directions,
+                    "target_cities": selected_cities,
+                    "extra_cities": "",
+                    "accept_remote": bool(prefs.get("accept_remote")),
+                    "accept_nationwide": bool(prefs.get("accept_nationwide")),
+                    "target_city_strict": bool(target_city_strict),
+                    "target_salary_enabled": bool(target_salary_enabled),
+                    "salary_strict": bool(salary_strict),
+                    "min_monthly_salary": int(min_monthly_salary),
+                    "max_monthly_salary": int(max_monthly_salary),
+                    "min_daily_salary": int(prefs.get("min_daily_salary") or DEFAULT_TARGET_PREFERENCES["min_daily_salary"]),
+                    "preferred_industries": selected_industries,
+                    "extra_industries": "",
+                    "job_keywords": split_preference_items(job_keywords),
+                    "avoid_keywords": avoid_keywords,
+                    "notes": notes,
+                }
+            )
+            st.success("偏好设置已保存。")
+        if pref_cols[1].button("清空结构化项", width="stretch"):
+            save_target_preferences(DEFAULT_TARGET_PREFERENCES)
+            _reset_sidebar_selector_state()
+            st.success("已清空城市、行业、方向和关键词。")
+            st.rerun()
+
     if user:
         upload_url = capture_upload_public_url()
         upload_token = get_or_create_capture_upload_token(int(user["id"]))
@@ -18588,6 +19273,297 @@ def render_sidebar() -> None:
         if st.sidebar.button("退出登录", key="logout_user_btn", width="stretch"):
             logout_app_user()
             st.rerun()
+
+
+def render_resume_management_page() -> None:
+    active_resume = get_active_resume()
+    resumes = load_user_resumes()
+    st.markdown('<div class="cp-panel-title">简历管理</div>', unsafe_allow_html=True)
+
+    if not resumes.empty:
+        resume_names = resumes["name"].astype(str).tolist()
+        current_name = active_resume.get("name") if active_resume.get("name") in resume_names else resume_names[0]
+        selected_name = st.selectbox(
+            "切换当前简历",
+            resume_names,
+            index=resume_names.index(current_name),
+            key="resume_page_select_current",
+        )
+        selected_resume = resumes[resumes["name"] == selected_name].iloc[0]
+        if int(selected_resume["id"]) != st.session_state.get("active_resume_id"):
+            st.session_state.active_resume_id = int(selected_resume["id"])
+            clear_resume_dependent_results()
+            st.rerun()
+        active_resume = get_active_resume()
+    else:
+        ui_components.warning_card("还没有简历", "先新增或上传一份简历，后续匹配、定制和决策会读取当前简历。")
+
+    left_col, right_col = st.columns([1.08, 0.92], gap="large")
+    with left_col:
+        with st.container(border=True):
+            st.markdown("##### 当前简历")
+            resume_name_key = f"resume_page_name_{active_resume.get('id') or 'new'}"
+            resume_content_key = f"resume_page_content_{active_resume.get('id') or 'new'}"
+            if resume_name_key not in st.session_state:
+                st.session_state[resume_name_key] = active_resume.get("name", "") or "当前简历"
+            if resume_content_key not in st.session_state:
+                st.session_state[resume_content_key] = active_resume.get("content", "") or ""
+
+            resume_name = st.text_input("简历名称", key=resume_name_key)
+            uploaded_resume = st.file_uploader(
+                "上传 PDF / Word / TXT 更新当前简历",
+                type=["pdf", "docx", "txt", "md"],
+                key=f"resume_page_upload_{active_resume.get('id') or 'new'}",
+            )
+            if uploaded_resume is not None:
+                parsed_resume = parsed_resume_from_upload(uploaded_resume)
+                parsed_resume_text = resume_text_from_parsed(parsed_resume).strip()
+                if parsed_resume_text:
+                    st.session_state[resume_content_key] = parsed_resume_text
+                    st.success("已读取上传文件，并填入当前简历内容。")
+                else:
+                    st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
+
+            resume_content = st.text_area("简历内容", key=resume_content_key, height=320)
+            action_cols = st.columns(3)
+            if action_cols[0].button("保存简历", type="primary", width="stretch"):
+                try:
+                    if active_resume.get("id"):
+                        save_user_resume(int(active_resume["id"]), resume_name.strip() or "当前简历", resume_content)
+                    else:
+                        new_id = create_user_resume(unique_resume_name(resume_name.strip() or "当前简历"), resume_content, is_default=1)
+                        st.session_state.active_resume_id = int(new_id)
+                    clear_resume_dependent_results()
+                    st.success("简历已保存。")
+                    st.rerun()
+                except db_integrity_errors():
+                    st.error("简历名称已存在，请换一个名称。")
+            if action_cols[1].button("复制为新简历", width="stretch", disabled=not resume_content.strip()):
+                try:
+                    new_id = create_user_resume(unique_resume_name(f"{resume_name.strip() or '当前简历'} - 副本"), resume_content, is_default=1)
+                    st.session_state.active_resume_id = int(new_id)
+                    clear_resume_dependent_results()
+                    st.success("已复制并设为当前简历。")
+                    st.rerun()
+                except db_integrity_errors():
+                    st.error("副本名称已存在，请换一个名称。")
+            can_delete = bool(active_resume.get("id")) and len(resumes) > 1
+            if action_cols[2].button("删除简历", width="stretch", disabled=not can_delete):
+                if delete_user_resume(int(active_resume["id"])):
+                    clear_resume_dependent_results()
+                    st.success("简历已删除。")
+                    st.rerun()
+
+    with right_col:
+        with st.container(border=True):
+            st.markdown("##### 新增简历")
+            new_name = st.text_input("新简历名称", key="resume_page_new_name", placeholder="例如：数据分析岗位简历")
+            new_upload = st.file_uploader(
+                "上传新简历 PDF / Word / TXT",
+                type=["pdf", "docx", "txt", "md"],
+                key="resume_page_new_upload",
+            )
+            if new_upload is not None:
+                parsed_new = parsed_resume_from_upload(new_upload)
+                parsed_new_text = resume_text_from_parsed(parsed_new).strip()
+                if parsed_new_text:
+                    st.session_state["resume_page_new_content"] = parsed_new_text
+                else:
+                    st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
+            if "resume_page_new_content" not in st.session_state:
+                st.session_state["resume_page_new_content"] = ""
+            new_content = st.text_area("新简历内容", key="resume_page_new_content", height=220)
+            if st.button("新增并设为当前简历", type="primary", width="stretch"):
+                if not new_content.strip():
+                    st.warning("请先填写或上传简历内容。")
+                else:
+                    try:
+                        new_id = create_user_resume(unique_resume_name(new_name.strip() or "新简历"), new_content, is_default=1)
+                        st.session_state.active_resume_id = int(new_id)
+                        st.session_state["resume_page_new_content"] = ""
+                        clear_resume_dependent_results()
+                        st.success("新简历已创建。")
+                        st.rerun()
+                    except db_integrity_errors():
+                        st.error("简历名称已存在，请换一个名称。")
+
+            st.markdown("##### JD 匹配")
+            jd_analysis = st.session_state.get("jd_analysis")
+            can_match = bool(jd_analysis and active_resume.get("content", "").strip())
+            if st.button("使用当前简历分析匹配", width="stretch", disabled=not can_match):
+                st.session_state.resume_text = active_resume["content"].strip()
+                st.session_state.resume_match = match_resume_to_jd(
+                    jd_analysis,
+                    st.session_state.resume_text,
+                    profile_text_for_analysis(),
+                )
+                st.session_state.resume_match_jd_fingerprint = current_jd_fingerprint()
+                st.session_state.resume_match_resume_fingerprint = current_resume_fingerprint()
+                st.success("简历匹配分析完成。")
+            if st.session_state.get("resume_match"):
+                render_resume_match_snapshot(st.session_state.get("resume_match"))
+            elif not jd_analysis:
+                st.caption("先在岗位工作台分析一条目标 JD 后，这里可以做简历匹配。")
+
+
+def render_target_profile_page() -> None:
+    profiles = load_user_profiles()
+    active_profile = get_active_profile()
+    prefs = load_target_preferences()
+    selected_industries, selected_directions = normalize_industry_direction_selection(
+        prefs.get("preferred_industries", []),
+        prefs.get("target_roles", []),
+    )
+    st.markdown('<div class="cp-panel-title">目标档案</div>', unsafe_allow_html=True)
+
+    if not profiles.empty:
+        profile_names = profiles["name"].astype(str).tolist()
+        current_name = active_profile.get("name") if active_profile.get("name") in profile_names else profile_names[0]
+        selected_name = st.selectbox("切换目标档案", profile_names, index=profile_names.index(current_name), key="profile_page_select")
+        selected_profile = profiles[profiles["name"] == selected_name].iloc[0]
+        if int(selected_profile["id"]) != st.session_state.get("active_profile_id"):
+            st.session_state.active_profile_id = int(selected_profile["id"])
+            st.rerun()
+        active_profile = get_active_profile()
+
+    left_col, right_col = st.columns([1, 1], gap="large")
+    with left_col:
+        with st.container(border=True):
+            profile_name = st.text_input(
+                "档案名称",
+                value=active_profile.get("name", "") or "目标档案",
+                key=f"profile_page_name_{active_profile.get('id') or 'new'}",
+            )
+            profile_content = st.text_area(
+                "目标说明",
+                value=active_profile.get("content", ""),
+                height=220,
+                key=f"profile_page_content_{active_profile.get('id') or 'new'}",
+                placeholder="例如：目标岗位、行业、城市、阶段性求职策略和必须避开的机会。",
+            )
+            selected_industries = _sidebar_chip_selector(
+                "目标行业",
+                RECRUITMENT_INDUSTRY_OPTIONS,
+                selected_industries,
+                key="profile_page_target_industries",
+                placeholder="选择目标行业",
+                empty_text="未选择时，不按行业强限制。",
+            )
+            selected_industries, selected_directions = normalize_industry_direction_selection(selected_industries, selected_directions)
+            updated_directions: list[str] = []
+            for industry in selected_industries:
+                active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
+                current_directions = [direction for direction in selected_directions if direction in active_options]
+                updated_directions.extend(
+                    _sidebar_chip_selector(
+                        f"{industry}方向",
+                        active_options,
+                        current_directions,
+                        key=f"profile_page_direction_{sanitize_capture_filename(industry)}",
+                        placeholder=f"选择{industry}方向",
+                        empty_text="可不选，系统会按行业和 JD 文本判断。",
+                    )
+                )
+            selected_directions = list(dict.fromkeys(updated_directions))
+
+    with right_col:
+        with st.container(border=True):
+            selected_cities = _sidebar_chip_selector(
+                "意向城市",
+                CHINA_CITY_OPTIONS,
+                split_preference_items(prefs.get("target_cities", [])),
+                key="profile_page_target_cities",
+                placeholder="选择意向城市",
+                help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可直接输入新城市。",
+                allow_custom=True,
+                empty_text="未选择时，不按城市强限制。",
+            )
+            target_city_strict = st.checkbox("城市严格匹配", value=bool(prefs.get("target_city_strict")))
+            target_salary_enabled = st.checkbox("启用目标薪资偏好", value=bool(prefs.get("target_salary_enabled")))
+            salary_cols = st.columns([1, 1, 0.75])
+            min_monthly_salary = salary_cols[0].number_input(
+                "最低月薪",
+                min_value=0,
+                max_value=200000,
+                step=1000,
+                value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
+                disabled=not target_salary_enabled,
+            )
+            max_monthly_salary = salary_cols[1].number_input(
+                "期望上限",
+                min_value=0,
+                max_value=300000,
+                step=1000,
+                value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
+                disabled=not target_salary_enabled,
+            )
+            salary_strict = salary_cols[2].checkbox("严格", value=bool(prefs.get("salary_strict")), disabled=not target_salary_enabled)
+            job_keywords = st.text_input("岗位关键词", value="、".join(split_preference_items(prefs.get("job_keywords", []))))
+            avoid_keywords = st.text_area("排除关键词", value=str(prefs.get("avoid_keywords", "")), height=80)
+            notes = st.text_area("补充偏好", value=str(prefs.get("notes", "")), height=80)
+
+    action_cols = st.columns([1, 1, 1])
+    if action_cols[0].button("保存目标档案", type="primary", width="stretch"):
+        try:
+            if profiles.empty or active_profile.get("id") is None:
+                new_id = create_user_profile(profile_name, profile_content)
+                st.session_state.active_profile_id = int(new_id)
+            else:
+                save_user_profile(int(active_profile["id"]), profile_name, profile_content)
+            save_target_preferences(
+                {
+                    "target_roles": selected_directions,
+                    "target_cities": selected_cities,
+                    "extra_cities": "",
+                    "accept_remote": bool(prefs.get("accept_remote")),
+                    "accept_nationwide": bool(prefs.get("accept_nationwide")),
+                    "target_city_strict": bool(target_city_strict),
+                    "target_salary_enabled": bool(target_salary_enabled),
+                    "salary_strict": bool(salary_strict),
+                    "min_monthly_salary": int(min_monthly_salary),
+                    "max_monthly_salary": int(max_monthly_salary),
+                    "min_daily_salary": int(prefs.get("min_daily_salary") or DEFAULT_TARGET_PREFERENCES["min_daily_salary"]),
+                    "preferred_industries": selected_industries,
+                    "extra_industries": "",
+                    "job_keywords": split_preference_items(job_keywords),
+                    "avoid_keywords": avoid_keywords,
+                    "notes": notes,
+                }
+            )
+            st.success("目标档案已保存。")
+            st.rerun()
+        except db_integrity_errors():
+            st.error("档案名称已存在，请换一个名称。")
+    if action_cols[1].button("清空偏好", width="stretch"):
+        save_target_preferences(DEFAULT_TARGET_PREFERENCES)
+        _reset_sidebar_selector_state()
+        st.success("结构化偏好已清空。")
+        st.rerun()
+    if action_cols[2].button("删除档案", width="stretch", disabled=profiles.empty or not active_profile.get("id")):
+        delete_user_profile(int(active_profile["id"]))
+        st.success("目标档案已删除。")
+        st.rerun()
+
+
+def render_current_resume_profile_status_page() -> None:
+    active_resume = get_active_resume()
+    active_profile = get_active_profile()
+    prefs = load_target_preferences()
+    status_items = [
+        ("当前简历", active_resume.get("name") or "未设置"),
+        ("目标档案", active_profile.get("name") or "未设置"),
+        ("目标行业", compact_list_text(prefs.get("preferred_industries", []))),
+        ("运营方向", compact_list_text(prefs.get("target_roles", []))),
+        ("意向城市", compact_list_text(prefs.get("target_cities", []))),
+    ]
+    cols = st.columns(3)
+    for idx, (label, value) in enumerate(status_items):
+        with cols[idx % 3]:
+            ui_components.compact_metric(label, value)
+    if not active_resume.get("content", "").strip():
+        ui_components.warning_card("当前简历未设置", "请在“简历管理”中上传或保存一份简历。")
+    if not active_profile.get("content", "").strip() and not has_meaningful_preferences(prefs):
+        ui_components.warning_card("目标档案未设置", "请在“目标档案”中设置目标岗位、行业、城市和求职偏好。")
 
 
 def render_jd_workspace_tab() -> None:
@@ -18607,14 +19583,18 @@ def render_jd_workspace_tab() -> None:
 
 
 def render_resume_workspace_tab() -> None:
+    resume_modes = APP_NAVIGATION["resume_modes"]
+    if st.session_state.get("resume_workspace_mode") not in resume_modes:
+        st.session_state.resume_workspace_mode = resume_modes[0]
+
     mode = ui_components.render_segmented_nav(
-        APP_NAVIGATION["resume_modes"],
-        st.session_state.get("resume_workspace_mode", APP_NAVIGATION["resume_modes"][0]),
+        resume_modes,
+        st.session_state.get("resume_workspace_mode", resume_modes[0]),
         key="resume_workspace_mode",
     )
     if mode == "简历解析与匹配":
         render_resume_tab()
-    elif mode == "定制简历":
+    elif mode == "目标JD改简历":
         render_custom_resume_tab()
     else:
         render_gap_tab()

@@ -174,17 +174,14 @@ def render_resume_empty_state(
     safe_html: Callable[[str], str],
 ) -> None:
     if not jd_analysis:
-        title = "还没有目标岗位"
-        copy = "先在岗位工作台导入并分析一条 JD，简历工作台会按这条 JD 检查当前简历证据。"
-        steps = ["进入岗位工作台粘贴 JD。", "完成 JD 分析并设为当前目标。", "回到这里运行简历匹配。"]
+        title = "先选择一个目标岗位"
+        copy = "在岗位工作台导入并分析一条JD后，这里会检查当前简历和岗位要求的匹配情况。"
     elif not active_resume.get("content", "").strip():
-        title = "还没有当前简历"
-        copy = "左侧当前简历为空；保存真实简历后，这里才会用于匹配和定制。"
-        steps = ["在左侧当前简历上传或粘贴内容。", "保存为当前简历。", "回到这里点击匹配分析。"]
+        title = "先上传或粘贴当前简历"
+        copy = "在“简历与档案 > 简历管理”上传或保存一份真实简历后，再查看匹配分、优势证据和待补齐内容。"
     elif not has_match:
-        title = "等待运行简历匹配"
-        copy = "点击左侧按钮后，这里会集中显示按岗位要求评估的匹配度、直接证据、相关证据、待补充项和投递前动作。"
-        steps = ["确认左侧当前简历是最新版本。", "点击使用当前简历分析匹配。", "根据右侧结论进入定制简历。"]
+        title = "可以开始匹配"
+        copy = "目标岗位和当前简历已准备好，点击下方按钮生成匹配结论。"
     else:
         return
     _render_empty_state(streamlit_module, title, copy, safe_html)

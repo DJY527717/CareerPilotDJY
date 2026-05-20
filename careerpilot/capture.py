@@ -2,7 +2,9 @@ import html
 import json
 import os
 import re
+import tempfile
 import threading
+import zipfile
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -81,6 +83,14 @@ def capture_options_from_job_limit(job_limit: int) -> dict[str, int | str]:
         "detailLimit": max_jobs,
         "detailConcurrency": bounded_int((max_jobs + 9) // 10, 4, 2, 6),
     }
+
+
+def is_capture_connection_test_payload(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("type") == "careerpilot_capture_connection_test"
+        or payload.get("captureMode") == "connection_test"
+        or payload.get("schemaVersion") == "careerpilot.capture.test"
+    )
 
 
 def ensure_embedded_capture_upload_service(
@@ -170,15 +180,34 @@ def ensure_embedded_capture_upload_service(
                 if not user_id:
                     self._send_json(403, {"ok": False, "error": "Invalid upload token"})
                     return
+                if is_capture_connection_test_payload(payload):
+                    self._send_json(
+                        200,
+                        {
+                            "ok": True,
+                            "user_id": user_id,
+                            "job_count": 0,
+                            "parsedRecordCount": 0,
+                            "schemaVersion": str(payload.get("schemaVersion") or ""),
+                            "warning": "",
+                            "test": True,
+                        },
+                    )
+                    return
                 saved_path = save_capture_payload_for_user(user_id, payload, prefix)
                 records = records_from_exported_jd_file(saved_path)
+                warning = "" if records else "Payload saved, but no job records were parsed."
                 self._send_json(
                     200,
                     {
                         "ok": True,
                         "user_id": user_id,
                         "saved_path": str(saved_path),
+                        "savedPath": str(saved_path),
                         "job_count": len(records),
+                        "parsedRecordCount": len(records),
+                        "schemaVersion": str(payload.get("schemaVersion") or ""),
+                        "warning": warning,
                     },
                 )
             except Exception as exc:  # pragma: no cover - API boundary
@@ -545,11 +574,89 @@ def browser_capture_install_page(bookmarklet: str) -> str:
 """
 
 
+def test_capture_upload_connection(upload_url: str, upload_token: str) -> tuple[bool, str]:
+    try:
+        import requests
+    except Exception as exc:
+        return False, f"无法加载 requests：{exc}"
+    payload = {
+        "schemaVersion": "careerpilot.capture.test",
+        "type": "careerpilot_capture_connection_test",
+        "captureMode": "connection_test",
+        "title": "CareerPilot 上传连接测试",
+        "url": upload_url,
+        "jobs": [],
+    }
+    try:
+        response = requests.post(
+            upload_url,
+            headers={
+                "Content-Type": "application/json",
+                "X-CareerPilot-Upload-Token": upload_token,
+            },
+            json={"prefix": "connection_test", "payload": payload},
+            timeout=8,
+        )
+    except requests.exceptions.Timeout:
+        return False, "接口请求超时，请检查 upload_url 是否可访问。"
+    except requests.exceptions.ConnectionError as exc:
+        return False, f"接口不可访问或网络被拦截：{exc}"
+    except requests.exceptions.RequestException as exc:
+        return False, f"网络请求失败，可能是 CORS、代理或网络问题：{exc}"
+
+    data: dict[str, Any] = {}
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+    if response.status_code in {401, 403}:
+        return False, data.get("error") or "token 错误或无权限。"
+    if not response.ok:
+        return False, data.get("error") or f"接口返回 HTTP {response.status_code}。"
+    if data.get("ok") is False:
+        return False, str(data.get("error") or "上传服务返回失败。")
+    return True, "上传服务可用"
+
+
+def browser_extension_manifest_path(app_dir: Path) -> Path:
+    return app_dir / "browser_extension" / "manifest.json"
+
+
+def browser_extension_is_packable(app_dir: Path) -> bool:
+    manifest_path = browser_extension_manifest_path(app_dir)
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    return bool(manifest.get("manifest_version") and manifest.get("name"))
+
+
+def build_browser_extension_zip(app_dir: Path, capture_core_path: Path) -> bytes:
+    extension_dir = app_dir / "browser_extension"
+    if not browser_extension_is_packable(app_dir):
+        raise ValueError("browser_extension 缺少完整 manifest.json，暂不能打包。")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = Path(tmpdir) / "careerpilot_browser_extension.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in extension_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(extension_dir)
+                if relative.as_posix() == "capture_core.js":
+                    archive.writestr(str(relative).replace("\\", "/"), capture_core_path.read_text(encoding="utf-8"))
+                else:
+                    archive.write(path, str(relative).replace("\\", "/"))
+        return zip_path.read_bytes()
+
+
 def render_browser_capture_helper_ui(
     upload_url: str,
     upload_token: str,
     *,
     capture_core_path: Path,
+    app_dir: Path | None = None,
     key_prefix: str,
     container: Any,
 ) -> None:
@@ -559,6 +666,7 @@ def render_browser_capture_helper_ui(
         upload_token,
         capture_limit=capture_limit,
     )
+    container.caption("优先使用书签采集；复制书签代码是备用安装方式；浏览器扩展是可选方式；云端使用时请确保 upload_url 是公网地址。")
     container.markdown(
         """
         <div class="cp-capture-actions">
@@ -578,6 +686,66 @@ def render_browser_capture_helper_ui(
         ),
         unsafe_allow_html=True,
     )
+    with container.expander("备用安装与连接测试", expanded=False):
+        container.write("复制书签代码后，可以在浏览器里手动新建书签，并把下面内容粘贴到书签网址。")
+        try:
+            import streamlit.components.v1 as components
+
+            components.html(
+                f"""
+                <button id="cp-copy-{html.escape(key_prefix, quote=True)}" style="border:1px solid #0f766e;border-radius:8px;background:#eef8f5;color:#0f766e;padding:8px 12px;font-weight:700;cursor:pointer;">复制书签代码</button>
+                <span id="cp-copy-status-{html.escape(key_prefix, quote=True)}" style="margin-left:8px;color:#64748b;font:13px sans-serif;"></span>
+                <script>
+                (() => {{
+                  const code = {json.dumps(bookmarklet)};
+                  const button = document.getElementById("cp-copy-{html.escape(key_prefix, quote=True)}");
+                  const status = document.getElementById("cp-copy-status-{html.escape(key_prefix, quote=True)}");
+                  if (!button) return;
+                  button.addEventListener("click", async () => {{
+                    try {{
+                      await navigator.clipboard.writeText(code);
+                      status.textContent = "已复制";
+                    }} catch (error) {{
+                      status.textContent = "自动复制失败，请手动复制下方文本";
+                    }}
+                  }});
+                }})();
+                </script>
+                """,
+                height=44,
+            )
+        except Exception:
+            pass
+        container.text_area(
+            "书签代码",
+            value=bookmarklet,
+            height=140,
+            key=f"{key_prefix}_bookmarklet_code",
+            label_visibility="collapsed",
+        )
+        if container.button("复制书签代码", key=f"{key_prefix}_copy_bookmarklet"):
+            container.code(bookmarklet, language="javascript")
+            container.info("已显示完整书签代码。若浏览器没有自动复制，请手动复制上方文本框内容。")
+        if container.button("测试上传连接", key=f"{key_prefix}_test_upload"):
+            ok, message = test_capture_upload_connection(upload_url, upload_token)
+            if ok:
+                container.success("上传服务可用")
+            else:
+                container.error(message)
+                container.caption("测试失败不影响继续复制书签，也不影响导入本地导出的 JSON。")
+        resolved_app_dir = app_dir or capture_core_path.resolve().parent
+        if browser_extension_is_packable(resolved_app_dir):
+            try:
+                zip_bytes = build_browser_extension_zip(resolved_app_dir, capture_core_path)
+                container.download_button(
+                    "下载浏览器扩展包",
+                    data=zip_bytes,
+                    file_name="careerpilot_browser_extension.zip",
+                    mime="application/zip",
+                    key=f"{key_prefix}_download_extension",
+                )
+            except Exception as exc:
+                container.warning(f"浏览器扩展包暂不可用：{exc}")
 
 
 def render_browser_capture_helper(
@@ -585,6 +753,7 @@ def render_browser_capture_helper(
     upload_token: str,
     *,
     capture_core_path: Path,
+    app_dir: Path | None = None,
     key_prefix: str,
     container: Any,
 ) -> None:
@@ -592,6 +761,7 @@ def render_browser_capture_helper(
         upload_url,
         upload_token,
         capture_core_path=capture_core_path,
+        app_dir=app_dir,
         key_prefix=key_prefix,
         container=container,
     )
