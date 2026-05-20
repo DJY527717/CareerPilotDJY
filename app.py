@@ -407,7 +407,7 @@ INDUSTRY_DIRECTION_TREE: dict[str, list[str]] = {
 INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
     "互联网/AI": ["互联网", "AI", "人工智能", "AIGC", "大模型", "算法", "软件", "平台", "SaaS", "互联网公司"],
     "电子/电气/通信": ["电子", "电气", "通信", "半导体", "芯片", "硬件", "嵌入式", "网络设备", "5G"],
-    "计算机软件": ["软件", "开发", "前端", "后端", "全栈", "测试", "运维", "实施", "IT", "程序员"],
+    "计算机软件": ["软件", "开发", "前端", "后端", "全栈", "测试", "运维", "实施", "IT", "程序员", "SaaS", "企业服务", "ERP", "CRM", "低代码", "数据库", "操作系统"],
     "产品": ["产品", "产品经理", "产品运营", "用户研究", "产品策划", "需求分析"],
     "运营": ["运营", "用户运营", "内容运营", "活动运营", "增长运营", "社群运营", "新媒体运营"],
     "设计": ["设计", "UI", "UX", "交互设计", "视觉设计", "平面设计", "工业设计"],
@@ -421,10 +421,10 @@ INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
     "生产制造": ["生产", "制造", "工艺", "质量", "厂务", "生产管理", "制造业"],
     "机械/设备": ["机械", "设备", "自动化", "机电", "重工", "工程机械"],
     "汽车": ["汽车", "整车", "新能源车", "车联网", "智能驾驶", "主机厂"],
-    "房地产/建筑": ["房地产", "建筑", "土木", "工程", "施工", "造价", "监理"],
+    "房地产/建筑": ["房地产", "建筑", "土木", "工程", "施工", "造价", "监理", "土建", "地产", "设计院"],
     "教育培训": ["教育", "培训", "教研", "课程", "教师", "教培"],
     "医疗健康": ["医疗", "健康", "医院", "医生", "护士", "健康管理", "医疗器械"],
-    "金融": ["金融", "银行", "证券", "基金", "保险", "投资", "风控", "金融科技"],
+    "金融": ["金融", "银行", "证券", "基金", "保险", "投资", "风控", "金融科技", "资管", "财富管理", "FinTech", "信贷", "支付"],
     "咨询/专业服务": ["咨询", "顾问", "研究", "专业服务", "事务所", "战略咨询", "管理咨询"],
     "传媒/广告": ["传媒", "广告", "影视", "出版", "内容", "短视频", "直播"],
     "消费品/零售": ["消费品", "零售", "快消", "商超", "门店", "电商", "零售运营"],
@@ -434,7 +434,6 @@ INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
     "管培生/实习生": ["管培生", "培训生", "MT", "实习生", "应届生", "校招", "暑期实习"],
     "互联网/电子商务": ["互联网", "电商", "电子商务", "平台", "社区", "本地生活", "O2O", "SaaS"],
     "移动互联网": ["移动互联网", "App", "小程序", "移动端", "客户端"],
-    "计算机软件": ["软件", "SaaS", "企业服务", "ERP", "CRM", "低代码", "数据库", "操作系统"],
     "计算机硬件": ["硬件", "服务器", "存储", "芯片", "嵌入式", "智能终端"],
     "IT服务/系统集成": ["IT服务", "系统集成", "实施", "运维", "信息化", "数字化转型"],
     "云计算/大数据": ["云计算", "大数据", "数据仓库", "数据平台", "数据湖", "数仓", "BI"],
@@ -442,7 +441,6 @@ INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
     "游戏": ["游戏", "手游", "端游", "页游", "电竞", "Unity", "Unreal"],
     "电子/半导体/集成电路": ["电子", "半导体", "集成电路", "芯片", "晶圆", "封测", "EDA", "功率器件"],
     "通信/网络设备": ["通信", "5G", "网络设备", "基站", "光通信", "运营商", "物联网"],
-    "金融": ["金融", "资管", "财富管理", "金融科技", "FinTech", "信贷", "风控", "支付"],
     "银行": ["银行", "商业银行", "零售银行", "对公", "信贷", "柜面"],
     "证券/期货": ["证券", "券商", "投行", "研究所", "期货", "交易", "量化"],
     "基金": ["基金", "公募", "私募", "资管", "投资研究", "FOF"],
@@ -465,7 +463,6 @@ INDUSTRY_ALIAS_MAP: dict[str, list[str]] = {
     "物流/仓储": ["物流", "仓储", "快递", "货运", "配送", "仓配", "运输"],
     "交通/运输": ["交通", "运输", "航空", "铁路", "航运", "港口", "地铁"],
     "供应链/采购": ["供应链", "采购", "计划", "S&OP", "供应商管理", "库存", "履约"],
-    "房地产/建筑": ["房地产", "建筑", "工程", "土建", "地产", "施工", "设计院"],
     "物业管理": ["物业", "园区", "楼宇", "设施管理"],
     "咨询": ["咨询", "管理咨询", "战略咨询", "业务咨询", "数字化咨询", "咨询顾问"],
     "专业服务": ["专业服务", "事务所", "审计", "税务", "认证", "检测", "咨询", "律所"],
@@ -1067,7 +1064,18 @@ def effective_profile_text(profile_text: str | None) -> str:
 
 
 def text_contains(text: str, keyword: str) -> bool:
-    return keyword.lower() in text.lower()
+    clean_keyword = str(keyword or "").strip()
+    if not clean_keyword:
+        return False
+    clean_text = str(text or "")
+    if not clean_text:
+        return False
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", clean_keyword))
+    is_short_english = bool(re.fullmatch(r"[A-Za-z0-9_+#.-]{1,3}", clean_keyword))
+    if not has_cjk and is_short_english:
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(clean_keyword)}(?![A-Za-z0-9_])"
+        return bool(re.search(pattern, clean_text, flags=re.I))
+    return clean_keyword.lower() in clean_text.lower()
 
 
 def text_without_urls(text: str) -> str:
@@ -2279,6 +2287,7 @@ def clear_jd_dependent_results() -> None:
         "custom_resume",
         "gap_analysis",
         "offer_prediction",
+        "single_jd_quality",
     ]:
         st.session_state.pop(key, None)
 
@@ -2290,6 +2299,18 @@ def clear_resume_dependent_results() -> None:
         "custom_resume",
         "gap_analysis",
         "offer_prediction",
+    ]:
+        st.session_state.pop(key, None)
+
+
+def clear_preference_dependent_results() -> None:
+    for key in [
+        "batch_jd_analysis",
+        "resume_match",
+        "custom_resume",
+        "gap_analysis",
+        "offer_prediction",
+        "single_jd_quality",
     ]:
         st.session_state.pop(key, None)
 
@@ -3908,11 +3929,72 @@ def infer_question_target_skill_v2(question: str, jd_skills: list[str], resume_m
     return ordered_skills[0] if ordered_skills else ""
 
 
+
+def interview_question_records(
+    interview_analysis: dict[str, Any] | None,
+    jd_analysis: dict[str, Any] | None = None,
+    resume_match: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    groups = {"面经真实出现": [], "JD推导补充": [], "简历短板追问": []}
+    if not interview_analysis:
+        return groups
+    for category, questions in (interview_analysis.get("extracted_questions") or {}).items():
+        for question in questions or []:
+            if normalize_text(question):
+                groups["面经真实出现"].append({"问题": str(question), "来源": f"面经真实出现：{category}"})
+    for category, questions in (interview_analysis.get("generated_questions") or {}).items():
+        for question in questions or []:
+            if normalize_text(question):
+                groups["JD推导补充"].append({"问题": str(question), "来源": f"JD推导补充：{category}"})
+    gap_names = list(
+        dict.fromkeys(
+            resume_hard_gap_names(resume_match, 4)
+            + resume_evidence_gap_names(resume_match, 4)
+            + resume_expression_gap_names(resume_match, 4)
+        )
+    )
+    jd_text = (jd_analysis or {}).get("raw_text", "") if jd_analysis else ""
+    for skill in gap_names[:8]:
+        jd_hint = jd_sentences_for_skill_v2(jd_text, skill, limit=1)[0] if skill and jd_text and "jd_sentences_for_skill_v2" in globals() and jd_sentences_for_skill_v2(jd_text, skill, limit=1) else ""
+        question = f"请讲一个能证明你具备{skill}的真实项目或任务。"
+        source = f"简历短板追问：{skill}"
+        if jd_hint:
+            source += f"；JD依据：{jd_hint[:80]}"
+        groups["简历短板追问"].append({"问题": question, "来源": source})
+    for key, rows in groups.items():
+        seen = set()
+        deduped = []
+        for row in rows:
+            q = normalize_text(row.get("问题", ""))
+            if q and q not in seen:
+                deduped.append(row)
+                seen.add(q)
+        groups[key] = deduped[:12]
+    return groups
+
+
+def flatten_interview_question_records(groups: dict[str, list[dict[str, str]]], limit: int = 8) -> list[dict[str, str]]:
+    ordered: list[dict[str, str]] = []
+    for group_name in ["面经真实出现", "JD推导补充", "简历短板追问"]:
+        for row in groups.get(group_name, []):
+            ordered.append({"问题": row.get("问题", ""), "来源": row.get("来源", group_name)})
+    seen = set()
+    result = []
+    for row in ordered:
+        question = normalize_text(row.get("问题", ""))
+        if question and question not in seen:
+            result.append(row)
+            seen.add(question)
+    return result[:limit]
+
+
+
 def personalized_answer_for_question_v2(
     question: str,
     resume_text: str,
     jd_analysis: dict[str, Any] | None,
     resume_match: dict[str, Any] | None,
+    source: str = "",
 ) -> dict[str, str]:
     jd_analysis = jd_analysis or {}
     resume_match = resume_match or {}
@@ -3922,7 +4004,6 @@ def personalized_answer_for_question_v2(
     skill = infer_question_target_skill_v2(question, jd_skills, resume_match)
     evidence_lines = skill_evidence_lines(resume_text, skill, limit=2) if skill else []
     original_line = evidence_lines[0].strip() if evidence_lines else ""
-    signal = resume_gap_signal_v2(evidence_lines) if skill and "resume_gap_signal_v2" in globals() else (original_line or "当前简历里未识别到明确相关经历句。")
     hard_gaps = set(resume_hard_gap_names(resume_match))
     evidence_gaps = set(resume_evidence_gap_names(resume_match))
     expression_gaps = set(resume_expression_gap_names(resume_match))
@@ -3935,34 +4016,41 @@ def personalized_answer_for_question_v2(
     else:
         gap_type = "matched" if original_line else "general"
     action_seed = targeted_gap_seed_v2(skill, category, jd_text) if skill and "targeted_gap_seed_v2" in globals() else {}
-    if original_line and skill and "polished_bullet_rewrite_v2" in globals():
-        polished = polished_bullet_rewrite_v2(original_line, skill, "表达偏差" if gap_type == "expression" else "证据弱", action_seed, jd_text, category)
-    elif skill:
-        polished = action_seed.get("简历可写", f"围绕 {skill} 准备一段真实案例，讲清场景、动作、交付物和结果。")
-    else:
-        polished = "优先选一段和目标岗位最接近的真实经历，按背景、任务、动作、结果四步展开。"
-
+    if not original_line:
+        material_hint = action_seed.get("今天就做") or "补充真实项目、任务背景、你的动作、交付物和结果证明。"
+        return {
+            "关联问题": question,
+            "来源": source or "待识别",
+            "对应短板/主题": skill or "通用项目表达",
+            "证据来源": "需准备材料",
+            "当前风险": f"当前简历没有找到可支撑 {skill or '这道题'} 的证据，不能生成完整回答。",
+            "建议回答": f"需准备材料：{material_hint}",
+        }
+    signal = resume_gap_signal_v2(evidence_lines) if skill and "resume_gap_signal_v2" in globals() else original_line
     if gap_type == "hard":
-        risk = f"这题大概率会打到 {skill} 缺口。当前简历没有直接证据，回答时不要硬说熟练做过，先讲你最接近的相关经历，再明确你补过什么。"
+        risk = f"这题会打到 {skill} 缺口。只能讲最接近的真实经历，并说明还在补强什么。"
     elif gap_type == "evidence":
-        risk = f"你可能写到过 {skill}，但现在这句还不够支撑深入追问：{signal}"
+        risk = f"已有相关线索，但证据还不够完整：{signal}"
     elif gap_type == "expression":
-        risk = f"你可能真的做过，但现在这句不够像目标岗位会买账的说法：{signal}"
+        risk = f"可能做过相关事情，但表达需要更贴近岗位：{signal}"
     else:
-        risk = f"这题可以优先从你简历里最接近 {skill or '目标岗位'} 的那段经历切入。"
-
+        risk = f"可以从简历里最接近 {skill or '目标岗位'} 的真实经历切入。"
+    if skill and "polished_bullet_rewrite_v2" in globals():
+        polished = polished_bullet_rewrite_v2(original_line, skill, "表达偏差" if gap_type == "expression" else "证据弱", action_seed, jd_text, category)
+    else:
+        polished = original_line
     answer = []
     if skill:
-        answer.append(f"先用一句话对齐岗位关注点：这题本质上在看你是否真正做过 {skill} 相关任务。")
-    if original_line:
-        answer.append(f"优先拿这段真实经历展开：{original_line}")
-    answer.append(f"回答时重点往这个方向收：{polished}")
+        answer.append(f"先说明这题对应的是 {skill}，再进入真实经历。")
+    answer.append(f"证据来源：{original_line}")
+    answer.append(f"可展开说法：{polished}")
     if action_seed.get("面试说法"):
-        answer.append(f"最后补一句你的做事方法：{action_seed['面试说法']}")
-
+        answer.append(f"最后补一句方法论：{action_seed['面试说法']}")
     return {
         "关联问题": question,
+        "来源": source or "待识别",
         "对应短板/主题": skill or "通用项目表达",
+        "证据来源": original_line,
         "当前风险": risk,
         "建议回答": " ".join(answer),
     }
@@ -3976,18 +4064,14 @@ def build_personalized_interview_answers_v2(
 ) -> list[dict[str, str]]:
     if not interview_analysis:
         return []
-    question_pool: list[str] = []
-    for questions in interview_analysis.get("extracted_questions", {}).values():
-        question_pool.extend(questions[:3])
-    if not question_pool:
-        for questions in interview_analysis.get("generated_questions", {}).values():
-            question_pool.extend(questions[:2])
-    deduped = list(dict.fromkeys([item for item in question_pool if normalize_text(item)]))[:8]
+    records = flatten_interview_question_records(
+        interview_question_records(interview_analysis, jd_analysis, resume_match),
+        limit=8,
+    )
     return [
-        personalized_answer_for_question_v2(question, resume_text, jd_analysis, resume_match)
-        for question in deduped
+        personalized_answer_for_question_v2(row["问题"], resume_text, jd_analysis, resume_match, row.get("来源", ""))
+        for row in records
     ]
-
 
 def analyze_interview_sources_v2(
     source_items: list[tuple[str, str]],
@@ -4535,7 +4619,8 @@ def build_gap_analysis(
     for index, row in enumerate(action_rows):
         if "今天就做" in row:
             row["今天就做"] = humanize_advice_text(row["今天就做"], index)
-        row["温和提醒"] = SUPPORTIVE_ADVICE_TAILS[index % len(SUPPORTIVE_ADVICE_TAILS)]
+        if "不要写" in row:
+            row["不能写什么"] = row.pop("不要写")
     weekly_plan = [
         {
             **row,
@@ -4667,8 +4752,8 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         weak_skills = list(dict.fromkeys(item for item in weak_skills if item))
         unsupported_skills = list(dict.fromkeys(item for item in unsupported_skills if item))
         keyword_suggestions = targeted_revision.get("keyword_insertion_suggestions", []) or []
-        safe_keywords = [item.get("keyword", "") for item in keyword_suggestions if item.get("safe_to_add")]
-        keyword_line = " / ".join(list(dict.fromkeys(evidence_supported_skills + weak_skills + safe_keywords))[:12]) or " / ".join((parsed_jd.get("keywords", []) or [])[:8])
+        safe_keywords = [item.get("keyword", "") for item in keyword_suggestions if item.get("safe_to_add") and item.get("keyword") in evidence_supported_skills]
+        keyword_line = " / ".join(list(dict.fromkeys(evidence_supported_skills + safe_keywords))[:12]) or "请先补齐真实证据后再提炼关键词"
         summary_revision = targeted_revision.get("summary_revision", {}) or {}
         summary_lines = [
             targeted_revision.get("target_positioning", ""),
@@ -4677,15 +4762,15 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         ]
         summary_lines = [line for line in summary_lines if line]
         skills_section = [
-            format_skill_group("Evidence supported", evidence_supported_skills[:6]),
-            format_skill_group("Add only if true", weak_skills[:6]),
-            format_skill_group("Do not overstate", unsupported_skills[:6]),
+            format_skill_group("可保留能力", evidence_supported_skills[:6]),
+            format_skill_group("仅真实做过才补充", weak_skills[:6]),
+            format_skill_group("不要强化", unsupported_skills[:6]),
         ]
         bullet_rows = targeted_revision.get("experience_bullet_rewrites", []) or []
         bullets = [
-            row.get("suggested_bullet") or row.get("risk_warning") or row.get("reason", "")
+            row.get("suggested_bullet", "")
             for row in bullet_rows
-            if row.get("suggested_bullet") or row.get("risk_warning") or row.get("reason")
+            if row.get("original_bullet") and row.get("suggested_bullet")
         ][:7]
         evidence_lines = [row.get("original_bullet", "") for row in bullet_rows if row.get("original_bullet")][:8]
         project_rewrite = [
@@ -4704,17 +4789,17 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         ]
         ready_resume_text = "\n".join(
             [
-                "Target Summary",
-                *[f"- {line}" for line in summary_lines],
+                "可复制文本区",
+                *[f"- 原证据：{line}" for line in evidence_lines[:5]],
+                *[f"- 命中的JD要求：{line}" for line in evidence_supported_skills[:6]],
+                *[f"- 可写句子：{line}" for line in bullets],
                 "",
-                "Core Skills",
-                *[f"- {line}" for line in skills_section],
-                "",
-                "Experience Revision Suggestions",
-                *[f"- {line}" for line in bullets],
-                "",
-                "Risk Notes",
+                "需要补证据区",
+                *[f"- {line}" for line in weak_skills[:6]],
                 *[f"- {line}" for line in risk_notes],
+                "",
+                "不能写什么",
+                *[f"- {line}" for line in unsupported_skills[:6]],
             ]
         )
         return {
@@ -4742,8 +4827,8 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
             "match_result": match_result,
         }
     skills = jd_skill_list(jd_analysis)
-    evidence_supported_skills = []
-    unsupported_skills = []
+    evidence_supported_skills: list[str] = []
+    unsupported_skills: list[str] = []
 
     combined_candidate_text = normalize_text(profile_text + "\n" + master_resume)
     for skill in skills:
@@ -4753,153 +4838,82 @@ def build_custom_resume(master_resume: str, jd_analysis: dict[str, Any] | None, 
         else:
             unsupported_skills.append(skill)
 
-    company = jd_basic_value(jd_analysis, "公司名")
+    company = jd_basic_value(jd_analysis, "公司名称")
     job_title = jd_basic_value(jd_analysis, "岗位名") or category
-    keyword_line = " / ".join((evidence_supported_skills + unsupported_skills)[:12]) or "数据分析 / 项目管理 / 产品运营 / 沟通协作"
+    matched_requirements = evidence_supported_skills[:8]
+    keyword_line = " / ".join(matched_requirements) or "请先补齐真实证据后再提炼关键词"
 
-    role_terms = [
-        skill
-        for skill in [
-            "产品能力",
-            "运营",
-            "用户研究",
-            "业务分析",
-            "项目管理",
-            "市场营销",
-            "销售/商务",
-            "财务分析",
-            "法务合规",
-            "人力资源",
-            "供应链管理",
-            "设计",
-            "前端",
-            "后端",
-            "机器学习/AI",
-            "LCA",
-            "产品碳足迹",
-            "碳核算",
-        ]
-        if skill in evidence_supported_skills or skill in skills
-    ]
-    tool_terms = [
-        skill
-        for skill in ["Python", "SQL", "Excel", "Power BI", "Tableau", "pandas", "Stata", "MATLAB", "数据分析"]
-        if skill in evidence_supported_skills or skill in skills or text_contains(jd_text, skill)
-    ]
-    delivery_terms = [
-        skill
-        for skill in ["英文能力", "沟通协作", "项目交付", "报告写作", "客户沟通", "行业研究", "复盘"]
-        if skill in evidence_supported_skills or text_contains(jd_text, skill)
-    ]
-    if not role_terms:
-        role_terms = skills[:5] or [category]
-    if not tool_terms:
-        tool_terms = ["信息整理", "数据校验", "结果复盘"]
-    if not delivery_terms:
-        delivery_terms = ["结构化表达", "跨部门协作", "项目复盘"]
-
-    evidence_keywords = list(dict.fromkeys(["数据", "项目", "产品", "运营", "用户", "业务", "客户", "分析", "Python", "SQL", "Excel", "英文"] + skills))
+    evidence_keywords = list(dict.fromkeys(["数据", "项目", "产品", "运营", "用户", "业务", "客户", "分析", "Python", "SQL", "Excel", "英文"] + matched_requirements))
     evidence_lines = pick_resume_evidence_lines(master_resume + "\n" + profile_text, evidence_keywords, limit=8)
+    if not evidence_lines:
+        evidence_lines = ["当前简历没有识别到可直接支撑目标 JD 的完整证据句。"]
 
-    target_direction = job_title if job_title and job_title != "未识别" else category
-    matched_line = " / ".join(evidence_supported_skills[:6]) if evidence_supported_skills else "暂未识别到直接证据"
-    missing_line = " / ".join(unsupported_skills[:6]) if unsupported_skills else "暂无明显 JD 关键词缺口"
+    writable_bullets: list[str] = []
+    for index, evidence in enumerate(evidence_lines[:5], start=1):
+        requirement = matched_requirements[(index - 1) % len(matched_requirements)] if matched_requirements else category
+        writable_bullets.append(
+            f"原证据：{evidence}\n"
+            f"命中的JD要求：{requirement}\n"
+            f"可写句子：基于上述真实经历，写清任务对象、使用的工具或方法、交付物名称和可核验结果；不要新增没有发生过的职责或指标。\n"
+            f"不能写什么：不要写成独立负责{requirement}、主导完整项目、显著提升指标，除非原简历已有对应证据。\n"
+            f"需要补的材料：项目名称、时间范围、使用工具、输入数据或材料、交付物截图/链接、结果证明。"
+        )
+
+    need_evidence_items = [
+        f"{skill}：仅真实做过才补充；需要项目名称、场景、动作、交付物和证明材料。"
+        for skill in unsupported_skills[:8]
+    ]
+    if not need_evidence_items:
+        need_evidence_items = ["暂无明显需要补证据的能力；继续检查每条可写句子是否都有原始经历支撑。"]
+
     summary_lines = [
-        f"目标方向为{target_direction}，JD 明确强调 {' / '.join(skills[:8]) or category}。",
-        f"当前简历可直接对齐的证据：{matched_line}；待补充能力或需谨慎表达的点：{missing_line}。",
+        f"目标岗位：{job_title}；岗位方向：{category}。",
+        "可保留能力：" + (" / ".join(matched_requirements) if matched_requirements else "暂未识别到强证据能力"),
+        "仅真实做过才补充：" + (" / ".join(unsupported_skills[:8]) if unsupported_skills else "暂无明显缺口"),
     ]
-    summary_lines.append(f"投递版应优先围绕 {' / '.join((skills or role_terms)[:5])} 写真实项目动作、交付物和结果。")
-
     skills_section = [
-        format_skill_group("岗位核心能力", role_terms[:6]),
-        format_skill_group("数据与工具", tool_terms[:6]),
-        format_skill_group("沟通与交付", delivery_terms[:6]),
+        format_skill_group("可保留能力", matched_requirements[:6]),
+        format_skill_group("仅真实做过才补充", unsupported_skills[:6]),
+        format_skill_group("不要强化", unsupported_skills[:6]),
     ]
-
-    bullets = []
-    if any(skill in skills for skill in ["产品能力", "用户研究"]) or category == "产品岗":
-        bullets.append("围绕用户场景和业务目标拆解需求，梳理痛点、优先级、方案路径和验证指标，输出可执行的产品优化建议。")
-    if any(skill in skills for skill in ["运营", "市场营销"]) or category in ["运营岗", "市场/销售岗"]:
-        bullets.append("基于目标用户和转化路径设计运营动作，跟踪拉新、转化、留存等指标，并根据数据复盘优化策略。")
-    if any(skill in skills for skill in ["业务分析", "数据分析", "SQL", "Python"]) or category == "数据/商业分析岗":
-        bullets.append("围绕核心业务指标完成数据口径确认、清洗整理、异常检查和原因分析，输出可落地的业务建议。")
-    if any(skill in skills for skill in ["项目管理", "沟通协作"]) or category in ["咨询/项目岗"]:
-        bullets.append("拆解项目目标、里程碑和协作分工，跟进风险与进度，推动交付物按时输出并沉淀复盘。")
-    if category == "研发/工程岗" or any(skill in skills for skill in ["前端", "后端", "机器学习/AI"]):
-        bullets.append("参与功能模块、接口、组件或模型开发，完成关键逻辑实现、测试验证和问题复盘。")
-    if tool_terms:
-        bullets.append(f"使用 {' / '.join(tool_terms[:4])} 处理项目或业务数据，完成清洗、匹配、指标构建和可视化输出。")
-    if "ISO14067" in skills or "PEF" in skills or text_contains(jd_text, "ISO14067") or text_contains(jd_text, "PEF"):
-        bullets.append("围绕 ISO14067 与 PEF 方法差异整理研究材料，对边界设定、分配规则、数据质量和结果解释进行对比。")
-    if "CBAM" in skills or text_contains(jd_text, "CBAM"):
-        bullets.append("跟踪欧盟 CBAM 要求，拆解企业活动数据、排放因子、默认值使用和申报风险，沉淀资料清单。")
-    if "EPD" in skills or text_contains(jd_text, "EPD"):
-        bullets.append("整理 EPD/PCR 与产品碳足迹报告相关材料，归纳方法学依据、数据质量说明和报告核心章节。")
-    if "英文能力" in skills or any(text_contains(jd_text, word) for word in ["英文", "英语", "English"]):
-        bullets.append("阅读英文资料、客户材料或项目文档，提炼关键要求，并准备中英文项目说明。")
-    bullets = list(dict.fromkeys(bullets))[:7]
-
     project_rewrite = [
-        f"项目名称：{target_direction}相关项目 / 业务分析与交付复盘",
-        "项目职责：明确项目目标、核心问题、评价指标和协作对象，拆解个人负责模块和交付标准。",
-        "关键动作：完成信息收集、数据/材料整理、方案判断、过程推进和结果复盘，确保产出可追踪、可解释。",
-        "项目产出：形成分析表、方案文档、结果图表、流程模板或复盘结论，为业务判断或后续执行提供依据。",
+        f"{skill}：先补项目名称、背景、具体动作、交付物和结果证明；材料齐全后再写入简历。"
+        for skill in unsupported_skills[:6]
     ]
-
-    if evidence_supported_skills:
-        application_pitch = (
-            f"我对{target_direction}方向的匹配点主要集中在{' / '.join(evidence_supported_skills[:4])}。"
-            f"投递材料会优先围绕{' / '.join(skills[:4]) or '岗位核心任务'}补充真实项目动作、交付物和结果。"
-        )
-    else:
-        application_pitch = (
-            f"{target_direction}的 JD 要求与当前简历直接证据还不够贴合。"
-            "投递前应先补出可验证的项目、报告、截图或作品，再生成正式投递版。"
-        )
-
+    risk_notes = [
+        "不能把未在原简历出现的工具、职责、指标写成已有经历。",
+        "没有截图、文档、代码、报告或复盘材料支撑的能力，只放在需要补证据区。",
+    ]
     ready_resume_text = "\n".join(
         [
-            "求职摘要",
-            *[f"- {line}" for line in summary_lines],
+            "简历可复制区",
+            *[f"- {item}" for item in writable_bullets],
             "",
-            "核心能力",
-            *[f"- {line}" for line in skills_section],
+            "需要补证据区",
+            *[f"- {item}" for item in need_evidence_items],
             "",
-            "经历改写",
-            *[f"- {line}" for line in bullets],
-            "",
-            "项目经历可替换版本",
-            *[f"- {line}" for line in project_rewrite],
+            "不能写什么",
+            *[f"- {item}" for item in risk_notes],
         ]
     )
-
-    if unsupported_skills:
-        risk_notes = [
-            f"JD 明确提到但当前简历证据不足：{' / '.join(unsupported_skills[:8])}。",
-            "没有实际做过的工具、项目或标准不要写成熟练掌握；可以先补课程项目、独立案例或作品截图。"
-        ]
-    else:
-        risk_notes = ["关键词覆盖较好，重点是把经历写成项目交付语言，而不是课程/实习流水账。"]
-
     return {
         "company": company,
         "job_title": job_title,
         "category": category,
         "keyword_line": keyword_line,
-        "evidence_supported_skills": evidence_supported_skills,
+        "evidence_supported_skills": matched_requirements,
         "unsupported_skills": unsupported_skills,
         "summary": "\n".join(summary_lines),
         "summary_lines": summary_lines,
         "skills_section": skills_section,
-        "bullets": bullets,
-        "experience_bullets": bullets,
+        "bullets": writable_bullets,
+        "experience_bullets": writable_bullets,
         "project_rewrite": project_rewrite,
         "evidence_lines": evidence_lines,
-        "application_pitch": application_pitch,
+        "application_pitch": summary_lines[0],
         "ready_resume_text": ready_resume_text,
         "risk_notes": risk_notes,
     }
-
 
 def build_resume_shortcoming_rows(
     resume_text: str,
@@ -5871,6 +5885,40 @@ def internship_signal_profile(internship_text: str, profile_text: str = "") -> d
     }
 
 
+
+def internship_evidence_grade(signals: dict[str, Any], low_hits: list[str]) -> dict[str, str]:
+    project_count = len(signals.get("project_hits", []) or [])
+    mentor_count = len(signals.get("mentor_hits", []) or [])
+    output_count = len(signals.get("output_hits", []) or [])
+    risk_count = len(low_hits or []) + len(signals.get("hard_warning_hits", []) or [])
+    if project_count >= 2 and mentor_count >= 1 and output_count >= 2 and risk_count == 0:
+        grade = "A"
+        reason = "项目、导师/反馈、交付物都比较清楚，且没有明显风险词。"
+    elif project_count >= 1 and output_count >= 1 and risk_count <= 1:
+        grade = "B"
+        reason = "能看到项目和交付物，但导师机制或风险信息还需要确认。"
+    elif project_count or output_count or mentor_count:
+        grade = "C"
+        reason = "有部分证据线索，但项目、导师、交付物至少一类不够明确。"
+    else:
+        grade = "D"
+        reason = "缺少可沉淀成简历证据的项目、导师反馈和交付物描述。"
+    if risk_count >= 3 and grade in {"A", "B"}:
+        grade = "C"
+        reason = "虽然有部分正向证据，但风险词较多，需要先核实工作含金量。"
+    if signals.get("hard_warning_hits"):
+        grade = "D" if not project_count else ("C" if grade in {"A", "B"} else grade)
+        reason = "出现硬风险词，需要优先核实是否有真实项目和可展示产出。"
+    return {
+        "grade": grade,
+        "reason": reason,
+        "project_count": str(project_count),
+        "mentor_count": str(mentor_count),
+        "output_count": str(output_count),
+        "risk_count": str(risk_count),
+    }
+
+
 def analyze_internship(
     company: str,
     role: str,
@@ -5998,6 +6046,8 @@ def analyze_internship(
     if not risks:
         risks.append("主要风险是实习中拿不到可量化成果，需要主动争取项目产出。")
 
+    evidence_grade = internship_evidence_grade(signals, low_hits)
+
     recommended_outputs = [
         "至少沉淀 1 个可讲的 STAR 项目：背景、任务、你的动作、量化结果。",
         "保留可脱敏展示的表格、看板、代码截图、需求文档、流程模板或报告目录。",
@@ -6036,6 +6086,7 @@ def analyze_internship(
         "low_hits": low_hits,
         "target_hits": target_hits,
         "signal_profile": signals,
+        "evidence_grade": evidence_grade,
         "reasons": reasons,
         "risks": humanize_advice_list(risks),
         "recommended_outputs": humanize_advice_list(recommended_outputs),
@@ -6072,23 +6123,24 @@ def infer_company_tier(company: str, text: str = "") -> str:
     return "未知"
 
 
-def parse_recruitment_record(text: str, source: str = "") -> dict[str, Any]:
-    jd = analyze_jd(text)
+def parse_recruitment_record(text: str, source: str = "", analyzed: dict[str, Any] | None = None) -> dict[str, Any]:
+    analyzed = analyzed or {}
+    jd = analyzed.get("jd_analysis") or analyze_jd(text)
     skills = jd_skill_list(jd)
-    fields = extract_card_fields_v2({"source": source, "text": text}, text, jd)
+    fields = analyzed.get("fields") or extract_card_fields_v2({"source": source, "text": text}, text, jd)
     company = fields["company"] or "未识别"
     job_title = fields["title"] or "未识别"
     salary = fields["salary"] or "未识别"
     location = fields["location"] or "未识别"
-    region_info = classify_region(location, text)
+    region_info = analyzed.get("region_info") or classify_region(location, text)
     education = fields["education"] or "未识别"
     experience = fields["experience"] or "未识别"
     record = {
         "公司": company,
         "岗位": job_title,
-        "类型": detect_job_type_safe(text),
-        "是否招实习": detect_internship_opening_safe(text),
-        "是否招应届生": detect_fresh_graduate_safe(text),
+        "类型": analyzed.get("job_type") or detect_job_type_safe(text),
+        "是否招实习": analyzed.get("internship_opening") or detect_internship_opening_safe(text),
+        "是否招应届生": analyzed.get("fresh_graduate") or detect_fresh_graduate_safe(text),
         "薪资": salary,
         "地点": location,
         **region_info,
@@ -6111,11 +6163,19 @@ def parse_recruitment_record(text: str, source: str = "") -> dict[str, Any]:
 
 def analyze_recruitment_sources(text: str, crawl_results: list[dict[str, Any]] | None = None) -> pd.DataFrame:
     records = []
+    preferences = load_target_preferences()
+    profile_text = profile_text_for_analysis()
+    active_resume = get_active_resume()
+    resume_text = active_resume.get("content", "")
     for item in dedupe_jd_records(split_batch_jd_text(text)):
-        records.append(parse_recruitment_record(item["text"], item.get("source", "粘贴文本")))
+        source = item.get("source", "粘贴文本")
+        analyzed = analyze_job_record_once({"source": source, "text": item["text"]}, profile_text, resume_text, preferences, fast=True)
+        records.append(parse_recruitment_record(item["text"], source, analyzed))
     for item in crawl_results or []:
         for record in records_from_crawl_result(item):
-            records.append(parse_recruitment_record(record["text"], record.get("url") or item.get("url", "链接抓取")))
+            source = record.get("url") or item.get("url", "链接抓取")
+            analyzed = analyze_job_record_once(record, profile_text, resume_text, preferences, fast=True)
+            records.append(parse_recruitment_record(record["text"], source, analyzed))
     if not records:
         return pd.DataFrame()
     return pd.DataFrame(records).drop_duplicates(subset=["fingerprint"], keep="first").reset_index(drop=True)
@@ -6385,6 +6445,16 @@ def offer_stage_diagnostics(context: dict[str, Any], company_tier: str, educatio
     }
 
 
+
+def offer_probability_display_range(value: float, sample_count: int) -> str:
+    margin = 12 if sample_count < 5 else 8 if sample_count < 20 else 5
+    low = max(0, int(round(float(value) - margin)))
+    high = min(100, int(round(float(value) + margin)))
+    if high < low:
+        high = low
+    return f"{low}%到{high}%"
+
+
 def predict_offer_probabilities(
     jd_analysis: dict[str, Any] | None,
     resume_match: dict[str, Any] | None,
@@ -6558,45 +6628,42 @@ def predict_offer_probabilities(
         "actions": actions,
         "application_steps": application_steps,
         "shortcomings": shortcomings,
+        "sample_count": int(history.get("sample", 0) or 0),
+        "confidence_note": "低置信度估算" if int(history.get("sample", 0) or 0) < 5 else context["confidence_label"],
+        "display_range": {
+            "简历通过率": offer_probability_display_range(pass_rate, int(history.get("sample", 0) or 0)),
+            "进入面试概率": offer_probability_display_range(interview_rate, int(history.get("sample", 0) or 0)),
+            "拿 Offer 概率": offer_probability_display_range(offer_rate, int(history.get("sample", 0) or 0)),
+        },
         "history": history,
     }
 
 
 def generate_resume_bullets(jd_analysis: dict[str, Any] | None, resume_match: dict[str, Any] | None) -> list[str]:
-    if not jd_analysis:
+    if not jd_analysis or not resume_match:
         return []
-    skills = []
-    if resume_match:
-        skills = resume_matched_requirement_names(resume_match, 5)
-    if not skills and not resume_match and not jd_analysis.get("skills", pd.DataFrame()).empty:
-        skills = jd_analysis["skills"]["技能"].head(5).tolist()
-    if resume_match and not skills:
-        return []
-
-    bullets = []
-    category = jd_analysis.get("category", "")
-    if "产品能力" in skills or category == "产品岗":
-        bullets.append("围绕用户场景和业务目标拆解需求，梳理痛点、优先级、方案路径和验证指标，输出可执行的产品优化建议。")
-    if "运营" in skills or category == "运营岗":
-        bullets.append("基于目标用户和转化路径设计运营动作，跟踪拉新、转化、留存等指标，并根据数据复盘优化策略。")
-    if "数据分析" in skills or "Python" in skills or "SQL" in skills or category == "数据/商业分析岗":
-        bullets.append("基于 Python / SQL / Excel 处理项目或业务数据，完成数据清洗、指标构建、异常检查和结论可视化。")
-    if "项目管理" in skills or category == "咨询/项目岗":
-        bullets.append("拆解项目目标、里程碑和协作分工，跟进风险与进度，推动交付物按时输出并沉淀复盘。")
-    if category == "研发/工程岗" or any(skill in skills for skill in ["前端", "后端", "机器学习/AI"]):
-        bullets.append("参与功能模块、接口、组件或模型开发，完成关键逻辑实现、测试验证和问题复盘。")
-    if category in ["LCA技术岗", "产品碳足迹岗"] or "LCA" in skills:
-        bullets.append("围绕 LCA/产品碳足迹项目梳理目标、边界、清单数据和结果解释，支持报告或业务判断。")
-    if "ISO14067" in skills or "PEF" in skills:
+    matched = resume_matched_requirement_names(resume_match, 5)
+    evidence_texts = resume_evidence_texts(resume_match)[:5]
+    missing = resume_missing_requirement_names(resume_match, 5)
+    if not matched or not evidence_texts:
+        return [
+            "原证据：当前匹配结果没有识别到可直接支撑目标 JD 的完整证据句；命中的JD要求：暂无；可写句子：先不要写入投递版；不能写什么：不要把未证明的能力写成已做过；需要补的材料：项目名称、任务、工具、交付物、结果证明。"
+        ]
+    bullets: list[str] = []
+    for index, evidence in enumerate(evidence_texts, start=1):
+        requirement = matched[(index - 1) % len(matched)]
         bullets.append(
-            "围绕 ISO14067 与 PEF 方法差异开展论文研究，能够比较边界设定、分配规则、数据质量和结果解释要求。"
+            f"原证据：{evidence}；"
+            f"命中的JD要求：{requirement}；"
+            "可写句子：保留这段真实经历，补清任务对象、工具/方法、交付物和可核验结果；"
+            f"不能写什么：不要扩写成主导完整{requirement}或夸大指标；"
+            "需要补的材料：项目名称、时间、截图/报告/代码/表格链接。"
         )
-    if "CBAM" in skills:
+    for item in missing[:3]:
         bullets.append(
-            "关注欧盟 CBAM 与出海合规要求，能够拆解企业活动数据、排放因子、默认值使用和申报风险点。"
+            f"原证据：暂无；命中的JD要求：{item}；可写句子：暂不写入可复制区；"
+            f"不能写什么：不要声称已经具备{item}经验；需要补的材料：真实项目、练习产出或可展示作品。"
         )
-    if not bullets:
-        bullets.append("围绕目标岗位拆解项目任务，完成信息整理、数据处理、过程推进和结果复盘，形成可直接交付的文档或表格。")
     return bullets
 
 
@@ -8413,10 +8480,11 @@ def merge_record_with_detail(record: dict[str, str], detail: dict[str, str]) -> 
     return merged
 
 
-def enrich_records_with_detail_pages(records: list[dict[str, str]], limit: int = 60) -> list[dict[str, str]]:
+def enrich_records_with_detail_pages(records: list[dict[str, str]], limit: int = 20) -> list[dict[str, str]]:
     if not records:
         return []
     normalized_urls: list[str] = []
+    limit = max(0, min(int(limit or 0), 20))
     for record in records:
         url = str(record.get("url") or "")
         source = str(record.get("source") or "")
@@ -9872,7 +9940,7 @@ def normalize_capture_payload_records(payload: dict[str, Any], source: str = "",
     return dedupe_jd_records(records)
 
 
-def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False, detail_limit: int = 60) -> list[dict[str, str]]:
+def records_from_exported_jd_file(path: Path, enrich_detail_pages: bool = False, detail_limit: int = 20) -> list[dict[str, str]]:
     suffix = path.suffix.lower()
     records = []
     if suffix == ".json":
@@ -9997,7 +10065,7 @@ def scan_exported_jd_records(
     limit: int = 120,
     date_filter: str | None = None,
     enrich_detail_pages: bool = False,
-    detail_limit: int = 60,
+    detail_limit: int = 20,
 ) -> tuple[list[dict[str, str]], pd.DataFrame]:
     export_dirs = existing_jd_export_dirs()
     columns = ["信息集ID", "文件", "日期", "岗位数", "修改时间", "状态", "错误"]
@@ -11799,12 +11867,187 @@ def next_action_for_job(score: int, jd_analysis: dict[str, Any], job_type: str, 
     return "暂存观察，优先投更贴合岗位"
 
 
+def preferences_fingerprint(preferences: dict[str, Any] | None) -> str:
+    try:
+        payload = json.dumps(preferences or {}, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        payload = repr(preferences or {})
+    return content_fingerprint(payload)
+
+
+def stable_json_loads(payload: str, fallback: Any) -> Any:
+    try:
+        return json.loads(payload)
+    except Exception:
+        return fallback
+
+
+def clone_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return stable_json_loads(json.dumps(payload, ensure_ascii=False, default=str), payload)
+
+
+def jd_input_quality(jd_analysis: dict[str, Any], text: str, fields: dict[str, str] | None = None) -> dict[str, Any]:
+    fields = fields or {}
+    raw_text = normalize_text(text)
+    company = fields.get("company") or jd_basic_value(jd_analysis, "公司名称", "公司")
+    title = fields.get("title") or jd_basic_value(jd_analysis, "岗位名", "职位名称", "岗位名称")
+    location = fields.get("location") or jd_basic_value(jd_analysis, "地点", "城市", "工作地点")
+    responsibility_terms = ["岗位职责", "职位描述", "工作职责", "工作内容", "你将负责", "职责"]
+    requirement_terms = ["任职要求", "岗位要求", "职位要求", "任职资格", "要求", "加分项"]
+    missing: list[str] = []
+    if field_is_low_confidence(company, "company") or not company:
+        missing.append("公司")
+    if field_is_low_confidence(title, "title") or not title:
+        missing.append("岗位名")
+    if not location or location == "未识别":
+        missing.append("地点")
+    if not any(text_contains(raw_text, term) for term in responsibility_terms):
+        missing.append("职责")
+    if not any(text_contains(raw_text, term) for term in requirement_terms):
+        missing.append("要求")
+    if len(raw_text) < 120:
+        missing.append("正文长度")
+    missing = list(dict.fromkeys(missing))
+    return {
+        "is_sufficient": len(missing) <= 1,
+        "missing_fields": missing,
+        "message": "信息充足" if len(missing) <= 1 else "信息不足",
+    }
+
+
+@lru_cache(maxsize=2048)
+def _analyze_job_record_once_cached(
+    jd_fingerprint: str,
+    resume_fingerprint: str,
+    profile_fingerprint: str,
+    preferences_fingerprint_value: str,
+    record_fingerprint_value: str,
+    text: str,
+    record_json: str,
+    profile_text: str,
+    resume_text: str,
+    preferences_json: str,
+    fast: bool,
+) -> dict[str, Any]:
+    preferences = stable_json_loads(preferences_json, {})
+    record = stable_json_loads(record_json, {})
+    jd = analyze_jd(text)
+    job_type = detect_job_type_safe(text)
+    internship_opening = detect_internship_opening_safe(text)
+    fresh = detect_fresh_graduate_safe(text)
+    fit = evaluate_profile_fit_v2(jd, profile_text, job_type, fresh, preferences, resume_text=resume_text, fast=fast)
+    match_result = match_resume_to_jd(
+        jd,
+        resume_text or profile_text,
+        profile_text=profile_text,
+        preferences=preferences,
+        fast=fast,
+    )
+    jd_preference_structured = {
+        "raw_text": text,
+        "job_title": jd_basic_value(jd, "岗位名", "职位名称", "岗位名称"),
+        "location": jd_basic_value(jd, "地点", "城市", "工作地点"),
+        "industry_background": [category_display_label(jd), jd.get("category", "")],
+        "salary": extract_salary_from_jd(text),
+    }
+    preference_fit = calculate_preference_fit(jd_preference_structured, preferences)
+    fields = extract_card_fields_v2(record, text, jd)
+    region_info = classify_region(fields.get("location", ""), text)
+    confidence = extraction_confidence(fields, text, jd)
+    confidence_score = extraction_confidence_score(fields, text, jd)
+    quality = jd_input_quality(jd, text, fields)
+    overall_score = int(match_result.get("overall_score", 0) or 0)
+    combined_score = int(match_result.get("final_rank_score", overall_score) or overall_score)
+    if not quality["is_sufficient"]:
+        combined_score = min(combined_score, 55)
+        match_result["final_rank_score"] = combined_score
+        match_result["recommendation_level"] = "信息不足"
+        match_result["recommendation_reason"] = "缺少关键信息：" + "、".join(quality["missing_fields"])
+        preference_fit["preference_warnings"] = list(preference_fit.get("preference_warnings", [])) + [
+            "JD信息不足，暂不建议直接作出确定投递结论。"
+        ]
+    gaps = list(dict.fromkeys((fit.get("missing") or []) + list(match_result.get("missing_requirements", []) or [])))
+    recommendation = "信息不足" if not quality["is_sufficient"] else batch_recommendation(combined_score, jd, job_type, fresh)
+    next_action = (
+        "先补齐：" + "、".join(quality["missing_fields"])
+        if not quality["is_sufficient"]
+        else next_action_for_job(combined_score, jd, job_type, internship_opening, gaps)
+    )
+    return {
+        "cache_key": {
+            "jd": jd_fingerprint,
+            "resume": resume_fingerprint,
+            "profile": profile_fingerprint,
+            "preferences": preferences_fingerprint_value,
+            "record": record_fingerprint_value,
+        },
+        "jd_analysis": jd,
+        "job_type": job_type,
+        "internship_opening": internship_opening,
+        "fresh_graduate": fresh,
+        "fit": fit,
+        "match_result": match_result,
+        "preference_fit": preference_fit,
+        "fields": fields,
+        "region_info": region_info,
+        "confidence": confidence,
+        "confidence_score": confidence_score,
+        "quality": quality,
+        "final_rank_score": combined_score,
+        "overall_score": overall_score,
+        "career_target_fit_score": int(match_result.get("career_target_fit_score", 70) or 70),
+        "recommendation": recommendation,
+        "next_action": next_action,
+    }
+
+
+def analyze_job_record_once(
+    record: dict[str, str],
+    profile_text: str,
+    resume_text: str,
+    preferences: dict[str, Any],
+    fast: bool = True,
+) -> dict[str, Any]:
+    text = normalize_text(str(record.get("text") or ""))
+    if not text:
+        return {}
+    record_payload = {
+        key: str(record.get(key) or "")
+        for key in ["source", "title", "company", "salary", "location", "education", "experience", "url", "page_index", "text"]
+    }
+    record_json = json.dumps(record_payload, ensure_ascii=False, sort_keys=True, default=str)
+    preferences_json = json.dumps(preferences or {}, ensure_ascii=False, sort_keys=True, default=str)
+    cached = _analyze_job_record_once_cached(
+        content_fingerprint(text),
+        content_fingerprint(resume_text),
+        content_fingerprint(profile_text),
+        preferences_fingerprint(preferences),
+        content_fingerprint(record_json),
+        text,
+        record_json,
+        profile_text,
+        resume_text,
+        preferences_json,
+        bool(fast),
+    )
+    return clone_analysis_payload(cached)
+
+
 def analyze_batch_jd_records(
     records: list[dict[str, str]],
     profile_text: str,
     resume_text: str = "",
     assume_deduped: bool = False,
 ) -> pd.DataFrame:
+    def join_items(items: Any, limit: int = 8) -> str:
+        values: list[str] = []
+        for item in list(items or [])[:limit]:
+            if isinstance(item, dict):
+                values.append(str(item.get("requirement") or item.get("item") or item.get("name") or item.get("reason") or item))
+            else:
+                values.append(str(item))
+        return " / ".join(value for value in values if value)
+
     rows = []
     preferences = load_target_preferences()
     profile_text = effective_profile_text(profile_text)
@@ -11821,34 +12064,24 @@ def analyze_batch_jd_records(
         if not text:
             continue
         record = {**record, "text": text}
-        jd = analyze_jd(text)
-        job_type = detect_job_type_safe(text)
-        internship_opening = detect_internship_opening_safe(text)
-        fresh = detect_fresh_graduate_safe(text)
-        fit = evaluate_profile_fit_v2(jd, profile_text, job_type, fresh, preferences, resume_text=resume_text, fast=True)
-        match_result = match_resume_to_jd(
-            jd,
-            resume_text or profile_text,
-            profile_text=profile_text,
-            preferences=preferences,
-            fast=True,
-        )
-        overall_score = int(match_result.get("overall_score", 0) or 0)
-        career_target_fit_score = int(match_result.get("career_target_fit_score", 70) or 70)
-        jd_preference_structured = {
-            "raw_text": text,
-            "job_title": jd_basic_value(jd, "岗位名", "职位名称", "岗位名称"),
-            "location": jd_basic_value(jd, "地点", "城市", "工作地点"),
-            "industry_background": [category_display_label(jd), jd.get("category", "")],
-            "salary": extract_salary_from_jd(text),
-        }
-        preference_fit = calculate_preference_fit(jd_preference_structured, preferences)
-        combined_score = int(match_result.get("final_rank_score", overall_score) or overall_score)
+        analyzed = analyze_job_record_once(record, profile_text, resume_text, preferences, fast=True)
+        if not analyzed:
+            continue
+        jd = analyzed["jd_analysis"]
+        job_type = analyzed["job_type"]
+        internship_opening = analyzed["internship_opening"]
+        fresh = analyzed["fresh_graduate"]
+        fit = analyzed["fit"]
+        match_result = analyzed["match_result"]
+        preference_fit = analyzed["preference_fit"]
+        combined_score = int(analyzed["final_rank_score"])
+        overall_score = int(analyzed["overall_score"])
+        career_target_fit_score = int(analyzed["career_target_fit_score"])
         resume_gaps = fit.get("missing", [])[:6]
         resume_hits = fit.get("matched", [])[:8]
         resume_evidence = fit.get("evidence", [])[:6]
 
-        fields = extract_card_fields_v2(record, text, jd)
+        fields = analyzed["fields"]
         record_url = preferred_jd_record_url(record)
         company = fields["company"]
         title = fields["title"]
@@ -11856,14 +12089,16 @@ def analyze_batch_jd_records(
         location = fields["location"]
         education = fields["education"]
         experience = fields["experience"]
-        region_info = classify_region(location, text)
-        if region_info["省份"] != "未识别":
-            fit["reasons"].append(f"省份识别：{region_info['省份']}")
-        confidence = extraction_confidence(fields, text, jd)
-        confidence_score = extraction_confidence_score(fields, text, jd)
-        gaps = list(dict.fromkeys((fit["missing"] or []) + resume_gaps))
-        recommendation = batch_recommendation(combined_score, jd, job_type, fresh)
-        next_action = next_action_for_job(combined_score, jd, job_type, internship_opening, gaps)
+        region_info = analyzed["region_info"]
+        province_value = region_info.get("省份") or region_info.get("鐪佷唤") or ""
+        if province_value and province_value != "未识别":
+            fit.setdefault("reasons", []).append(f"省份识别：{province_value}")
+        confidence = analyzed["confidence"]
+        confidence_score = analyzed["confidence_score"]
+        quality = analyzed["quality"]
+        gaps = list(dict.fromkeys((fit.get("missing") or []) + resume_gaps))
+        recommendation = analyzed["recommendation"]
+        next_action = analyzed["next_action"]
 
         rows.append(
             {
@@ -11880,6 +12115,7 @@ def analyze_batch_jd_records(
                 "career_mismatch_warnings": match_result.get("career_mismatch_warnings", []),
                 "salary_mismatch_warnings": preference_fit.get("salary_mismatch_warnings", []),
                 "preference_warnings": preference_fit.get("preference_warnings", []),
+                "input_quality": quality,
                 "序号": index,
                 "意向匹配度": combined_score,
                 "岗位推荐分": combined_score,
@@ -11899,6 +12135,8 @@ def analyze_batch_jd_records(
                 "风险扣分": fit.get("risk_penalty", ""),
                 "置信度": confidence,
                 "读取质量": confidence_score,
+                "信息质量": quality.get("message", ""),
+                "缺失字段": " / ".join(quality.get("missing_fields", [])),
                 "投递建议": recommendation,
                 "下一步动作": next_action,
                 "公司": company,
@@ -11917,11 +12155,11 @@ def analyze_batch_jd_records(
                 "低价值风险": "是" if jd.get("value", {}).get("is_generic_esg") else "否",
                 "风险标签": " / ".join(jd.get("value", {}).get("risk_tags", [])),
                 "技能关键词": " / ".join(jd_skill_list(jd)[:10]),
-                "匹配原因": "；".join(fit["reasons"]),
+                "匹配原因": "；".join(fit.get("reasons", [])),
                 "筛选评分依据": "；".join(fit.get("score_breakdown", [])),
                 "简历能力命中": " / ".join(resume_hits),
                 "筛选证据": "；".join(resume_evidence),
-                "未覆盖简历能力": " / ".join(gaps[:8]),
+                "未覆盖简历能力": join_items(gaps, 8),
                 "薪资判断": fit.get("salary_label", ""),
                 "来源": record.get("source", ""),
                 "页面": record.get("page_index", ""),
@@ -11936,7 +12174,6 @@ def analyze_batch_jd_records(
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     return sort_batch_rank_rows(df)
-
 
 def db_sql(sql: str) -> str:
     return storage_utils.db_sql(sql, use_postgres=USE_POSTGRES)
@@ -12236,6 +12473,7 @@ def save_user_profile(profile_id: int, name: str, content: str) -> None:
         db_connect=db_connect,
     )
     clear_runtime_data_cache()
+    clear_preference_dependent_results()
 
 
 def create_user_profile(name: str, content: str) -> int:
@@ -12247,6 +12485,7 @@ def create_user_profile(name: str, content: str) -> int:
         db_insert_and_get_id=db_insert_and_get_id,
     )
     clear_runtime_data_cache()
+    clear_preference_dependent_results()
     return new_id
 
 
@@ -12259,6 +12498,7 @@ def delete_user_profile(profile_id: int) -> bool:
     if st.session_state.get("active_profile_id") == profile_id:
         st.session_state.pop("active_profile_id", None)
     clear_runtime_data_cache()
+    clear_preference_dependent_results()
     return deleted
 
 
@@ -12387,6 +12627,7 @@ def save_target_preferences(preferences: dict[str, Any]) -> None:
             normalize_industry_direction_selection=normalize_industry_direction_selection,
         ),
     )
+    clear_preference_dependent_results()
 
 
 def target_preferences_text(preferences: dict[str, Any] | None = None) -> str:
@@ -12434,6 +12675,23 @@ def current_resume_fingerprint() -> str:
     )
 
 
+def generated_result_is_current(prefix: str) -> bool:
+    expected_jd = st.session_state.get(f"{prefix}_jd_fingerprint")
+    expected_resume = st.session_state.get(f"{prefix}_resume_fingerprint")
+    if expected_jd and expected_jd != current_jd_fingerprint():
+        return False
+    if expected_resume and expected_resume != current_resume_fingerprint():
+        return False
+    return True
+
+
+def warn_stale_generated_result(result_name: str) -> None:
+    ui_components.warning_card(
+        "结果已过期",
+        f"当前 JD 或简历已经变化，请重新生成{result_name}，避免继续使用旧结论。",
+    )
+
+
 def add_application(record: dict[str, Any]) -> None:
     user_data_utils.add_application_row(
         record,
@@ -12459,8 +12717,11 @@ def load_applications() -> pd.DataFrame:
 
 
 def save_application_edits(df: pd.DataFrame) -> None:
+    df_to_save = df.copy()
+    if "queue_date" in df_to_save.columns:
+        df_to_save["queue_date"] = pd.to_datetime(df_to_save["queue_date"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
     user_data_utils.save_application_edits_df(
-        df,
+        df_to_save,
         require_user_id=require_user_id,
         db_connect=db_connect,
     )
@@ -12541,33 +12802,6 @@ def safe_html(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def render_app_shell_header() -> None:
-    user = st.session_state.get(AUTH_SESSION_KEY) or {}
-    profile = get_active_profile()
-    resume = get_active_resume()
-    user_label = user.get("display_name") or user.get("email") or "未登录"
-    profile_label = profile.get("name") or "未设置"
-    resume_label = resume.get("name") or "未设置"
-    st.markdown(
-        f"""
-        <section class="cp-hero">
-            <div class="cp-hero-copy">
-                <div class="cp-hero-kicker">CareerPilot 工作台</div>
-                <h1 class="cp-hero-title">CareerPilot</h1>
-                <p class="cp-hero-subtitle">
-                    全职业岗位分析与求职决策工作台
-                </p>
-            </div>
-            <div class="cp-hero-pills">
-                <div class="cp-hero-pill"><span>当前用户</span><strong>{safe_html(user_label)}</strong></div>
-                <div class="cp-hero-pill"><span>目标档案</span><strong>{safe_html(profile_label)}</strong></div>
-                <div class="cp-hero-pill"><span>当前简历</span><strong>{safe_html(resume_label)}</strong></div>
-                <div class="cp-hero-pill"><span>版本</span><strong>{safe_html(APP_BUILD_LABEL)}</strong></div>
-            </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def render_sidebar_brand_panel() -> None:
@@ -12627,2949 +12861,8 @@ def render_auth_welcome_panel() -> None:
     )
 
 
-def render_main_workspace_nav() -> str:
-    current = st.session_state.get("main_workspace", "jd")
-    if current not in MAIN_WORKSPACE_LABELS:
-        current = "jd"
-        st.session_state.main_workspace = current
 
-    return st.radio(
-        "主工作区",
-        list(MAIN_WORKSPACE_LABELS.keys()),
-        format_func=lambda key: MAIN_WORKSPACE_LABELS.get(key, key),
-        horizontal=True,
-        label_visibility="collapsed",
-        key="main_workspace",
-    )
 
-
-def render_app_styles() -> None:
-    st.markdown(
-        r"""
-        <style>
-        :root {
-            --cp-bg: var(--background-color, #f6f7f4);
-            --cp-panel: var(--secondary-background-color, #ffffff);
-            --cp-panel-soft: color-mix(in srgb, var(--cp-panel) 92%, var(--cp-bg));
-            --cp-sidebar: color-mix(in srgb, var(--cp-panel) 88%, var(--cp-bg));
-            --cp-border: color-mix(in srgb, var(--text-color, #1d2520) 16%, transparent);
-            --cp-text: var(--text-color, #1d2520);
-            --cp-muted: color-mix(in srgb, var(--cp-text) 62%, transparent);
-            --cp-teal: var(--primary-color, #0f766e);
-            --cp-teal-dark: color-mix(in srgb, var(--cp-teal) 82%, var(--cp-text));
-            --cp-accent-soft: color-mix(in srgb, var(--cp-teal) 13%, var(--cp-panel));
-            --cp-accent-strong: color-mix(in srgb, var(--cp-teal) 22%, var(--cp-panel));
-            --cp-gold: #b7791f;
-            --cp-red: #c96a5a;
-            --cp-shadow-sm: 0 12px 26px rgba(15, 23, 42, 0.06);
-            --cp-shadow-md: 0 18px 40px rgba(15, 23, 42, 0.09);
-            --cp-shadow-lg: 0 28px 60px rgba(15, 23, 42, 0.12);
-            --cp-radius-md: 14px;
-            --cp-radius-lg: 22px;
-            --cp-button-height: 2.85rem;
-        }
-
-        html[data-theme="dark"],
-        body[data-theme="dark"],
-        .stApp[data-theme="dark"],
-        [data-theme="dark"],
-        html[data-cp-theme="dark"],
-        body[data-cp-theme="dark"],
-        .stApp[data-cp-theme="dark"],
-        [data-cp-theme="dark"],
-        html[data-base-theme="dark"],
-        body[data-base-theme="dark"],
-        .stApp[data-base-theme="dark"],
-        [data-base-theme="dark"],
-        html.cp-force-dark,
-        body.cp-force-dark,
-        .cp-force-dark {
-            --cp-bg: #0e1117;
-            --cp-panel: #151a24;
-            --cp-panel-soft: #1b2230;
-            --cp-sidebar: #111723;
-            --cp-border: rgba(255, 255, 255, 0.14);
-            --cp-text: #f5f7fb;
-            --cp-muted: rgba(245, 247, 251, 0.72);
-            --cp-teal: #34d3bf;
-            --cp-teal-dark: #d8fffa;
-            --cp-accent-soft: rgba(52, 211, 191, 0.14);
-            --cp-accent-strong: rgba(52, 211, 191, 0.22);
-            --cp-gold: #f2c879;
-            --cp-red: #ffb4ab;
-            --cp-shadow-sm: 0 12px 26px rgba(2, 6, 23, 0.28);
-            --cp-shadow-md: 0 18px 42px rgba(2, 6, 23, 0.34);
-            --cp-shadow-lg: 0 30px 66px rgba(2, 6, 23, 0.42);
-        }
-
-        .stApp {
-            background:
-                radial-gradient(circle at top left, color-mix(in srgb, var(--cp-teal) 8%, transparent), transparent 34%),
-                radial-gradient(circle at top right, color-mix(in srgb, var(--cp-gold) 7%, transparent), transparent 28%),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 12%, var(--cp-bg)), var(--cp-bg) 24%);
-            color: var(--cp-text);
-        }
-
-        div[data-testid="stAppViewContainer"],
-        section[data-testid="stMain"],
-        div[data-testid="stMainBlockContainer"],
-        div.block-container {
-            background: var(--cp-bg) !important;
-            color: var(--cp-text) !important;
-        }
-
-        header[data-testid="stHeader"] {
-            background: transparent;
-        }
-
-        .block-container {
-            max-width: 1280px;
-            padding-top: 2.1rem;
-            padding-bottom: 3rem;
-        }
-
-        section[data-testid="stSidebar"] {
-            background: var(--cp-sidebar) !important;
-            border-right: 1px solid var(--cp-border);
-            box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
-        }
-
-        section[data-testid="stSidebar"] > div {
-            background: var(--cp-sidebar) !important;
-        }
-
-        section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-        section[data-testid="stSidebar"] label,
-        [data-testid="stMarkdownContainer"] p,
-        [data-testid="stMarkdownContainer"] li,
-        [data-testid="stMarkdownContainer"] span,
-        [data-testid="stMarkdownContainer"] strong,
-        [data-testid="stMarkdownContainer"] code,
-        [data-testid="stCaptionContainer"] {
-            color: var(--cp-text);
-        }
-
-        [data-testid="stMarkdownContainer"] a {
-            color: var(--cp-teal-dark) !important;
-        }
-
-        .stRadio label,
-        .stRadio label p,
-        .stRadio div[role="radiogroup"] label,
-        .stRadio div[role="radiogroup"] label div,
-        .stRadio div[role="radiogroup"] label span,
-        div[data-baseweb="radio"] label,
-        div[data-baseweb="radio"] label p,
-        div[data-baseweb="radio"] label span {
-            color: var(--cp-text) !important;
-        }
-
-        .stRadio input[type="radio"],
-        input[type="radio"] {
-            accent-color: var(--cp-teal);
-        }
-
-        [data-testid="stRadio"] {
-            padding: 8px;
-            margin-bottom: 12px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            background: color-mix(in srgb, var(--cp-panel) 95%, var(--cp-accent-soft));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .stCheckbox label,
-        .stCheckbox label p,
-        div[data-baseweb="checkbox"] label,
-        div[data-baseweb="checkbox"] label p,
-        div[data-baseweb="checkbox"] label span,
-        input[type="checkbox"] + div,
-        input[type="checkbox"] + div p {
-            color: var(--cp-text) !important;
-        }
-
-        .stCheckbox input[type="checkbox"],
-        input[type="checkbox"] {
-            accent-color: var(--cp-teal);
-        }
-
-        h1, h2, h3 {
-            color: var(--cp-text);
-            letter-spacing: 0;
-        }
-
-        h4, h5, h6,
-        label,
-        small {
-            color: var(--cp-text);
-        }
-
-        hr {
-            border-color: var(--cp-border) !important;
-        }
-
-        h2, h3 {
-            margin-top: 1.25rem;
-        }
-
-        .cp-hero {
-            display: grid;
-            grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.95fr);
-            gap: 18px;
-            padding: 24px 24px 22px;
-            margin: 0 0 16px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 90%, transparent);
-            border-radius: var(--cp-radius-lg);
-            background:
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-panel) 90%, var(--cp-accent-soft)), var(--cp-panel) 48%),
-                var(--cp-panel);
-            box-shadow: var(--cp-shadow-md);
-        }
-
-        .cp-hero-copy {
-            min-width: 0;
-        }
-
-        .cp-hero-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-            padding: 6px 10px;
-            border-radius: 999px;
-            background: var(--cp-accent-soft);
-            color: var(--cp-teal-dark);
-            font-size: 12px;
-            font-weight: 800;
-            letter-spacing: 0.04em;
-        }
-
-        .cp-hero-title {
-            margin: 0;
-            font-size: clamp(1.8rem, 3vw, 2.6rem);
-            line-height: 1.08;
-            font-weight: 860;
-        }
-
-        .cp-hero-subtitle {
-            margin: 12px 0 0;
-            max-width: 760px;
-            color: var(--cp-muted);
-            font-size: 14px;
-            line-height: 1.75;
-        }
-
-        .cp-hero-pills {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            align-content: start;
-        }
-
-        .cp-hero-pill {
-            min-width: 0;
-            padding: 14px 14px 13px;
-            border-radius: var(--cp-radius-md);
-            border: 1px solid var(--cp-border);
-            background: color-mix(in srgb, var(--cp-panel) 86%, var(--cp-accent-soft));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-hero-pill span {
-            display: block;
-            margin-bottom: 6px;
-            color: var(--cp-muted);
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .cp-hero-pill strong {
-            display: block;
-            color: var(--cp-text);
-            font-size: 14px;
-            line-height: 1.45;
-            font-weight: 820;
-            word-break: break-word;
-        }
-
-        .cp-nav-shell {
-            margin: 0 0 18px;
-            padding: 14px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            background: color-mix(in srgb, var(--cp-panel) 92%, var(--cp-accent-soft));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-section-banner {
-            display: grid;
-            gap: 8px;
-            margin: 0 0 14px;
-            padding: 18px 18px 16px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            background:
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-panel) 92%, var(--cp-accent-soft)), var(--cp-panel)),
-                var(--cp-panel);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-section-heading {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .cp-section-badge {
-            padding: 5px 9px;
-            border-radius: 999px;
-            background: var(--cp-accent-soft);
-            color: var(--cp-teal-dark);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-        }
-
-        .cp-section-title {
-            color: var(--cp-text);
-            font-size: 20px;
-            line-height: 1.25;
-            font-weight: 840;
-        }
-
-        .cp-section-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.65;
-            max-width: 860px;
-        }
-
-        .cp-sidebar-brand {
-            margin: 0 0 12px;
-            padding: 18px 16px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            background:
-                linear-gradient(160deg, color-mix(in srgb, var(--cp-panel) 82%, var(--cp-accent-soft)), color-mix(in srgb, var(--cp-panel) 96%, transparent)),
-                var(--cp-panel);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-sidebar-kicker {
-            margin-bottom: 8px;
-            color: var(--cp-teal-dark);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
-
-        .cp-sidebar-title {
-            color: var(--cp-text);
-            font-size: 19px;
-            line-height: 1.25;
-            font-weight: 860;
-            margin-bottom: 8px;
-        }
-
-        .cp-sidebar-copy {
-            color: var(--cp-muted);
-            font-size: 12px;
-            line-height: 1.6;
-            margin-bottom: 10px;
-        }
-
-        .cp-sidebar-meta {
-            color: var(--cp-teal-dark);
-            font-size: 11px;
-            font-weight: 700;
-        }
-
-        .cp-sidebar-status {
-            display: grid;
-            gap: 10px;
-            margin: 0 0 12px;
-            padding: 14px;
-            border: 1px solid var(--cp-border);
-            border-radius: 16px;
-            background: color-mix(in srgb, var(--cp-panel) 95%, var(--cp-accent-soft));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-sidebar-status-row {
-            display: grid;
-            gap: 3px;
-        }
-
-        .cp-sidebar-status-row span {
-            color: var(--cp-muted);
-            font-size: 11px;
-            font-weight: 700;
-        }
-
-        .cp-sidebar-status-row strong {
-            color: var(--cp-text);
-            font-size: 13px;
-            line-height: 1.45;
-            font-weight: 800;
-            word-break: break-word;
-        }
-
-        .cp-auth-hero {
-            display: grid;
-            grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-            align-items: center;
-            gap: 18px;
-            margin: 0 0 20px;
-            padding: 24px 26px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 90%, transparent);
-            border-radius: 24px;
-            background:
-                radial-gradient(circle at top right, color-mix(in srgb, var(--cp-gold) 10%, transparent), transparent 35%),
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-panel) 89%, var(--cp-accent-soft)), var(--cp-panel) 50%);
-            box-shadow: 0 20px 44px rgba(15, 23, 42, 0.06);
-        }
-
-        .cp-auth-copy {
-            min-width: 0;
-        }
-
-        .cp-auth-kicker {
-            display: inline-flex;
-            padding: 6px 10px;
-            border-radius: 999px;
-            background: var(--cp-accent-soft);
-            color: var(--cp-teal-dark);
-            font-size: 12px;
-            font-weight: 800;
-            letter-spacing: 0.05em;
-            margin-bottom: 10px;
-        }
-
-        .cp-auth-title {
-            margin: 0;
-            color: var(--cp-text);
-            font-size: clamp(1.52rem, 2.7vw, 2.18rem);
-            line-height: 1.08;
-            font-weight: 860;
-            white-space: nowrap;
-        }
-
-        .cp-auth-subtitle {
-            margin: 12px 0 0;
-            max-width: 560px;
-            color: color-mix(in srgb, var(--cp-text) 76%, transparent);
-            font-size: 13px;
-            line-height: 1.75;
-        }
-
-        .cp-auth-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 16px;
-        }
-
-        .cp-auth-badges span {
-            display: inline-flex;
-            align-items: center;
-            min-height: 34px;
-            padding: 0 12px;
-            border-radius: 999px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 90%, transparent);
-            background: rgba(255, 255, 255, 0.56);
-            color: var(--cp-text);
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.02em;
-        }
-
-        .cp-auth-spotlight {
-            position: relative;
-            min-height: 138px;
-            overflow: hidden;
-            border-radius: 22px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 72%, transparent);
-            background:
-                radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--cp-teal) 20%, transparent), transparent 32%),
-                radial-gradient(circle at 78% 24%, color-mix(in srgb, var(--cp-gold) 26%, transparent), transparent 28%),
-                linear-gradient(145deg, rgba(255, 255, 255, 0.72), color-mix(in srgb, var(--cp-panel) 90%, var(--cp-accent-soft)));
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
-        }
-
-        .cp-auth-orbit {
-            position: absolute;
-            border-radius: 50%;
-            border: 1px dashed color-mix(in srgb, var(--cp-teal) 28%, transparent);
-            opacity: 0.7;
-        }
-
-        .cp-auth-orbit-one {
-            width: 120px;
-            height: 120px;
-            top: -18px;
-            right: 20px;
-        }
-
-        .cp-auth-orbit-two {
-            width: 170px;
-            height: 170px;
-            bottom: -58px;
-            left: -24px;
-            border-color: color-mix(in srgb, var(--cp-gold) 32%, transparent);
-        }
-
-        .cp-auth-spotlight-card {
-            position: absolute;
-            left: 20px;
-            right: 20px;
-            bottom: 18px;
-            padding: 16px 18px;
-            border-radius: 18px;
-            background: rgba(255, 255, 255, 0.84);
-            border: 1px solid rgba(255, 255, 255, 0.74);
-            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.10);
-            backdrop-filter: blur(14px);
-        }
-
-        .cp-auth-spotlight-label {
-            color: var(--cp-muted);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-        }
-
-        .cp-auth-spotlight-card strong {
-            display: block;
-            color: var(--cp-text);
-            font-size: 18px;
-            line-height: 1.2;
-            margin-bottom: 6px;
-        }
-
-        .cp-auth-spotlight-card span {
-            display: block;
-            color: color-mix(in srgb, var(--cp-text) 68%, transparent);
-            font-size: 12px;
-            line-height: 1.55;
-        }
-
-        .cp-auth-shell {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(360px, 0.96fr);
-            gap: 20px;
-            align-items: stretch;
-            margin: 0 0 12px;
-        }
-
-        .cp-auth-showcase,
-        .cp-auth-card {
-            height: 100%;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 86%, transparent);
-            border-radius: 26px;
-            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.05);
-        }
-
-        .cp-auth-showcase {
-            position: relative;
-            overflow: hidden;
-            padding: 26px 24px 22px;
-            background:
-                radial-gradient(circle at top left, color-mix(in srgb, var(--cp-teal) 16%, transparent), transparent 34%),
-                radial-gradient(circle at 84% 12%, color-mix(in srgb, var(--cp-gold) 17%, transparent), transparent 24%),
-                linear-gradient(165deg, color-mix(in srgb, var(--cp-panel) 95%, var(--cp-accent-soft)), color-mix(in srgb, var(--cp-panel) 90%, var(--cp-bg)));
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.34),
-                0 18px 38px rgba(15, 23, 42, 0.05);
-        }
-
-        .cp-auth-showcase::after {
-            content: "";
-            position: absolute;
-            inset: auto -30px -45px auto;
-            width: 180px;
-            height: 180px;
-            border-radius: 50%;
-            background: color-mix(in srgb, var(--cp-gold) 11%, transparent);
-            filter: blur(8px);
-        }
-
-        .cp-auth-showcase::before {
-            content: "";
-            position: absolute;
-            top: 18px;
-            right: 22px;
-            width: 92px;
-            height: 92px;
-            border-radius: 50%;
-            border: 1px dashed color-mix(in srgb, var(--cp-teal) 22%, transparent);
-            opacity: 0.6;
-        }
-
-        .cp-auth-showcase-inner {
-            position: relative;
-            z-index: 1;
-        }
-
-        .cp-auth-showcase h3 {
-            margin: 0 0 8px;
-            color: var(--cp-text);
-            font-size: 1.28rem;
-            line-height: 1.24;
-        }
-
-        .cp-auth-showcase-kicker {
-            display: inline-flex;
-            align-items: center;
-            min-height: 30px;
-            padding: 0 10px;
-            border-radius: 999px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 52%, transparent);
-            background: rgba(255, 255, 255, 0.58);
-            color: color-mix(in srgb, var(--cp-teal-dark) 78%, var(--cp-text));
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            margin-bottom: 12px;
-        }
-
-        .cp-auth-showcase p {
-            margin: 0;
-            color: color-mix(in srgb, var(--cp-text) 72%, transparent);
-            font-size: 13px;
-            line-height: 1.72;
-            max-width: 42ch;
-        }
-
-        .cp-auth-showcase-copy-line {
-            display: block;
-            white-space: nowrap;
-        }
-
-        .cp-auth-feature-list {
-            display: grid;
-            gap: 12px;
-            margin-top: 20px;
-        }
-
-        .cp-auth-feature {
-            display: grid;
-            grid-template-columns: 42px 1fr;
-            gap: 12px;
-            padding: 14px;
-            border-radius: 20px;
-            background: rgba(255, 255, 255, 0.64);
-            border: 1px solid color-mix(in srgb, var(--cp-border) 68%, transparent);
-            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.045);
-            backdrop-filter: blur(10px);
-        }
-
-        .cp-auth-feature-icon {
-            display: grid;
-            place-items: center;
-            width: 42px;
-            height: 42px;
-            border-radius: 14px;
-            background: linear-gradient(145deg, color-mix(in srgb, var(--cp-teal) 22%, white), color-mix(in srgb, var(--cp-gold) 16%, white));
-            color: var(--cp-teal-dark);
-            font-size: 16px;
-            font-weight: 900;
-        }
-
-        .cp-auth-feature strong {
-            display: block;
-            color: var(--cp-text);
-            font-size: 15px;
-            margin-bottom: 4px;
-        }
-
-        .cp-auth-feature span {
-            display: block;
-            color: color-mix(in srgb, var(--cp-text) 70%, transparent);
-            font-size: 12px;
-            line-height: 1.62;
-        }
-
-        .cp-auth-showcase-note {
-            margin-top: 18px;
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 10px;
-            padding-top: 14px;
-            border-top: 1px solid color-mix(in srgb, var(--cp-border) 46%, transparent);
-        }
-
-        .cp-auth-showcase-pill {
-            padding: 12px 12px 10px;
-            border-radius: 16px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 52%, transparent);
-            background: rgba(255, 255, 255, 0.5);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
-        }
-
-        .cp-auth-showcase-pill strong {
-            display: block;
-            color: var(--cp-text);
-            font-size: 13px;
-            margin-bottom: 3px;
-        }
-
-        .cp-auth-showcase-pill span {
-            display: block;
-            color: color-mix(in srgb, var(--cp-text) 66%, transparent);
-            font-size: 11px;
-            line-height: 1.6;
-        }
-
-        .cp-auth-card {
-            padding: 22px 22px 16px;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.84)),
-                linear-gradient(140deg, color-mix(in srgb, var(--cp-panel) 88%, var(--cp-accent-soft)), var(--cp-panel));
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.45),
-                0 18px 38px rgba(15, 23, 42, 0.05);
-        }
-
-        .cp-auth-card-head {
-            display: grid;
-            gap: 10px;
-            margin-bottom: 2px;
-            padding-bottom: 4px;
-            border-bottom: 1px solid color-mix(in srgb, var(--cp-border) 46%, transparent);
-        }
-
-        .cp-auth-tabs-gap {
-            height: 16px;
-        }
-
-        .cp-auth-card-kicker {
-            color: var(--cp-muted);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin: 0;
-        }
-
-        .cp-auth-card-title {
-            margin: 0;
-            color: var(--cp-text);
-            max-width: none;
-            font-size: clamp(1.44rem, 2.2vw, 1.88rem);
-            line-height: 1.2;
-            font-weight: 860;
-            letter-spacing: -0.02em;
-        }
-
-        .cp-auth-card-copy {
-            margin: 0;
-            max-width: none;
-            color: color-mix(in srgb, var(--cp-text) 68%, transparent);
-            font-size: 12px;
-            line-height: 1.75;
-            white-space: nowrap;
-        }
-
-        .cp-auth-card-title .cp-auth-title-line {
-            display: block;
-            white-space: nowrap;
-        }
-
-        .cp-auth-card-title .cp-auth-title-mid {
-            display: block;
-            margin-top: 4px;
-            white-space: nowrap;
-        }
-
-        .cp-auth-card-title .cp-auth-title-break {
-            display: block;
-            margin-top: 4px;
-            white-space: nowrap;
-        }
-
-        .cp-auth-card div[data-baseweb="tab-list"] {
-            margin-top: 0;
-            padding: 6px;
-            border-radius: 16px;
-            background: color-mix(in srgb, var(--cp-accent-soft) 66%, white);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-        }
-
-        .cp-auth-card div[data-baseweb="tab"] {
-            min-height: 42px;
-            border-radius: 12px;
-            font-weight: 800;
-        }
-
-        .cp-auth-card div[data-baseweb="tab-panel"] {
-            padding-left: 0;
-            padding-right: 0;
-            padding-top: 4px;
-        }
-
-        div[data-testid="stForm"] {
-            padding: 2px 0 0;
-            border: 0;
-            background: transparent;
-            box-shadow: none;
-        }
-
-        div[data-testid="stTextInputRootElement"] {
-            min-height: 44px;
-            border-radius: 15px;
-            width: 100%;
-            display: flex;
-            align-items: stretch;
-            overflow: hidden;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 249, 0.88)) !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 48%, rgba(255, 255, 255, 0.96)) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.86),
-                0 8px 18px rgba(15, 23, 42, 0.04) !important;
-            transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
-        }
-
-        div[data-testid="stTextInputRootElement"] > div {
-            min-height: 44px;
-            border-radius: 0;
-            background: transparent !important;
-            border: 0 !important;
-            box-shadow: none !important;
-            overflow: visible;
-            width: auto !important;
-            flex: 1 1 auto;
-        }
-
-        div[data-testid="stTextInputRootElement"]:focus-within {
-            border-color: color-mix(in srgb, var(--cp-teal) 24%, var(--cp-gold) 12%, rgba(255, 255, 255, 0.98)) !important;
-            box-shadow:
-                0 0 0 3px rgba(133, 160, 148, 0.10),
-                inset 0 1px 0 rgba(255, 255, 255, 0.9),
-                0 10px 22px rgba(15, 23, 42, 0.05) !important;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 248, 0.92)) !important;
-        }
-
-        div[data-testid="stTextInputRootElement"] input {
-            font-size: 14px !important;
-            color: var(--cp-text) !important;
-            padding-left: 2px !important;
-            width: 100% !important;
-        }
-
-        div[data-testid="stTextInputRootElement"] input::placeholder {
-            color: color-mix(in srgb, var(--cp-text) 38%, transparent) !important;
-        }
-
-        div[data-testid="stTextInputRootElement"] button {
-            min-width: 44px !important;
-            width: 44px !important;
-            border: 0 !important;
-            border-left: 1px solid color-mix(in srgb, var(--cp-border) 42%, transparent) !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            color: color-mix(in srgb, var(--cp-text) 86%, var(--cp-teal-dark)) !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            flex: 0 0 44px !important;
-        }
-
-        div[data-testid="stTextInputRootElement"] button:hover,
-        div[data-testid="stTextInputRootElement"] button:focus {
-            background: linear-gradient(180deg, rgba(245, 249, 247, 0.92), rgba(238, 244, 241, 0.88)) !important;
-            color: var(--cp-teal-dark) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] {
-            min-height: 44px !important;
-            display: flex !important;
-            align-items: center !important;
-            position: relative !important;
-            width: 100% !important;
-            overflow: hidden !important;
-            border-radius: 15px !important;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 249, 0.88)) !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 48%, rgba(255, 255, 255, 0.96)) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.86),
-                0 8px 18px rgba(15, 23, 42, 0.04) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"]:focus-within {
-            border-color: color-mix(in srgb, var(--cp-teal) 24%, var(--cp-gold) 12%, rgba(255, 255, 255, 0.98)) !important;
-            box-shadow:
-                0 0 0 3px rgba(133, 160, 148, 0.10),
-                inset 0 1px 0 rgba(255, 255, 255, 0.9),
-                0 10px 22px rgba(15, 23, 42, 0.05) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] input {
-            border: 0 !important;
-            box-shadow: none !important;
-            background: transparent !important;
-            width: 100% !important;
-            min-height: 42px !important;
-            padding: 0 12px !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] > div {
-            border: 0 !important;
-            box-shadow: none !important;
-            background: transparent !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] button {
-            min-width: 36px !important;
-            width: 36px !important;
-            height: 36px !important;
-            margin: 0 6px 0 0 !important;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 10px !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            color: color-mix(in srgb, var(--cp-text) 84%, var(--cp-teal-dark)) !important;
-            flex: 0 0 36px !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] button:hover,
-        .cp-auth-card div[data-baseweb="base-input"] button:focus {
-            background: rgba(236, 243, 240, 0.88) !important;
-            color: var(--cp-teal-dark) !important;
-        }
-
-        .cp-auth-card label[data-testid="stWidgetLabel"] p {
-            margin-bottom: 8px !important;
-            color: var(--cp-text) !important;
-            font-size: 13px !important;
-            font-weight: 800 !important;
-            letter-spacing: 0.01em;
-        }
-
-        .cp-auth-card [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 24px;
-        }
-
-        .cp-auth-form-note {
-            margin: 4px 0 14px;
-            color: var(--cp-muted);
-            font-size: 12px;
-            line-height: 1.6;
-        }
-
-        div[data-testid="stFormSubmitButton"] > button,
-        button[kind="primary"],
-        button[data-testid="stBaseButton-primary"] {
-            min-height: 46px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-gold) 10%, var(--cp-teal) 14%, rgba(255, 255, 255, 0.92)) !important;
-            border-radius: 16px !important;
-            color: color-mix(in srgb, var(--cp-teal-dark) 68%, var(--cp-gold) 12%, var(--cp-text)) !important;
-            background-color: rgba(255, 255, 255, 0.62) !important;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(255, 255, 255, 0.82),
-                    color-mix(in srgb, rgba(236, 244, 240, 0.82) 72%, rgba(247, 241, 233, 0.72))
-                ) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.82),
-                0 10px 24px rgba(15, 23, 42, 0.06),
-                0 2px 6px rgba(120, 145, 132, 0.05) !important;
-            backdrop-filter: blur(16px) saturate(1.05);
-            -webkit-backdrop-filter: blur(16px) saturate(1.05);
-            letter-spacing: 0.02em;
-            font-weight: 800 !important;
-            transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-        }
-
-        div[data-testid="stFormSubmitButton"] > button:hover,
-        button[kind="primary"]:hover,
-        button[data-testid="stBaseButton-primary"]:hover {
-            transform: translateY(-1px);
-            border-color: color-mix(in srgb, var(--cp-gold) 16%, var(--cp-teal) 18%, rgba(255, 255, 255, 0.94)) !important;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(255, 255, 255, 0.88),
-                    color-mix(in srgb, rgba(232, 243, 238, 0.88) 70%, rgba(247, 239, 229, 0.76))
-                ) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.86),
-                0 14px 28px rgba(15, 23, 42, 0.07),
-                0 4px 10px rgba(120, 145, 132, 0.06) !important;
-        }
-
-        div[data-testid="stFormSubmitButton"] > button:focus,
-        button[kind="primary"]:focus,
-        button[data-testid="stBaseButton-primary"]:focus {
-            box-shadow:
-                0 0 0 3px rgba(133, 160, 148, 0.12),
-                inset 0 1px 0 rgba(255, 255, 255, 0.84),
-                0 14px 28px rgba(15, 23, 42, 0.07) !important;
-        }
-
-        div[data-testid="stFormSubmitButton"] > button:active,
-        button[kind="primary"]:active,
-        button[data-testid="stBaseButton-primary"]:active {
-            transform: translateY(0);
-            box-shadow:
-                inset 0 2px 8px rgba(173, 190, 180, 0.24),
-                0 8px 18px rgba(15, 23, 42, 0.05) !important;
-        }
-
-        .cp-auth-tip {
-            margin-top: 16px;
-            padding: 12px 14px;
-            border-radius: 16px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 72%, transparent);
-            background: color-mix(in srgb, var(--cp-accent-soft) 55%, white);
-            color: color-mix(in srgb, var(--cp-text) 76%, transparent);
-            font-size: 12px;
-            line-height: 1.65;
-        }
-
-        .cp-overview-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-            margin: 0 0 12px;
-        }
-
-        .cp-overview-card {
-            border: 1px solid var(--cp-border);
-            border-radius: var(--cp-radius-md);
-            background: var(--cp-panel-soft);
-            padding: 10px 12px;
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-overview-label {
-            color: var(--cp-muted);
-            font-size: 12px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        .cp-overview-value {
-            color: var(--cp-text);
-            font-size: 16px;
-            font-weight: 800;
-            margin-bottom: 4px;
-        }
-
-        .cp-overview-copy {
-            color: var(--cp-muted);
-            font-size: 12px;
-            line-height: 1.45;
-        }
-
-        .cp-workspace-head {
-            display: flex;
-            align-items: flex-end;
-            justify-content: space-between;
-            gap: 16px;
-            margin: 4px 0 14px;
-        }
-
-        .cp-workspace-eyebrow {
-            color: var(--cp-teal-dark);
-            font-size: 12px;
-            font-weight: 800;
-            margin-bottom: 5px;
-        }
-
-        .cp-workspace-title {
-            color: var(--cp-text);
-            font-size: 23px;
-            line-height: 1.25;
-            font-weight: 850;
-            margin: 0 0 5px;
-        }
-
-        .cp-workspace-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.55;
-            max-width: 760px;
-        }
-
-        .cp-mode-note {
-            color: var(--cp-muted);
-            font-size: 12px;
-            line-height: 1.45;
-            text-align: right;
-            max-width: 250px;
-        }
-
-        .cp-panel-title {
-            color: var(--cp-text);
-            font-size: 17px;
-            font-weight: 800;
-            margin-bottom: 4px;
-        }
-
-        .cp-panel-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.55;
-            margin-bottom: 10px;
-        }
-
-        .cp-capture-panel {
-            margin: 0 0 12px;
-            padding: 16px 18px 14px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            background:
-                linear-gradient(140deg, color-mix(in srgb, var(--cp-panel) 96%, #f1efe7), var(--cp-panel)),
-                var(--cp-panel);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-capture-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 12px;
-        }
-
-        .cp-capture-kicker {
-            display: inline-flex;
-            padding: 5px 9px;
-            border-radius: 999px;
-            background: color-mix(in srgb, #ece6d7 86%, var(--cp-panel));
-            color: #6d5c34;
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            margin-bottom: 8px;
-        }
-
-        .cp-capture-title {
-            color: var(--cp-text);
-            font-size: 19px;
-            line-height: 1.25;
-            font-weight: 840;
-            margin-bottom: 0;
-        }
-
-        .cp-capture-help-badge {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 26px;
-            height: 26px;
-            border-radius: 999px;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, #d7c2b4);
-            background: color-mix(in srgb, var(--cp-panel) 94%, #f6ede6);
-            color: #7c5b49;
-            font-size: 13px;
-            font-weight: 900;
-            line-height: 1;
-            flex-shrink: 0;
-            cursor: help;
-        }
-
-        .cp-capture-tooltip {
-            position: static;
-            flex: 1 0 100%;
-            width: 100%;
-            max-height: 0;
-            padding: 0 14px;
-            border-radius: 14px;
-            border: 1px solid transparent;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 96%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 70%, var(--cp-panel)));
-            color: var(--cp-text);
-            box-shadow: none;
-            font-size: 12px;
-            line-height: 1.6;
-            text-align: left;
-            opacity: 0;
-            visibility: hidden;
-            overflow: hidden;
-            transform: translateY(-3px);
-            transition:
-                max-height 180ms ease,
-                padding 180ms ease,
-                border-color 180ms ease,
-                box-shadow 180ms ease,
-                opacity 140ms ease,
-                transform 140ms ease,
-                visibility 140ms ease;
-            z-index: 2;
-            pointer-events: auto;
-        }
-
-        .cp-capture-tooltip strong {
-            display: inline-block;
-            margin-bottom: 4px;
-            color: var(--cp-text);
-        }
-
-        .cp-capture-help-badge:hover + .cp-capture-tooltip,
-        .cp-capture-help-badge:focus + .cp-capture-tooltip,
-        .cp-capture-help-badge:focus-visible + .cp-capture-tooltip,
-        .cp-capture-tooltip:hover {
-            max-height: 240px;
-            padding: 12px 14px;
-            border-color: color-mix(in srgb, var(--cp-border) 86%, transparent);
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 66%, transparent),
-                0 14px 28px rgba(15, 23, 42, 0.08);
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0);
-        }
-
-        .cp-capture-actions {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            position: relative;
-            overflow: visible;
-            gap: 10px;
-            margin: 0 0 12px;
-        }
-
-        .cp-capture-link,
-        .cp-capture-ghost {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 44px;
-            padding: 0 16px;
-            border-radius: 12px;
-            text-decoration: none;
-            font-size: 13px;
-            font-weight: 800;
-            cursor: pointer;
-            transition:
-                transform 160ms ease,
-                box-shadow 160ms ease,
-                border-color 160ms ease,
-                background 160ms ease;
-        }
-
-        .cp-capture-link {
-            color: var(--cp-teal-dark) !important;
-            border: 1px solid color-mix(in srgb, var(--cp-teal) 34%, var(--cp-border));
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 48%, white),
-                color-mix(in srgb, var(--cp-panel) 38%, var(--cp-accent-strong))
-            );
-            box-shadow: 0 14px 28px color-mix(in srgb, var(--cp-teal) 12%, transparent);
-        }
-
-        .cp-capture-ghost {
-            color: color-mix(in srgb, var(--cp-text) 72%, var(--cp-teal-dark));
-            border: 1px solid color-mix(in srgb, var(--cp-border) 88%, transparent);
-            background: color-mix(in srgb, var(--cp-panel) 97%, #f8fbfa);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-capture-link:hover,
-        .cp-capture-ghost:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--cp-shadow-md);
-        }
-
-        .cp-capture-link:hover {
-            border-color: color-mix(in srgb, var(--cp-teal) 48%, var(--cp-border));
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 34%, white),
-                color-mix(in srgb, var(--cp-panel) 28%, var(--cp-accent-strong))
-            );
-        }
-
-        .cp-capture-ghost:hover {
-            border-color: color-mix(in srgb, var(--cp-teal) 24%, var(--cp-border));
-            color: color-mix(in srgb, var(--cp-text) 82%, var(--cp-teal-dark));
-            background: color-mix(in srgb, var(--cp-panel) 93%, var(--cp-accent-soft));
-        }
-
-        .cp-note {
-            color: var(--cp-muted);
-            font-size: 12px;
-            line-height: 1.65;
-            margin: 8px 0 12px;
-        }
-
-        .cp-note strong {
-            color: var(--cp-text);
-            font-weight: 800;
-        }
-
-        [data-testid="stDataFrame"] [role="columnheader"],
-        [data-testid="stDataEditor"] [role="columnheader"] {
-            justify-content: center !important;
-            text-align: center !important;
-        }
-
-        [data-testid="stDataFrame"],
-        [data-testid="stDataEditor"] {
-            font-size: 11.5px;
-            border: 1px solid var(--cp-border);
-            border-radius: 18px;
-            overflow: hidden;
-            box-shadow: var(--cp-shadow-sm);
-            background: color-mix(in srgb, var(--cp-panel) 98%, var(--cp-accent-soft));
-        }
-
-        [data-testid="stDataFrame"] > div,
-        [data-testid="stDataEditor"] > div {
-            border-radius: 18px;
-        }
-
-        .cp-empty-state {
-            border: 1px dashed var(--cp-border);
-            border-radius: var(--cp-radius-md);
-            background: var(--cp-panel-soft);
-            padding: 18px 18px 16px;
-            min-height: 238px;
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-empty-state-title {
-            color: var(--cp-text);
-            font-size: 18px;
-            font-weight: 820;
-            margin-bottom: 8px;
-        }
-
-        .cp-empty-state-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.6;
-            margin-bottom: 12px;
-        }
-
-        .cp-mini-steps {
-            display: grid;
-            gap: 8px;
-        }
-
-        .cp-mini-step {
-            display: grid;
-            grid-template-columns: 26px 1fr;
-            gap: 8px;
-            align-items: start;
-            color: var(--cp-text);
-            font-size: 13px;
-            line-height: 1.45;
-        }
-
-        .cp-mini-step-index {
-            width: 24px;
-            height: 24px;
-            border-radius: 999px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--cp-accent-soft);
-            color: var(--cp-teal-dark);
-            font-size: 12px;
-            font-weight: 800;
-        }
-
-        .cp-decision-card {
-            border: 1px solid var(--cp-border);
-            border-left: 4px solid var(--cp-teal);
-            border-radius: var(--cp-radius-md);
-            background: var(--cp-panel);
-            padding: 14px 16px;
-            margin-bottom: 10px;
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-decision-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.65;
-        }
-
-        .cp-decision-label {
-            color: var(--cp-muted);
-            font-size: 12px;
-            font-weight: 800;
-            margin-bottom: 5px;
-        }
-
-        .cp-decision-value {
-            color: var(--cp-text);
-            font-size: 24px;
-            line-height: 1.2;
-            font-weight: 860;
-            margin-bottom: 8px;
-        }
-
-        .cp-fact-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-            margin: 10px 0 0;
-        }
-
-        .cp-fact {
-            padding: 12px 13px;
-            border: 1px solid var(--cp-border);
-            border-radius: 14px;
-            background: color-mix(in srgb, var(--cp-panel) 94%, var(--cp-accent-soft));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-fact-label {
-            color: var(--cp-muted);
-            font-size: 11px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        .cp-fact-value {
-            color: var(--cp-text);
-            font-size: 15px;
-            line-height: 1.35;
-            font-weight: 820;
-        }
-
-        .cp-decision-copy {
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.55;
-        }
-
-        .cp-fact-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 8px;
-            margin: 10px 0;
-        }
-
-        .cp-fact {
-            border: 1px solid var(--cp-border);
-            border-radius: 8px;
-            background: var(--cp-panel-soft);
-            padding: 9px 10px;
-        }
-
-        .cp-fact-label {
-            color: var(--cp-muted);
-            font-size: 12px;
-            font-weight: 700;
-            margin-bottom: 3px;
-        }
-
-        .cp-fact-value {
-            color: var(--cp-text);
-            font-size: 14px;
-            line-height: 1.35;
-            font-weight: 780;
-        }
-
-        div[data-testid="stMetric"] {
-            background: var(--cp-panel);
-            border: 1px solid var(--cp-border);
-            border-radius: 8px;
-            padding: 12px 14px;
-        }
-
-        div[data-testid="stMetricLabel"] {
-            color: var(--cp-muted);
-        }
-
-        div[data-testid="stMetricValue"] {
-            color: var(--cp-text);
-            font-weight: 750;
-        }
-
-        div[data-testid="stMetricDelta"],
-        div[data-testid="stMetricDelta"] * {
-            color: var(--cp-text) !important;
-        }
-
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 6px;
-            border-bottom: 1px solid var(--cp-border);
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            border-radius: 6px 6px 0 0;
-            color: var(--cp-muted) !important;
-            font-size: 15px;
-            padding-left: 14px;
-            padding-right: 14px;
-        }
-
-        .stTabs [aria-selected="true"] {
-            color: var(--cp-teal-dark) !important;
-            background: var(--cp-accent-soft) !important;
-        }
-
-        .stTabs [data-baseweb="tab-panel"] {
-            background: transparent !important;
-            color: var(--cp-text) !important;
-        }
-
-        div[data-testid="stForm"] {
-            background: var(--cp-panel) !important;
-            border: 1px solid var(--cp-border) !important;
-            border-radius: 10px;
-            padding: 12px 14px 14px;
-        }
-
-        div[data-testid="stExpander"] {
-            background: var(--cp-panel);
-            border: 1px solid var(--cp-border);
-            border-radius: 8px;
-        }
-
-        div[data-testid="stExpander"] summary,
-        div[data-testid="stExpander"] summary p,
-        div[data-testid="stExpander"] summary span,
-        div[data-testid="stExpander"] summary svg {
-            color: var(--cp-text) !important;
-            fill: var(--cp-text) !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: var(--cp-panel) !important;
-            border: 1px solid var(--cp-border) !important;
-            border-radius: 10px;
-        }
-
-        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div {
-            color: var(--cp-text);
-        }
-
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"] {
-            border: 1px solid var(--cp-border);
-            border-radius: 8px;
-            overflow: hidden;
-            background: var(--cp-panel) !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="gridcell"],
-        div[data-testid="stDataEditor"] [role="gridcell"],
-        div[data-testid="stDataFrame"] [role="columnheader"],
-        div[data-testid="stDataEditor"] [role="columnheader"] {
-            background: var(--cp-panel) !important;
-            color: var(--cp-text) !important;
-            border-color: var(--cp-border) !important;
-        }
-
-        .stButton > button,
-        .stDownloadButton > button,
-        button[kind="secondary"],
-        div[data-testid="stFileUploader"] button,
-        [data-testid="stToolbar"] button,
-        [data-testid="baseButton-headerNoPadding"] {
-            min-height: var(--cp-button-height);
-            border-radius: 12px;
-            border: 1px solid color-mix(in srgb, var(--cp-teal) 22%, var(--cp-border));
-            color: color-mix(in srgb, var(--cp-text) 92%, #0b3f3a);
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 52%, #ffffff),
-                color-mix(in srgb, var(--cp-panel) 72%, var(--cp-accent-soft))
-            );
-            box-shadow: var(--cp-shadow-sm);
-            padding: 0.58rem 1rem;
-            font-weight: 800;
-            transition:
-                background-color 160ms ease,
-                border-color 160ms ease,
-                color 160ms ease,
-                box-shadow 160ms ease,
-                transform 160ms ease;
-        }
-
-        .stButton > button:hover,
-        .stDownloadButton > button:hover,
-        button[kind="secondary"]:hover,
-        div[data-testid="stFileUploader"] button:hover,
-        [data-testid="stToolbar"] button:hover,
-        [data-testid="baseButton-headerNoPadding"]:hover {
-            border-color: color-mix(in srgb, var(--cp-teal) 48%, var(--cp-border));
-            color: color-mix(in srgb, var(--cp-text) 90%, var(--cp-teal-dark));
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 40%, #ffffff),
-                color-mix(in srgb, var(--cp-panel) 58%, var(--cp-accent-strong))
-            );
-            box-shadow: var(--cp-shadow-md);
-            transform: translateY(-1px);
-        }
-
-        .stButton > button:active,
-        .stDownloadButton > button:active,
-        button[kind="secondary"]:active,
-        div[data-testid="stFileUploader"] button:active,
-        [data-testid="stToolbar"] button:active,
-        [data-testid="baseButton-headerNoPadding"]:active {
-            transform: translateY(0);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .stButton > button[kind="primary"] {
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 36%, #ffffff),
-                color-mix(in srgb, var(--cp-panel) 54%, var(--cp-accent-strong))
-            );
-            border-color: color-mix(in srgb, var(--cp-teal) 46%, var(--cp-border));
-            color: color-mix(in srgb, var(--cp-text) 92%, #0b3f3a);
-            box-shadow: 0 16px 34px color-mix(in srgb, var(--cp-teal) 16%, transparent);
-        }
-
-        .stButton > button[kind="primary"]:hover,
-        .stButton > button[kind="primary"]:focus-visible {
-            color: color-mix(in srgb, var(--cp-text) 90%, var(--cp-teal-dark)) !important;
-            border-color: color-mix(in srgb, var(--cp-teal) 58%, var(--cp-border));
-            background: linear-gradient(
-                135deg,
-                color-mix(in srgb, var(--cp-panel) 28%, #ffffff),
-                color-mix(in srgb, var(--cp-panel) 42%, var(--cp-accent-strong))
-            );
-            box-shadow: 0 20px 42px color-mix(in srgb, var(--cp-teal) 20%, transparent);
-        }
-
-        .stButton > button:disabled,
-        .stDownloadButton > button:disabled,
-        button[kind="secondary"]:disabled {
-            opacity: 0.56;
-            cursor: not-allowed;
-            transform: none !important;
-            box-shadow: none !important;
-        }
-
-        [data-testid="stToolbar"] {
-            gap: 0.35rem;
-        }
-
-        [data-testid="stToolbar"] button,
-        [data-testid="baseButton-headerNoPadding"] {
-            min-width: 2.7rem;
-            padding: 0.45rem !important;
-            background: color-mix(in srgb, var(--cp-panel) 86%, var(--cp-accent-soft)) !important;
-        }
-
-        [data-testid="stToolbar"] button svg,
-        [data-testid="baseButton-headerNoPadding"] svg {
-            width: 1.05rem;
-            height: 1.05rem;
-            fill: currentColor !important;
-            color: currentColor !important;
-        }
-
-        div[data-testid="stAlert"] {
-            border-radius: 14px;
-            border: 1px solid var(--cp-border);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        div[data-testid="stAlert"],
-        div[data-testid="stAlert"] *,
-        div[data-testid="stException"],
-        div[data-testid="stException"] * {
-            color: var(--cp-text) !important;
-        }
-
-        div[data-testid="stAlert"] code,
-        div[data-testid="stException"] code {
-            color: var(--cp-teal-dark) !important;
-        }
-
-        textarea,
-        input,
-        div[data-baseweb="select"] > div,
-        div[data-baseweb="base-input"] {
-            border-radius: 12px;
-            background: var(--cp-panel) !important;
-            color: var(--cp-text) !important;
-            border: 1px solid var(--cp-border) !important;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-            transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
-        }
-
-        textarea:focus,
-        input:focus,
-        div[data-baseweb="select"]:focus-within > div,
-        div[data-baseweb="base-input"]:focus-within {
-            border-color: color-mix(in srgb, var(--cp-teal) 55%, transparent) !important;
-            box-shadow:
-                0 0 0 1px color-mix(in srgb, var(--cp-teal) 28%, transparent),
-                0 0 0 5px color-mix(in srgb, var(--cp-teal) 12%, transparent) !important;
-        }
-
-        textarea::placeholder,
-        input::placeholder {
-            color: var(--cp-muted) !important;
-            opacity: 1;
-        }
-
-        div[data-baseweb="select"] svg,
-        div[data-baseweb="base-input"] svg {
-            fill: var(--cp-text) !important;
-        }
-
-        div[data-baseweb="select"] *,
-        div[data-baseweb="base-input"] * {
-            color: var(--cp-text) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] {
-            min-height: 44px !important;
-            display: flex !important;
-            align-items: center !important;
-            width: 100% !important;
-            overflow: hidden !important;
-            border-radius: 15px !important;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 249, 0.88)) !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 48%, rgba(255, 255, 255, 0.96)) !important;
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.86),
-                0 8px 18px rgba(15, 23, 42, 0.04) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"]:focus-within {
-            border-color: color-mix(in srgb, var(--cp-teal) 24%, var(--cp-gold) 12%, rgba(255, 255, 255, 0.98)) !important;
-            box-shadow:
-                0 0 0 3px rgba(133, 160, 148, 0.10),
-                inset 0 1px 0 rgba(255, 255, 255, 0.9),
-                0 10px 22px rgba(15, 23, 42, 0.05) !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] > div {
-            flex: 1 1 auto !important;
-            min-width: 0 !important;
-            border: 0 !important;
-            box-shadow: none !important;
-            background: transparent !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] input {
-            border: 0 !important;
-            box-shadow: none !important;
-            background: transparent !important;
-            width: 100% !important;
-            min-height: 42px !important;
-            padding: 0 12px !important;
-            font-size: 14px !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] button {
-            min-width: 36px !important;
-            width: 36px !important;
-            height: 36px !important;
-            margin: 0 6px 0 0 !important;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 10px !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            color: color-mix(in srgb, var(--cp-text) 84%, var(--cp-teal-dark)) !important;
-            flex: 0 0 36px !important;
-        }
-
-        .cp-auth-card div[data-baseweb="base-input"] button:hover,
-        .cp-auth-card div[data-baseweb="base-input"] button:focus {
-            background: rgba(236, 243, 240, 0.88) !important;
-            color: var(--cp-teal-dark) !important;
-        }
-
-        .cp-auth-card .cp-auth-password-input {
-            position: relative !important;
-        }
-
-        .cp-auth-card .cp-auth-password-input input {
-            padding-right: 44px !important;
-            -webkit-text-security: disc;
-        }
-
-        .cp-auth-card .cp-auth-password-input[data-password-visible="true"] input {
-            -webkit-text-security: none;
-        }
-
-        .cp-auth-card .cp-auth-password-toggle {
-            position: absolute;
-            right: 7px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 32px;
-            height: 32px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border: 0;
-            border-radius: 10px;
-            background: transparent;
-            color: color-mix(in srgb, var(--cp-text) 84%, var(--cp-teal-dark));
-            cursor: pointer;
-            z-index: 2;
-            transition: background 0.16s ease, color 0.16s ease;
-        }
-
-        .cp-auth-card .cp-auth-password-toggle:hover,
-        .cp-auth-card .cp-auth-password-toggle:focus {
-            background: rgba(236, 243, 240, 0.88);
-            color: var(--cp-teal-dark);
-            outline: none;
-        }
-
-        .cp-auth-card .cp-auth-password-toggle svg {
-            width: 18px;
-            height: 18px;
-            stroke: currentColor;
-            fill: none;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-        }
-
-        div[data-testid="stTextInput"] label,
-        div[data-testid="stTextArea"] label,
-        div[data-testid="stSelectbox"] label,
-        div[data-testid="stMultiSelect"] label,
-        div[data-testid="stNumberInput"] label,
-        div[data-testid="stDateInput"] label,
-        div[data-testid="stTimeInput"] label,
-        div[data-testid="stRadio"] label,
-        div[data-testid="stCheckbox"] label,
-        div[data-testid="stSlider"] label,
-        div[data-testid="stSelectSlider"] label,
-        div[data-testid="stFileUploader"] label {
-            color: var(--cp-text) !important;
-        }
-
-        div[data-testid="stNumberInput"] input,
-        div[data-testid="stDateInput"] input,
-        div[data-testid="stTimeInput"] input {
-            color: var(--cp-text) !important;
-            background: var(--cp-panel) !important;
-        }
-
-        div[data-testid="stTextInput"],
-        div[data-testid="stTextArea"],
-        div[data-testid="stSelectbox"],
-        div[data-testid="stMultiSelect"],
-        div[data-testid="stNumberInput"],
-        div[data-testid="stDateInput"],
-        div[data-testid="stTimeInput"],
-        div[data-testid="stRadio"],
-        div[data-testid="stCheckbox"],
-        div[data-testid="stSlider"],
-        div[data-testid="stSelectSlider"] {
-            color: var(--cp-text) !important;
-        }
-
-        div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-            background: color-mix(in srgb, var(--cp-teal) 14%, var(--cp-panel)) !important;
-            border: 1px solid color-mix(in srgb, var(--cp-teal) 26%, transparent) !important;
-            color: var(--cp-teal-dark) !important;
-        }
-
-        div[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
-        div[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
-            color: var(--cp-teal-dark) !important;
-            fill: var(--cp-teal-dark) !important;
-        }
-
-        div[data-baseweb="popover"],
-        div[data-baseweb="popover"] > div,
-        div[data-baseweb="popover"] ul,
-        div[data-baseweb="popover"] li,
-        div[data-baseweb="popover"] [role="listbox"] {
-            background: var(--cp-panel) !important;
-            color: var(--cp-text) !important;
-            border-color: var(--cp-border) !important;
-        }
-
-        div[data-baseweb="popover"] [role="option"] {
-            border-radius: 10px;
-            margin: 2px 6px;
-            color: var(--cp-text) !important;
-        }
-
-        div[data-baseweb="popover"] [role="option"]:hover {
-            background: color-mix(in srgb, var(--cp-teal) 8%, var(--cp-panel)) !important;
-        }
-
-        div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
-            background: color-mix(in srgb, var(--cp-teal) 14%, var(--cp-panel)) !important;
-            color: var(--cp-teal-dark) !important;
-        }
-
-        div[data-baseweb="popover"] [role="option"][aria-selected="true"] * {
-            color: var(--cp-teal-dark) !important;
-        }
-
-        div[data-testid="stFileUploader"] section {
-            background: var(--cp-panel) !important;
-            border: 1px dashed var(--cp-border) !important;
-            border-radius: 16px !important;
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        div[data-testid="stFileUploader"] small,
-        div[data-testid="stFileUploader"] span,
-        div[data-testid="stFileUploader"] p,
-        div[data-testid="stFileUploader"] svg {
-            color: var(--cp-text) !important;
-            fill: var(--cp-text) !important;
-        }
-
-        div[data-testid="stSlider"] label,
-        div[data-testid="stSlider"] span,
-        div[data-testid="stSlider"] p,
-        div[data-testid="stSelectSlider"] label,
-        div[data-testid="stSelectSlider"] span,
-        div[data-testid="stSelectSlider"] p {
-            color: var(--cp-text) !important;
-        }
-
-        div[data-baseweb="slider"] [role="slider"] {
-            background: var(--cp-teal) !important;
-            box-shadow: 0 0 0 2px color-mix(in srgb, var(--cp-teal) 18%, transparent) !important;
-        }
-
-        div[data-baseweb="slider"] > div > div {
-            background: color-mix(in srgb, var(--cp-teal) 28%, var(--cp-panel)) !important;
-        }
-
-        .stButton > button svg,
-        .stDownloadButton > button svg,
-        button[kind] svg,
-        [data-testid="stToolbar"] svg,
-        [data-testid="stDecoration"] svg {
-            fill: currentColor !important;
-            color: currentColor !important;
-        }
-
-        div[data-testid="stCodeBlock"],
-        pre,
-        code {
-            background: var(--cp-panel-soft) !important;
-        }
-
-        div[data-testid="stForm"],
-        div[data-testid="stExpander"],
-        details {
-            border: 1px solid var(--cp-border) !important;
-            border-radius: 18px !important;
-            background: color-mix(in srgb, var(--cp-panel) 96%, var(--cp-accent-soft)) !important;
-            box-shadow: var(--cp-shadow-sm);
-            overflow: hidden;
-        }
-
-        div[data-testid="stExpander"] summary,
-        details summary {
-            padding-top: 0.2rem;
-            padding-bottom: 0.2rem;
-        }
-
-        button[data-baseweb="tab"],
-        [data-baseweb="tab"] {
-            border-radius: 12px !important;
-        }
-
-        [data-baseweb="tab-list"] {
-            gap: 8px;
-        }
-
-        [data-baseweb="tab-highlight"] {
-            border-radius: 999px;
-            background: color-mix(in srgb, var(--cp-teal) 24%, transparent) !important;
-        }
-
-        div[role="radiogroup"] {
-            gap: 10px;
-        }
-
-        div[role="radiogroup"] label {
-            padding: 10px 14px;
-            border: 1px solid var(--cp-border);
-            border-radius: 14px;
-            background: color-mix(in srgb, var(--cp-panel) 96%, var(--cp-accent-soft));
-            transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-        }
-
-        div[role="radiogroup"] label:hover {
-            border-color: color-mix(in srgb, var(--cp-teal) 58%, transparent);
-            transform: translateY(-1px);
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        div[role="radiogroup"] label:has(input:checked) {
-            border-color: color-mix(in srgb, var(--cp-teal) 72%, transparent);
-            background: color-mix(in srgb, var(--cp-panel) 80%, var(--cp-accent-strong));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        div[role="radiogroup"] label:has(input:checked) span,
-        div[role="radiogroup"] label:has(input:checked) p {
-            color: var(--cp-teal-dark) !important;
-        }
-
-        section[data-testid="stSidebar"] [data-testid="stExpander"],
-        section[data-testid="stSidebar"] div[data-testid="stForm"] {
-            background: color-mix(in srgb, var(--cp-panel) 93%, var(--cp-accent-soft)) !important;
-        }
-
-        section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h4,
-        section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
-            color: var(--cp-text) !important;
-            letter-spacing: 0;
-        }
-
-        div[data-testid="stCodeBlock"],
-        div[data-testid="stCodeBlock"] *,
-        pre,
-        pre *,
-        code {
-            color: var(--cp-text) !important;
-            border-color: var(--cp-border) !important;
-        }
-
-        div[data-testid="stJson"] {
-            background: var(--cp-panel) !important;
-            border: 1px solid var(--cp-border) !important;
-            border-radius: 8px;
-        }
-
-        div[data-testid="stJson"] *,
-        div[data-testid="stTable"] *,
-        table,
-        table * {
-            color: var(--cp-text) !important;
-        }
-
-        div[data-testid="stTable"] table,
-        table {
-            background: var(--cp-panel) !important;
-            border-color: var(--cp-border) !important;
-        }
-
-        div[data-testid="stTable"] th,
-        div[data-testid="stTable"] td,
-        table th,
-        table td {
-            background: var(--cp-panel) !important;
-            border-color: var(--cp-border) !important;
-        }
-
-        /* Unified workspace panels and result surfaces */
-        .block-container {
-            max-width: 1440px;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            position: relative;
-            border-radius: 18px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 92%, var(--cp-panel))) !important;
-            box-shadow:
-                0 1px 0 color-mix(in srgb, #ffffff 74%, transparent) inset,
-                0 16px 34px rgba(15, 23, 42, 0.055) !important;
-            overflow: hidden;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::before {
-            content: "";
-            position: absolute;
-            inset: 0 0 auto;
-            height: 3px;
-            background: linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 72%, var(--cp-teal)));
-            opacity: 0.52;
-            pointer-events: none;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 14px !important;
-            box-shadow: none !important;
-            background: color-mix(in srgb, var(--cp-panel) 95%, var(--cp-bg)) !important;
-        }
-
-        .cp-panel-title {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            color: var(--cp-text);
-            font-size: 16px;
-            line-height: 1.35;
-            font-weight: 850;
-            letter-spacing: 0;
-            margin: 0 0 10px;
-        }
-
-        .cp-panel-title::before {
-            content: "";
-            width: 7px;
-            height: 22px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 70%, var(--cp-teal)));
-            box-shadow: 0 0 0 4px color-mix(in srgb, var(--cp-teal) 10%, transparent);
-            flex: 0 0 auto;
-        }
-
-        .cp-panel-copy,
-        .cp-note,
-        .cp-empty-state-copy,
-        .cp-decision-copy {
-            color: color-mix(in srgb, var(--cp-text) 68%, transparent);
-        }
-
-        .cp-section-banner {
-            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent);
-            border-radius: 18px;
-            padding: 14px 16px;
-            margin: 4px 0 14px;
-            background:
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-panel) 94%, var(--cp-accent-soft)), color-mix(in srgb, var(--cp-panel) 96%, #ffffff));
-            box-shadow: var(--cp-shadow-sm);
-        }
-
-        .cp-section-heading {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .cp-section-title {
-            color: var(--cp-text);
-            font-size: 17px;
-            font-weight: 850;
-            line-height: 1.3;
-        }
-
-        .cp-section-copy {
-            margin-top: 6px;
-            color: var(--cp-muted);
-            font-size: 13px;
-            line-height: 1.58;
-        }
-
-        .cp-section-badge {
-            display: inline-flex;
-            align-items: center;
-            min-height: 24px;
-            padding: 0 9px;
-            border-radius: 999px;
-            border: 1px solid color-mix(in srgb, var(--cp-teal) 24%, var(--cp-border));
-            background: color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel));
-            color: var(--cp-teal-dark);
-            font-size: 11px;
-            font-weight: 820;
-        }
-
-        .cp-decision-card,
-        .cp-empty-state,
-        .cp-fact,
-        .cp-overview-card,
-        div[data-testid="stMetric"],
-        div[data-testid="stExpander"],
-        div[data-testid="stAlert"],
-        div[data-testid="stCodeBlock"],
-        div[data-testid="stJson"],
-        div[data-testid="stTable"] {
-            border-radius: 16px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
-            box-shadow:
-                0 1px 0 color-mix(in srgb, #ffffff 62%, transparent) inset,
-                0 12px 26px rgba(15, 23, 42, 0.048) !important;
-        }
-
-        .cp-decision-card {
-            border-left: 0 !important;
-            padding: 16px 17px !important;
-            margin: 0 0 12px;
-        }
-
-        .cp-decision-card::before {
-            content: "";
-            display: block;
-            width: 38px;
-            height: 4px;
-            border-radius: 999px;
-            margin-bottom: 12px;
-            background: linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 68%, var(--cp-teal)));
-        }
-
-        .cp-decision-label,
-        .cp-fact-label,
-        div[data-testid="stMetricLabel"] {
-            color: color-mix(in srgb, var(--cp-muted) 86%, var(--cp-text)) !important;
-            font-size: 11.5px !important;
-            font-weight: 820 !important;
-            letter-spacing: 0.02em;
-        }
-
-        .cp-decision-value {
-            font-size: clamp(20px, 2vw, 26px);
-            letter-spacing: 0;
-        }
-
-        .cp-fact-grid,
-        .cp-overview-grid {
-            gap: 10px;
-        }
-
-        .cp-fact {
-            padding: 12px 13px !important;
-            border-radius: 14px !important;
-            min-height: 74px;
-        }
-
-        .cp-fact-value {
-            font-size: 14px;
-            line-height: 1.42;
-        }
-
-        .cp-empty-state {
-            min-height: 190px;
-            padding: 20px 18px 18px;
-            border-style: dashed !important;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-
-        .cp-empty-state-title {
-            font-size: 17px;
-            line-height: 1.35;
-        }
-
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px !important;
-            padding: 6px !important;
-            margin: 2px 0 12px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 78%, transparent) !important;
-            border-radius: 16px !important;
-            background: color-mix(in srgb, var(--cp-panel-soft) 82%, var(--cp-panel)) !important;
-            box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 58%, transparent);
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            min-height: 38px !important;
-            border-radius: 12px !important;
-            padding: 0 14px !important;
-            color: color-mix(in srgb, var(--cp-muted) 84%, var(--cp-text)) !important;
-            font-size: 13px !important;
-            font-weight: 800 !important;
-            letter-spacing: 0;
-            border: 1px solid transparent !important;
-        }
-
-        .stTabs [aria-selected="true"] {
-            color: var(--cp-teal-dark) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 92%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel))) !important;
-            border-color: color-mix(in srgb, var(--cp-teal) 22%, var(--cp-border)) !important;
-            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06) !important;
-        }
-
-        .stTabs [data-baseweb="tab-panel"] {
-            padding-top: 2px !important;
-        }
-
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"] {
-            border-radius: 16px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 82%, transparent) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 80%, var(--cp-panel))) !important;
-            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.055) !important;
-            overflow: hidden !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="columnheader"],
-        div[data-testid="stDataEditor"] [role="columnheader"] {
-            background: color-mix(in srgb, var(--cp-accent-soft) 76%, var(--cp-panel)) !important;
-            color: var(--cp-teal-dark) !important;
-            font-size: 12px !important;
-            font-weight: 850 !important;
-            border-color: color-mix(in srgb, var(--cp-border) 72%, transparent) !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="gridcell"],
-        div[data-testid="stDataEditor"] [role="gridcell"] {
-            background: color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
-            color: var(--cp-text) !important;
-            font-size: 12px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 60%, transparent) !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="row"]:hover [role="gridcell"],
-        div[data-testid="stDataEditor"] [role="row"]:hover [role="gridcell"] {
-            background: color-mix(in srgb, var(--cp-accent-soft) 52%, var(--cp-panel)) !important;
-        }
-
-        div[data-testid="stExpander"] {
-            overflow: hidden;
-        }
-
-        div[data-testid="stExpander"] summary {
-            min-height: 46px;
-            padding: 0 14px !important;
-            background: color-mix(in srgb, var(--cp-accent-soft) 44%, transparent);
-        }
-
-        div[data-testid="stExpander"] details > div {
-            padding: 12px 14px 14px !important;
-        }
-
-        div[data-testid="stAlert"] {
-            padding: 10px 12px !important;
-        }
-
-        div[data-testid="stAlert"] p {
-            font-size: 13px !important;
-            line-height: 1.55 !important;
-        }
-
-        div[data-testid="stTextArea"] textarea,
-        div[data-testid="stTextInputRootElement"],
-        div[data-baseweb="select"] > div,
-        div[data-testid="stNumberInput"] input,
-        div[data-testid="stFileUploader"] section {
-            border-radius: 14px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 76%, transparent) !important;
-            background: color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
-                0 8px 18px rgba(15, 23, 42, 0.035) !important;
-        }
-
-        div[data-testid="stTextArea"] textarea:focus,
-        div[data-testid="stTextInputRootElement"]:focus-within,
-        div[data-baseweb="select"] > div:focus-within,
-        div[data-testid="stNumberInput"] input:focus {
-            border-color: color-mix(in srgb, var(--cp-teal) 42%, var(--cp-border)) !important;
-            box-shadow:
-                0 0 0 3px color-mix(in srgb, var(--cp-teal) 12%, transparent),
-                inset 0 1px 0 color-mix(in srgb, #ffffff 74%, transparent) !important;
-        }
-
-        label[data-testid="stWidgetLabel"] p {
-            color: color-mix(in srgb, var(--cp-text) 86%, var(--cp-muted)) !important;
-            font-size: 12.5px !important;
-            font-weight: 820 !important;
-            margin-bottom: 6px !important;
-        }
-
-        div[data-testid="stMarkdownContainer"] h3,
-        div[data-testid="stMarkdownContainer"] h4,
-        div[data-testid="stMarkdownContainer"] h5 {
-            color: var(--cp-text);
-            letter-spacing: 0;
-        }
-
-        div[data-testid="stMarkdownContainer"] blockquote {
-            border-left: 4px solid var(--cp-teal);
-            background: color-mix(in srgb, var(--cp-accent-soft) 58%, var(--cp-panel));
-            border-radius: 0 14px 14px 0;
-            padding: 10px 12px;
-            color: var(--cp-text);
-        }
-
-        /* Premium surface pass: layered panels, refined outputs, richer result boxes */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            isolation: isolate;
-            border-radius: 22px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-border) 66%, #ffffff 18%) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 26%, transparent), transparent 42%),
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 30%, transparent), transparent 38%),
-                repeating-linear-gradient(90deg, color-mix(in srgb, var(--cp-text) 2.2%, transparent) 0 1px, transparent 1px 22px),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 92%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 82%, transparent),
-                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
-                0 22px 44px rgba(15, 23, 42, 0.075),
-                0 4px 12px rgba(15, 23, 42, 0.045) !important;
-            transition:
-                transform 180ms ease,
-                box-shadow 180ms ease,
-                border-color 180ms ease,
-                background-color 180ms ease;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-            transform: translateY(-1px);
-            border-color: color-mix(in srgb, var(--cp-teal) 26%, var(--cp-border)) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
-                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
-                0 28px 58px rgba(15, 23, 42, 0.09),
-                0 7px 18px rgba(15, 23, 42, 0.052) !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::before {
-            height: 4px;
-            background:
-                linear-gradient(90deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 74%, var(--cp-teal)), color-mix(in srgb, var(--cp-red) 34%, var(--cp-gold))) !important;
-            opacity: 0.78;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::after {
-            content: "";
-            position: absolute;
-            inset: 4px 1px auto;
-            height: 42px;
-            border-radius: 20px 20px 0 0;
-            background: linear-gradient(180deg, color-mix(in srgb, #ffffff 28%, transparent), transparent);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 18px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 58%, transparent) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 96%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 88%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent),
-                0 10px 22px rgba(15, 23, 42, 0.04) !important;
-        }
-
-        .cp-section-banner,
-        .cp-capture-panel,
-        .cp-workspace-head,
-        .cp-sidebar-brand,
-        .cp-sidebar-status {
-            border-color: color-mix(in srgb, var(--cp-border) 68%, #ffffff 18%) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 46%),
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 42%, transparent), color-mix(in srgb, var(--cp-panel) 96%, #ffffff)) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
-                0 18px 34px rgba(15, 23, 42, 0.065) !important;
-        }
-
-        .cp-section-banner {
-            position: relative;
-            overflow: hidden;
-            padding: 16px 18px;
-        }
-
-        .cp-section-banner::before {
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 14px;
-            bottom: 14px;
-            width: 4px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 78%, var(--cp-teal)));
-        }
-
-        .cp-section-heading,
-        .cp-section-copy {
-            margin-left: 8px;
-        }
-
-        .cp-decision-card,
-        .cp-empty-state,
-        .cp-fact,
-        .cp-overview-card,
-        div[data-testid="stMetric"],
-        div[data-testid="stExpander"],
-        div[data-testid="stAlert"],
-        div[data-testid="stCodeBlock"],
-        div[data-testid="stJson"],
-        div[data-testid="stTable"] {
-            border-radius: 18px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 64%, #ffffff 16%) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 22%, transparent), transparent 50%),
-                linear-gradient(145deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 90%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
-                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
-                0 16px 32px rgba(15, 23, 42, 0.065),
-                0 3px 9px rgba(15, 23, 42, 0.035) !important;
-        }
-
-        .cp-decision-card,
-        .cp-fact,
-        .cp-overview-card,
-        div[data-testid="stMetric"] {
-            position: relative;
-            overflow: hidden;
-        }
-
-        .cp-decision-card::after,
-        .cp-fact::after,
-        .cp-overview-card::after,
-        div[data-testid="stMetric"]::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background:
-                linear-gradient(90deg, color-mix(in srgb, var(--cp-teal) 8%, transparent), transparent 28%),
-                repeating-linear-gradient(0deg, color-mix(in srgb, var(--cp-text) 1.6%, transparent) 0 1px, transparent 1px 18px);
-            opacity: 0.52;
-            pointer-events: none;
-        }
-
-        .cp-decision-card > *,
-        .cp-fact > *,
-        .cp-overview-card > *,
-        div[data-testid="stMetric"] > * {
-            position: relative;
-            z-index: 1;
-        }
-
-        .cp-empty-state {
-            border-style: solid !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 44%),
-                repeating-linear-gradient(90deg, color-mix(in srgb, var(--cp-text) 2%, transparent) 0 1px, transparent 1px 24px),
-                linear-gradient(145deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 52%, var(--cp-panel))) !important;
-        }
-
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"] {
-            border-radius: 18px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 64%, #ffffff 18%) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 46%),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 88%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
-                0 20px 42px rgba(15, 23, 42, 0.075),
-                0 4px 12px rgba(15, 23, 42, 0.04) !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="columnheader"],
-        div[data-testid="stDataEditor"] [role="columnheader"] {
-            background:
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-accent-soft) 86%, #ffffff), color-mix(in srgb, var(--cp-accent-soft) 64%, var(--cp-panel))) !important;
-            border-color: color-mix(in srgb, var(--cp-border) 62%, transparent) !important;
-            text-transform: none;
-        }
-
-        div[data-testid="stDataFrame"] [role="gridcell"],
-        div[data-testid="stDataEditor"] [role="gridcell"] {
-            background: color-mix(in srgb, var(--cp-panel) 97%, #ffffff) !important;
-        }
-
-        div[data-testid="stDataFrame"] [role="row"]:nth-child(even) [role="gridcell"],
-        div[data-testid="stDataEditor"] [role="row"]:nth-child(even) [role="gridcell"] {
-            background: color-mix(in srgb, var(--cp-panel-soft) 44%, var(--cp-panel)) !important;
-        }
-
-        div[data-testid="stTextArea"] textarea,
-        div[data-testid="stTextInputRootElement"],
-        div[data-baseweb="select"] > div,
-        div[data-testid="stNumberInput"] input,
-        div[data-testid="stFileUploader"] section {
-            border-radius: 16px !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 20%, transparent), transparent),
-                color-mix(in srgb, var(--cp-panel) 98%, #ffffff) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 80%, transparent),
-                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 4%, transparent),
-                0 10px 22px rgba(15, 23, 42, 0.045) !important;
-        }
-
-        /* Density correction: keep nested output panels polished without crowding */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            overflow: visible !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 18%, transparent), transparent 46%),
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 24%, transparent), transparent 42%),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 90%, var(--cp-panel))) !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-            transform: none;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::after {
-            opacity: 0.42;
-        }
-
-        .cp-panel-title {
-            gap: 11px;
-            margin: 0 0 16px;
-            font-size: 17px;
-        }
-
-        .cp-panel-title::before {
-            width: 6px;
-            height: 30px;
-            box-shadow: 0 0 0 5px color-mix(in srgb, var(--cp-teal) 8%, transparent);
-        }
-
-        .cp-empty-state {
-            box-sizing: border-box;
-            width: 100%;
-            min-height: 148px;
-            margin: 4px 0 0;
-            padding: 26px 28px;
-            justify-content: center;
-            border-radius: 20px !important;
-            border-color: color-mix(in srgb, var(--cp-border) 58%, #ffffff 22%) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 24%, transparent), transparent 48%),
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-accent-soft) 34%, transparent), transparent 44%),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 99%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 78%, transparent),
-                0 14px 30px rgba(15, 23, 42, 0.058) !important;
-        }
-
-        .cp-empty-state-title {
-            max-width: 36rem;
-            font-size: clamp(18px, 1.6vw, 22px);
-            line-height: 1.32;
-            letter-spacing: 0;
-        }
-
-        .cp-empty-state-copy {
-            max-width: 38rem;
-            margin-top: 12px;
-            font-size: 14px;
-            line-height: 1.75;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] .cp-empty-state {
-            margin-top: 6px;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
-            overflow: visible !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 16%, transparent), transparent 42%),
-                linear-gradient(180deg, color-mix(in srgb, var(--cp-panel) 98%, #ffffff), color-mix(in srgb, var(--cp-panel-soft) 86%, var(--cp-panel))) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
-                0 8px 18px rgba(15, 23, 42, 0.036) !important;
-        }
-
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"],
-        .cp-decision-card,
-        .cp-fact,
-        .cp-overview-card,
-        div[data-testid="stMetric"] {
-            box-sizing: border-box;
-            max-width: 100%;
-        }
-
-        /* Glass composition: tinted parent surfaces + frosted child outputs */
-        [data-testid="stDeployButton"],
-        [data-testid="stBaseButton-header"]:has(span),
-        button[data-testid="stBaseButton-header"][kind="header"],
-        [data-testid="stToolbar"] [title="Deploy"],
-        [data-testid="stToolbar"] [aria-label="Deploy"] {
-            display: none !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 24px !important;
-            border: 1px solid color-mix(in srgb, var(--cp-teal) 18%, var(--cp-border)) !important;
-            background:
-                linear-gradient(145deg, color-mix(in srgb, var(--cp-teal) 12%, transparent), color-mix(in srgb, var(--cp-gold) 7%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 38%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 48%, transparent),
-                0 18px 38px rgba(15, 23, 42, 0.055) !important;
-            backdrop-filter: blur(10px) saturate(1.04);
-            -webkit-backdrop-filter: blur(10px) saturate(1.04);
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::before {
-            left: 18px;
-            right: auto;
-            top: 18px;
-            width: 8px;
-            height: 44px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 78%, var(--cp-teal))) !important;
-            box-shadow: 0 0 0 8px color-mix(in srgb, var(--cp-teal) 9%, transparent);
-            opacity: 0.9;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::after {
-            display: none;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title {
-            margin-left: 28px;
-            margin-bottom: 18px;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title::before {
-            display: none;
-        }
-
-        .cp-empty-state,
-        .cp-decision-card,
-        .cp-overview-card,
-        div[data-testid="stMetric"],
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"],
-        div[data-testid="stExpander"],
-        div[data-testid="stAlert"],
-        div[data-testid="stCodeBlock"],
-        div[data-testid="stJson"],
-        div[data-testid="stTable"] {
-            border-radius: 22px !important;
-            border: 1px solid color-mix(in srgb, #ffffff 50%, var(--cp-border)) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 58%, transparent), color-mix(in srgb, #ffffff 24%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 62%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 88%, transparent),
-                inset 0 -1px 0 color-mix(in srgb, var(--cp-text) 3%, transparent),
-                0 18px 36px rgba(15, 23, 42, 0.075) !important;
-            backdrop-filter: blur(18px) saturate(1.12);
-            -webkit-backdrop-filter: blur(18px) saturate(1.12);
-        }
-
-        .cp-empty-state {
-            min-height: 156px;
-            padding: 34px 40px;
-            margin: 8px 6px 0;
-        }
-
-        .cp-empty-state-title {
-            font-size: clamp(19px, 1.55vw, 24px);
-        }
-
-        .cp-empty-state-copy {
-            color: color-mix(in srgb, var(--cp-text) 62%, transparent);
-        }
-
-        /* Clean rebuild: Streamlit containers become quiet sections, content owns the shape */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            margin: 0 0 18px;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            backdrop-filter: none;
-            -webkit-backdrop-filter: none;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]::before,
-        div[data-testid="stVerticalBlockBorderWrapper"]::after {
-            display: none !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] > div {
-            padding: 0 !important;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title {
-            position: relative;
-            display: flex;
-            align-items: center;
-            min-height: 34px;
-            margin: 0 0 14px !important;
-            padding: 0 0 0 17px;
-            font-size: 18px;
-            font-weight: 860;
-            color: var(--cp-text);
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] .cp-panel-title::before {
-            display: block !important;
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 4px;
-            width: 5px;
-            height: 26px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, var(--cp-teal), color-mix(in srgb, var(--cp-gold) 74%, var(--cp-teal)));
-            box-shadow: 0 0 0 7px color-mix(in srgb, var(--cp-teal) 8%, transparent);
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.cp-panel-title) {
-            padding: 18px 18px 20px !important;
-            border-radius: 24px !important;
-            background:
-                linear-gradient(135deg, color-mix(in srgb, var(--cp-teal) 8%, transparent), color-mix(in srgb, var(--cp-gold) 5%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 36%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 38%, transparent),
-                0 16px 34px rgba(15, 23, 42, 0.045) !important;
-        }
-
-        .cp-empty-state {
-            min-height: 132px !important;
-            margin: 0 !important;
-            padding: 30px 34px !important;
-            border-radius: 24px !important;
-            border: 1px solid color-mix(in srgb, #ffffff 56%, var(--cp-border)) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 72%, transparent), color-mix(in srgb, #ffffff 34%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 72%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 92%, transparent),
-                0 18px 38px rgba(15, 23, 42, 0.07) !important;
-            backdrop-filter: blur(16px) saturate(1.08);
-            -webkit-backdrop-filter: blur(16px) saturate(1.08);
-        }
-
-        .cp-empty-state-title {
-            font-size: clamp(20px, 1.7vw, 25px) !important;
-            font-weight: 880;
-        }
-
-        .cp-empty-state-copy {
-            margin-top: 10px;
-            max-width: 34rem;
-            font-size: 14px;
-            line-height: 1.72;
-        }
-
-        .cp-decision-card,
-        .cp-overview-card,
-        .cp-fact,
-        div[data-testid="stMetric"] {
-            border-radius: 20px !important;
-            border: 1px solid color-mix(in srgb, #ffffff 46%, var(--cp-border)) !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 60%, transparent), color-mix(in srgb, #ffffff 22%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 68%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
-                0 14px 28px rgba(15, 23, 42, 0.06) !important;
-            backdrop-filter: blur(14px) saturate(1.08);
-            -webkit-backdrop-filter: blur(14px) saturate(1.08);
-        }
-
-        .cp-decision-card::before {
-            width: 30px;
-            height: 3px;
-            margin-bottom: 13px;
-            opacity: 0.9;
-        }
-
-        div[data-testid="stDataFrame"],
-        div[data-testid="stDataEditor"] {
-            border-radius: 20px !important;
-            background:
-                linear-gradient(180deg, color-mix(in srgb, #ffffff 64%, transparent), color-mix(in srgb, #ffffff 20%, transparent)),
-                color-mix(in srgb, var(--cp-panel) 74%, transparent) !important;
-            box-shadow:
-                inset 0 1px 0 color-mix(in srgb, #ffffff 86%, transparent),
-                0 14px 30px rgba(15, 23, 42, 0.062) !important;
-        }
-
-        @media (max-width: 760px) {
-            .block-container {
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-            .cp-hero {
-                grid-template-columns: 1fr;
-                padding: 20px 18px;
-            }
-            .cp-hero-pills {
-                grid-template-columns: 1fr;
-            }
-            .cp-auth-hero {
-                grid-template-columns: 1fr;
-                padding: 20px 18px;
-            }
-            .cp-auth-showcase,
-            .cp-auth-card {
-                padding-left: 18px;
-                padding-right: 18px;
-            }
-            .cp-auth-showcase-note {
-                grid-template-columns: 1fr;
-            }
-            .cp-overview-grid {
-                grid-template-columns: 1fr;
-            }
-            .cp-workspace-head {
-                display: block;
-            }
-            .cp-mode-note {
-                text-align: left;
-                margin-top: 8px;
-                max-width: none;
-            }
-            .cp-fact-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        </style>
-        <script>
-        (function() {
-          const root = document.documentElement;
-          const app = document.querySelector(".stApp");
-          const parseColor = (value) => {
-            const match = String(value || "").match(/(\d+)\D+(\d+)\D+(\d+)/);
-            return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
-          };
-          const luminance = (rgb) => rgb ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) : null;
-          const readDatasetTheme = (node) => {
-            if (!node?.dataset) return "";
-            return String(node.dataset.theme || node.dataset.baseTheme || node.dataset.cpTheme || "").toLowerCase();
-          };
-          const syncTheme = () => {
-            const styles = getComputedStyle(root);
-            const textRgb = parseColor(styles.getPropertyValue("--text-color") || styles.color);
-            const bgRgb = parseColor(styles.getPropertyValue("--background-color") || styles.backgroundColor);
-            const textLum = luminance(textRgb);
-            const bgLum = luminance(bgRgb);
-            const explicitTheme =
-              readDatasetTheme(root) ||
-              readDatasetTheme(document.body) ||
-              readDatasetTheme(app);
-            const isDark = explicitTheme
-              ? explicitTheme === "dark"
-              : (textLum !== null && textLum > 170) ||
-                (bgLum !== null && bgLum < 120) ||
-                !!window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-            root.classList.toggle("cp-force-dark", !!isDark);
-            root.dataset.cpTheme = isDark ? "dark" : "light";
-            if (document.body) document.body.classList.toggle("cp-force-dark", !!isDark);
-            if (document.body) document.body.dataset.cpTheme = isDark ? "dark" : "light";
-            if (app) app.dataset.cpTheme = isDark ? "dark" : "light";
-          };
-          syncTheme();
-          new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme", "data-base-theme"] });
-          if (document.body) {
-            new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ["class", "style", "data-theme", "data-base-theme"] });
-          }
-          window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", syncTheme);
-          setTimeout(syncTheme, 50);
-          setTimeout(syncTheme, 250);
-          setTimeout(syncTheme, 800);
-        })();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-    inject_global_styles()
 
 
 def public_export_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -16387,6 +13680,7 @@ def render_decision_workspace_heading() -> None:
     )
 
 
+
 def render_decision_empty_state(
     title: str = "还不能生成决策",
     detail: str | list[str] = "Offer预测需要先有一个明确的目标JD。请先在岗位工作台选择或录入目标岗位，再回到这里生成判断。",
@@ -16394,8 +13688,10 @@ def render_decision_empty_state(
 ) -> None:
     del badge
     if isinstance(detail, list):
-        detail = title
-        title = "还不能生成决策"
+        ui_components.empty_state(title, "")
+        for item in [str(step).strip() for step in detail if str(step).strip()]:
+            st.write(f"- {item}")
+        return
     ui_components.empty_state(title, str(detail))
 
 
@@ -16406,25 +13702,23 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
             ["确认目标 JD。", "选择公司层级、学历是否符合和英文能力。", "点击预测结果。"],
         )
         return
-    pass_rate = int(result.get("简历通过率", 0))
-    interview_rate = int(result.get("进入面试概率", 0))
-    offer_rate = int(result.get("拿 offer 概率", 0))
-    verdict = str(result.get("decision_tier") or "")
-    if not verdict:
-        if offer_rate >= 35:
-            verdict = "优先推进"
-        elif interview_rate >= 35:
-            verdict = "值得投递，先补证据"
-        else:
-            verdict = "备选或降优先级"
+    ranges = result.get("display_range") or {}
+    pass_range = str(ranges.get("简历通过率") or offer_probability_display_range(result.get("简历通过率", 0), int(result.get("sample_count", 0) or 0)))
+    interview_range = str(ranges.get("进入面试概率") or offer_probability_display_range(result.get("进入面试概率", 0), int(result.get("sample_count", 0) or 0)))
+    offer_range = str(ranges.get("拿 Offer 概率") or ranges.get("拿 offer 概率") or offer_probability_display_range(result.get("拿 offer 概率", 0), int(result.get("sample_count", 0) or 0)))
+    verdict = str(result.get("decision_tier") or "待判断")
+    sample_count = int(result.get("sample_count", (result.get("history") or {}).get("sample", 0)) or 0)
+    confidence = str(result.get("confidence_note") or result.get("confidence") or "中")
+    if sample_count < 5 and "低置信度" not in confidence:
+        confidence = f"低置信度估算：{confidence}"
     facts = [
-        ("简历通过", f"{pass_rate}%"),
-        ("进入面试", f"{interview_rate}%"),
-        ("拿 Offer", f"{offer_rate}%"),
+        ("简历通过", pass_range),
+        ("进入面试", interview_range),
+        ("拿 Offer", offer_range),
+        ("置信度", confidence),
+        ("历史样本", f"{sample_count} 条"),
         ("主要瓶颈", str(result.get("bottleneck", "待判断"))),
         ("最弱阶段", str(result.get("weakest_stage", "待判断"))),
-        ("可信度", str(result.get("confidence", "中"))),
-        ("短板数量", str(result.get("shortcomings", 0))),
     ]
     if result.get("career_families"):
         facts.append(("岗位族", " / ".join(result.get("career_families", [])[:2])))
@@ -16439,7 +13733,7 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
         '<div class="cp-decision-card">'
         '<div class="cp-decision-label">推进判断</div>'
         f'<div class="cp-decision-value">{safe_html(verdict)}</div>'
-        f'<div class="cp-decision-copy">{safe_html(result.get("scope_note", "把概率当作排序工具，不当作绝对结果；真正影响结果的是投递版简历和岗位证据。"))}</div>'
+        f'<div class="cp-decision-copy">{safe_html(result.get("scope_note", "区间只用于排序和行动优先级，不代表确定结果。"))}</div>'
         "</div>"
         f'<div class="cp-fact-grid">{fact_cards}</div>',
         unsafe_allow_html=True,
@@ -16464,8 +13758,11 @@ def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
         )
         return
     score = int(analysis.get("score", 0))
+    grade_info = analysis.get("evidence_grade") or {}
+    grade = str(grade_info.get("grade", "待判断"))
     facts = [
         ("价值评分", f"{score} / 100"),
+        ("证据等级", f"{grade}：{grade_info.get('reason', '待补充证据')}"),
         ("建议产出", f"{len(analysis.get('recommended_outputs', []))} 项"),
         ("入职前问题", f"{len(analysis.get('questions_to_ask', []))} 个"),
         ("第一周动作", f"{len(analysis.get('first_week_plan', []))} 项"),
@@ -16489,11 +13786,14 @@ def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
         f'<div class="cp-fact-grid">{fact_cards}</div>',
         unsafe_allow_html=True,
     )
+    if grade_info:
+        st.caption(
+            f"证据等级依据：项目线索 {grade_info.get('project_count', '0')}、导师/反馈 {grade_info.get('mentor_count', '0')}、交付物 {grade_info.get('output_count', '0')}、风险词 {grade_info.get('risk_count', '0')}。"
+        )
     st.markdown("##### 接 Offer 前先问")
     supportive_section_caption("internship")
     for item in analysis.get("questions_to_ask", [])[:4]:
         st.write(f"- {item}")
-
 
 def render_application_summary(df: pd.DataFrame) -> None:
     today = today_label()
@@ -16801,8 +14101,6 @@ def render_jd_workspace_heading() -> None:
     )
 
 
-def render_jd_empty_state() -> None:
-    ui_components.render_result_panel_empty()
 
 
 def single_jd_result_panel_data(jd_analysis: dict[str, Any], resume_match: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -16869,155 +14167,6 @@ def render_job_decision_snapshot(jd_analysis: dict[str, Any], resume_match: dict
         st.success("已加入今日求职队列。")
 
 
-def render_jd_tab() -> None:
-    def clear_jd_manual_text() -> None:
-        st.session_state["jd_manual_text"] = ""
-        st.session_state.pop("jd_analysis", None)
-        clear_jd_dependent_results()
-
-    def use_example_jd_text() -> None:
-        st.session_state["jd_manual_text"] = (
-            "岗位名称：数据分析实习生\n"
-            "工作地点：上海\n"
-            "岗位职责：协助业务团队搭建指标看板，使用 SQL / Excel 完成数据清洗、转化漏斗分析和周报输出；"
-            "根据运营活动数据提出优化建议。\n"
-            "任职要求：熟悉 Excel，了解 SQL 或 Python，有用户增长、运营分析或课程项目经验优先。"
-        )
-
-    left_col, right_col = st.columns([0.55, 0.45], gap="large")
-    with left_col:
-        with st.container(border=True):
-            ui_components.section_title("导入 JD", "粘贴岗位正文，或展开更多导入方式。")
-            text = st.text_area(
-                "粘贴 JD 文本",
-                height=230,
-                placeholder="粘贴招聘 JD、岗位描述或网页复制内容...",
-                key="jd_manual_text",
-            )
-            exported_jd_text = ""
-            upload_text = ""
-            crawled_jd_text = ""
-            use_extra_imports = st.checkbox("使用其他导入方式", value=False, key="jd_use_extra_imports")
-            if use_extra_imports:
-                import_modes = st.columns(3)
-                use_url_import = import_modes[0].checkbox("公开链接抓取", value=False, key="jd_use_url_import")
-                use_capture_import = import_modes[1].checkbox("一键网页采集", value=False, key="jd_use_capture_import")
-                use_file_import = import_modes[2].checkbox("上传文件", value=False, key="jd_use_file_import")
-
-                if use_url_import:
-                    with st.container(border=True):
-                        st.markdown("##### 公开链接抓取")
-                        url_block = st.text_area(
-                            "JD 链接（一行一个 URL）",
-                            height=100,
-                            placeholder="https://...\nhttps://...",
-                        )
-                        cols = st.columns([1, 3])
-                        max_workers = cols[0].slider("并发爬虫数", min_value=1, max_value=8, value=4)
-                        use_dynamic_crawl = cols[1].checkbox("启用内置增强解析", value=True)
-                        if cols[1].button("并发抓取 JD 链接"):
-                            urls = extract_urls(url_block)
-                            if not urls:
-                                st.warning("请先粘贴至少一个 JD 链接。")
-                            else:
-                                with st.spinner(f"正在并发抓取 {len(urls)} 个链接..."):
-                                    crawl_results = crawl_jd_urls(
-                                        urls,
-                                        max_workers=max_workers,
-                                        use_dynamic=use_dynamic_crawl,
-                                    )
-                                st.session_state.jd_crawl_results = crawl_results
-                                st.session_state.crawled_jd_text = "\n\n".join([item["text"] for item in crawl_results if item["ok"]])
-                                ok_count = sum(1 for item in crawl_results if item["ok"])
-                                if ok_count:
-                                    st.success(f"成功抓取 {ok_count}/{len(crawl_results)} 个链接。")
-                                else:
-                                    st.error("没有成功抓到可用 JD 文本，建议复制网页正文或上传截图。")
-                        crawled_jd_text = st.session_state.get("crawled_jd_text", "")
-                if use_capture_import:
-                    with st.container(border=True):
-                        user_id = current_user_id()
-                        upload_url = capture_upload_public_url()
-                        upload_token = get_or_create_capture_upload_token(user_id) if user_id else ""
-                        render_browser_capture_helper(upload_url, upload_token, key_prefix="jd_inline_helper")
-                        st.markdown("##### 一键网页采集结果")
-                        if st.button("同步采集结果", key="jd_scan_exports_inline"):
-                            text_from_export, table_from_export = scan_browser_export_folder(limit=1)
-                            st.session_state["jd_exported_text"] = text_from_export
-                            st.session_state["jd_exported_table"] = table_from_export
-                            if table_from_export.empty:
-                                st.warning("没有扫描到采集结果。")
-                            else:
-                                st.success(f"已导入 {len(table_from_export)} 个导出文件。")
-                        exported_table = st.session_state.get("jd_exported_table")
-                        if exported_table is not None and not exported_table.empty:
-                            render_user_dataframe(exported_table)
-                        exported_jd_text = st.session_state.get("jd_exported_text", "")
-
-                if use_file_import:
-                    with st.container(border=True):
-                        st.markdown("##### 上传文件")
-                        uploaded = st.file_uploader(
-                            "上传 JD 文件",
-                            type=["pdf", "docx", "txt", "md", "html", "htm", "xlsx", "xls", "csv", "png", "jpg", "jpeg", "webp"],
-                            key="jd_upload",
-                        )
-                        upload_text = extract_text_from_upload(uploaded) if uploaded else ""
-            action_cols = st.columns([2, 1, 1])
-            analyze_clicked = action_cols[0].button("分析 JD", type="primary", width="stretch")
-            action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
-            action_cols[2].button("示例 JD", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
-            if analyze_clicked:
-                full_text = "\n".join([text, exported_jd_text, crawled_jd_text, upload_text]).strip()
-                if not full_text:
-                    ui_components.warning_card("还没有导入JD", "请先粘贴岗位描述，或上传 JD 文件。")
-                else:
-                    set_current_target_jd(full_text, "单条JD分析", "手动导入JD")
-                    st.success("JD 分析完成，并已设为当前目标 JD。")
-
-    jd_analysis = st.session_state.get("jd_analysis")
-    with right_col:
-        st.markdown('<section class="cp-result-panel">', unsafe_allow_html=True)
-        ui_components.section_title("判断结果", "先看是否值得投，再看风险和行动。")
-        if jd_analysis:
-            result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
-            ui_components.render_result_panel(result_panel)
-            with st.expander("更多证据与缺口", expanded=False):
-                missing_items = result_panel.get("missing_requirements", []) or []
-                weak_items = result_panel.get("weak_requirements", []) or []
-                for item in missing_items[:4]:
-                    ui_components.gap_card(
-                        item.get("requirement", ""),
-                        item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写入简历。",
-                        "未找到真实证据，不建议直接写入简历。",
-                        item.get("importance", ""),
-                    )
-                for item in weak_items[:4]:
-                    ui_components.gap_card(
-                        item.get("requirement", ""),
-                        item.get("problem", "") or "有相关线索，但证据不够完整。",
-                        "有相关线索，但需要补充真实场景、动作和结果。",
-                        item.get("importance", ""),
-                    )
-                if not missing_items and not weak_items:
-                    ui_components.empty_state("暂无更多缺口", "完成简历匹配后，这里会显示弱证据和缺失要求。")
-            if st.button("加入今日队列", key="add_current_jd_today_queue_result_panel", width="stretch"):
-                add_current_jd_to_today_queue(jd_analysis, st.session_state.get("resume_match"))
-                st.toast("已加入今日求职队列。")
-        else:
-            render_jd_empty_state()
-        st.markdown("</section>", unsafe_allow_html=True)
-
-    if not jd_analysis:
-        return
-
-    basic = jd_analysis["basic"]
-    value = jd_analysis["value"]
-    score_tab, resume_tab = st.tabs(["评分拆解", "简历改法"])
-    with score_tab:
-        render_score_breakdown(jd_analysis, st.session_state.get("resume_match"))
-    with resume_tab:
-        render_resume_focus_plan(jd_analysis, st.session_state.get("resume_match"))
 
 
 def render_batch_jd_tab() -> None:
@@ -17041,6 +14190,16 @@ def render_batch_jd_tab() -> None:
         "分析前用详情页补全公司/岗位",
         value=False,
         key="batch_enrich_export_details",
+    )
+    detail_enrich_limit = st.number_input(
+        "详情页补全上限",
+        min_value=0,
+        max_value=20,
+        value=20,
+        step=1,
+        disabled=not enrich_export_details,
+        key="batch_detail_enrich_limit",
+        help="默认最多补全 20 条，避免一次性打开所有岗位详情页。",
     )
     if scan_cols[0].button("扫描并选择导入文件", type="primary"):
         with st.spinner("正在扫描采集结果..."):
@@ -17173,7 +14332,7 @@ def render_batch_jd_tab() -> None:
             st.warning("没有可分析的 JD。")
         else:
             if enrich_export_details:
-                detail_limit = len(records)
+                detail_limit = min(int(detail_enrich_limit or 0), len(records), 20)
                 with st.spinner(f"正在按本次选择的 {detail_limit} 条岗位补全详情页..."):
                     records = enrich_records_with_detail_pages(records, detail_limit)
                     records = dedupe_jd_records(records)
@@ -17231,9 +14390,12 @@ def render_batch_jd_tab() -> None:
         ui_components.empty_state("没有符合筛选条件的岗位", "放宽视图、关键词或最低推荐分后再查看。")
         return
 
+    display_df = view_df.head(50).reset_index(drop=True)
+    if len(view_df) > len(display_df):
+        st.caption(f"当前筛选结果 {len(view_df)} 条，列表仅展示 Top {len(display_df)}；可继续用关键词、省份或分数收窄。")
     selected_options = [
         f"{idx + 1}. {int(row.get('final_rank_score', 0) or 0)}分｜{row.get('公司', '') or '未识别公司'}｜{row.get('岗位', '') or '未识别岗位'}"
-        for idx, (_, row) in enumerate(view_df.iterrows())
+        for idx, (_, row) in enumerate(display_df.iterrows())
     ]
     selected_label = st.session_state.get("batch_selected_job_label")
     if selected_label not in selected_options:
@@ -17248,18 +14410,18 @@ def render_batch_jd_tab() -> None:
             label_visibility="collapsed",
         )
         selected_pos = selected_options.index(selected_label)
-        for pos, (_, row) in enumerate(view_df.head(12).iterrows()):
+        for pos, (_, row) in enumerate(display_df.head(12).iterrows()):
             render_batch_job_card(row, selected=pos == selected_pos)
         queue_count = min(5, len(view_df))
         if queue_count and st.button(f"把前 {queue_count} 个加入今日队列", key="batch_add_today_queue", width="stretch"):
             added = add_batch_rows_to_today_queue(view_df.head(queue_count))
             st.success(f"已加入今日求职队列：{added} 个岗位。")
     with detail_col:
-        selected_row = view_df.iloc[selected_options.index(selected_label)]
+        selected_row = display_df.iloc[selected_options.index(selected_label)]
         with st.container(border=True):
             render_batch_jd_detail(selected_row)
         with st.expander("设为目标 JD", expanded=False):
-            render_target_jd_picker(view_df.iloc[[selected_options.index(selected_label)]], "batch_jd", "批量JD筛选")
+            render_target_jd_picker(display_df.iloc[[selected_options.index(selected_label)]], "batch_jd", "批量JD筛选")
         with st.expander("查看紧凑结果表 / 分布", expanded=False):
             top_cols = [
                 "岗位推荐分",
@@ -17297,6 +14459,7 @@ def render_resume_tab() -> None:
     jd_analysis = st.session_state.get("jd_analysis")
     resume_match = st.session_state.get("resume_match")
     can_match = bool(jd_analysis and active_resume.get("content", "").strip())
+    resume_match_current = bool(resume_match and generated_result_is_current("resume_match"))
 
     left_col, right_col = st.columns([1.05, 0.95], gap="large")
     with left_col:
@@ -17333,12 +14496,14 @@ def render_resume_tab() -> None:
     with right_col:
         with st.container(border=True):
             st.markdown('<div class="cp-panel-title">匹配结论</div>', unsafe_allow_html=True)
-            if resume_match and can_match:
+            if resume_match and can_match and resume_match_current:
                 render_resume_match_snapshot(resume_match)
+            elif resume_match and can_match and not resume_match_current:
+                warn_stale_generated_result("简历匹配")
             else:
                 render_resume_empty_state(jd_analysis, active_resume, bool(resume_match))
 
-    if not resume_match or not can_match:
+    if not resume_match or not can_match or not resume_match_current:
         return
 
     summary_tab, rewrite_tab, evidence_tab, diagnosis_tab = st.tabs(["结论", "可直接改的简历句子", "证据与缺口", "明确短板"])
@@ -17511,6 +14676,9 @@ def render_custom_resume_tab() -> None:
 
     result = st.session_state.get("custom_resume")
     if not result:
+        return
+    if not generated_result_is_current("custom_resume"):
+        warn_stale_generated_result("定制简历")
         return
 
     targeted_revision = result.get("targeted_resume_revision", {}) or {}
@@ -17736,6 +14904,7 @@ def render_recruitment_monitor_tab() -> None:
             render_user_dataframe(history)
 
 
+
 def render_offer_prediction_tab() -> None:
     jd_analysis = st.session_state.get("jd_analysis")
     resume_match = st.session_state.get("resume_match")
@@ -17776,7 +14945,7 @@ def render_offer_prediction_tab() -> None:
     if not result:
         return
 
-    action_tab, factor_tab, funnel_tab = st.tabs(["执行清单", "影响因素", "漏斗图"])
+    action_tab, factor_tab, funnel_tab = st.tabs(["执行清单", "影响因素", "漏斗区间"])
     with action_tab:
         st.markdown("#### 直接执行")
         for item in result.get("actions", []):
@@ -17784,25 +14953,19 @@ def render_offer_prediction_tab() -> None:
         for item in result.get("application_steps", []):
             st.write(f"- {item}")
     with factor_tab:
-        for item in result["drivers"]:
+        for item in result.get("drivers", []):
             st.write(f"- {item}")
     with funnel_tab:
-        chart_df = pd.DataFrame(
+        ranges = result.get("display_range") or {}
+        range_df = pd.DataFrame(
             [
-                {"阶段": "简历通过", "概率": result["简历通过率"]},
-                {"阶段": "进入面试", "概率": result["进入面试概率"]},
-                {"阶段": "拿 Offer", "概率": result["拿 offer 概率"]},
+                {"阶段": "简历通过", "估算区间": ranges.get("简历通过率", "")},
+                {"阶段": "进入面试", "估算区间": ranges.get("进入面试概率", "")},
+                {"阶段": "拿 Offer", "估算区间": ranges.get("拿 Offer 概率", ranges.get("拿 offer 概率", ""))},
             ]
         )
-        fig = pretty_bar_chart(
-            chart_df,
-            x="阶段",
-            y="概率",
-            title="Offer 漏斗预测",
-            range_y=[0, 100],
-            sort_desc=False,
-        )
-        st.plotly_chart(fig, width="stretch")
+        st.caption("这里展示区间而不是单点概率，避免把估算误读成确定结论。")
+        render_user_dataframe(range_df)
 
 
 def render_interview_tab() -> None:
@@ -17810,7 +14973,7 @@ def render_interview_tab() -> None:
     with left_col:
         with st.container(border=True):
             ui_components.section_title("导入面经", "粘贴复盘或上传文件，优先提炼真实追问。")
-            text = st.text_area(
+            text_value = st.text_area(
                 "粘贴面经文本",
                 height=190,
                 placeholder="粘贴牛客、公众号、社群或个人复盘中的面经内容。建议一份面经一段；如果是批量总结，也可以连续粘贴多份。",
@@ -17823,12 +14986,10 @@ def render_interview_tab() -> None:
                     accept_multiple_files=True,
                 )
             source_items: list[tuple[str, str]] = []
-            if normalize_text(text):
-                source_items.append(("手动粘贴", text))
+            if normalize_text(text_value):
+                source_items.append(("手动粘贴", text_value))
             for uploaded in uploaded_files or []:
                 source_items.append((uploaded.name, extract_text_from_upload(uploaded)))
-            if source_items:
-                pass
 
             if st.button("提炼面试问题", type="primary", width="stretch"):
                 if not source_items:
@@ -17843,6 +15004,7 @@ def render_interview_tab() -> None:
     resume_match = st.session_state.get("resume_match")
     resume_text = profile_text_for_analysis()
     interview_gap_rows = build_interview_gap_rows_v2(jd_analysis, resume_match, interview_analysis, resume_text)
+    question_groups = interview_question_records(interview_analysis, jd_analysis, resume_match)
     personalized_answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
     with right_col:
         with st.container(border=True):
@@ -17860,10 +15022,10 @@ def render_interview_tab() -> None:
             st.markdown("#### 先练这些最贴当前简历的回答")
             render_user_dataframe(
                 pd.DataFrame(personalized_answers),
-                ["关联问题", "对应短板/主题", "当前风险", "建议回答"],
+                ["关联问题", "来源", "对应短板/主题", "证据来源", "当前风险", "建议回答"],
             )
         else:
-            pass
+            st.caption("暂无可生成的个性化回答。")
     with mapping_tab:
         if interview_gap_rows:
             st.markdown("#### 这次最该优先准备的短板题")
@@ -17873,7 +15035,7 @@ def render_interview_tab() -> None:
                 ["优先级", "短缺项", "差距类型", "简历为什么吃亏", "面经里怎么考", "为什么这题要优先准备", "建议准备重点"],
             )
         else:
-            pass
+            st.caption("暂无明确短板映射。")
     with insight_tab:
         source_df = pd.DataFrame(interview_analysis.get("source_summaries", []))
         if not source_df.empty:
@@ -17892,25 +15054,15 @@ def render_interview_tab() -> None:
         for item in interview_analysis.get("answer_templates", []):
             st.write(f"- {item}")
     with question_tab:
-        extracted_questions = interview_analysis.get("extracted_questions", {})
-        if any(extracted_questions.values()):
-            st.markdown("#### 从面经里整理出的问题")
-            cols = st.columns(2)
-            for idx, (category, questions) in enumerate(extracted_questions.items()):
-                with cols[idx % 2]:
-                    st.markdown(f"#### {category}")
-                    for question in questions:
-                        st.write(f"- {question}")
-        st.markdown("#### 按 JD 补齐的问题")
-        cols = st.columns(2)
-        for idx, (category, questions) in enumerate(interview_analysis["generated_questions"].items()):
-            with cols[idx % 2]:
-                st.markdown(f"#### {category}")
-                for question in questions:
-                    st.write(f"- {question}")
+        for group_name, rows in question_groups.items():
+            st.markdown(f"#### {group_name}")
+            if rows:
+                render_user_dataframe(pd.DataFrame(rows), ["问题", "来源"])
+            else:
+                st.caption("暂无问题。")
     with history_tab:
         cols = st.columns(2)
-        for idx, (category, questions) in enumerate(interview_analysis["buckets"].items()):
+        for idx, (category, questions) in enumerate(interview_analysis.get("buckets", {}).items()):
             with cols[idx % 2]:
                 st.markdown(f"#### {category}")
                 if questions:
@@ -17918,7 +15070,6 @@ def render_interview_tab() -> None:
                         st.write(f"- {question}")
                 else:
                     st.caption("暂无历史面经命中。")
-
 
 def render_internship_tab() -> None:
     active_profile = get_active_profile()
@@ -18013,6 +15164,9 @@ def render_gap_tab() -> None:
     if not st.session_state.get("resume_match"):
         st.info("请先在“简历匹配 > 简历解析与匹配”中使用当前简历完成匹配分析。")
         return
+    if not generated_result_is_current("resume_match"):
+        warn_stale_generated_result("简历匹配")
+        return
     if st.button("生成不足清单与努力方向", type="primary"):
         st.session_state.gap_analysis = build_gap_analysis(
             st.session_state.get("jd_analysis"),
@@ -18032,7 +15186,7 @@ def render_gap_tab() -> None:
     with action_tab:
         action_rows = pd.DataFrame(gap_analysis.get("action_rows", []))
         if not action_rows.empty:
-            preferred_cols = ["优先级", "短板", "今天就做", "交付物", "温和提醒", "不要写"]
+            preferred_cols = ["优先级", "短板", "今天就做", "交付物", "不能写什么"]
             show_cols = [col for col in preferred_cols if col in action_rows.columns]
             render_user_dataframe(action_rows, show_cols)
         else:
@@ -18068,6 +15222,7 @@ def render_gap_tab() -> None:
         st.markdown("#### 原优先级判断")
         priority_df = pd.DataFrame(gap_analysis["priorities"], columns=["优先级", "建议"])
         render_user_dataframe(priority_df)
+
 
 
 def render_applications_tab() -> None:
@@ -18115,7 +15270,8 @@ def render_applications_tab() -> None:
             interview_status = cols[1].selectbox("面试状态", ["未开始", "已投递", "笔试", "一面", "二面", "HR面", "已结束"])
             offer_status = cols[2].selectbox("Offer 状态", ["无", "等待中", "Offer", "拒绝", "放弃"])
             queue_cols = st.columns(2)
-            queue_date = queue_cols[0].text_input("计划日期", value="")
+            planned_date = queue_cols[0].date_input("计划日期", value=datetime.now().date(), format="YYYY-MM-DD")
+            queue_date = planned_date.strftime("%Y-%m-%d") if planned_date else ""
             next_action = queue_cols[1].text_input("下一步", value="")
             notes = st.text_area("备注", height=80)
             submitted = st.form_submit_button("加入投递库")
@@ -18139,6 +15295,7 @@ def render_applications_tab() -> None:
                     }
                 )
                 st.success("已加入投递库。")
+                st.rerun()
 
     if df.empty:
         return
@@ -18156,7 +15313,7 @@ def render_applications_tab() -> None:
             "is_high_value": st.column_config.CheckboxColumn("优先关注"),
             "is_generic_esg": st.column_config.CheckboxColumn("待核实风险"),
             "applied": st.column_config.CheckboxColumn("已投递"),
-            "queue_date": st.column_config.TextColumn("计划日期"),
+            "queue_date": st.column_config.DateColumn("计划日期", format="YYYY-MM-DD"),
             "next_action": st.column_config.TextColumn("下一步"),
             "company": st.column_config.TextColumn("公司"),
             "job_title": st.column_config.TextColumn("岗位"),
@@ -18177,6 +15334,7 @@ def render_applications_tab() -> None:
     if cols[0].button("保存表格修改"):
         save_application_edits(edited)
         st.success("修改已保存。")
+        st.rerun()
     delete_options = {
         f"{row.get('company', '未识别公司')}｜{row.get('job_title', '未识别岗位')}｜{row.get('interview_status', '')}": int(row["id"])
         for _, row in df.iterrows()
@@ -18186,13 +15344,40 @@ def render_applications_tab() -> None:
     if cols[2].button("删除选中记录"):
         if delete_label != "不删除":
             delete_application(delete_options[delete_label])
-            st.success("记录已删除，请刷新或重新进入页面查看。")
+            st.success("记录已删除。")
+            st.rerun()
         else:
             st.warning("请先选择要删除的记录。")
 
     excel = io.BytesIO()
     edited.to_excel(excel, index=False)
     st.download_button("导出投递表 Excel", excel.getvalue(), "applications.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+def resume_match_radar_dimensions(resume_match: dict[str, Any] | None) -> tuple[list[str], list[int]]:
+    if not resume_match:
+        return [], []
+    candidates = [
+        ("要求覆盖", resume_match.get("coverage_score")),
+        ("证据质量", resume_match.get("evidence_score")),
+        ("硬性门槛", resume_match.get("hard_requirement_score")),
+        ("语义贴合", resume_match.get("semantic_score")),
+        ("岗位匹配", resume_match.get("overall_score")),
+    ]
+    labels: list[str] = []
+    values: list[int] = []
+    for label, value in candidates:
+        if value is None:
+            continue
+        try:
+            labels.append(label)
+            values.append(int(np.clip(round(float(value)), 0, 100)))
+        except (TypeError, ValueError):
+            continue
+    if not labels:
+        labels = ["岗位匹配"]
+        values = [resume_match_overall_score(resume_match)]
+    return labels, values
 
 
 def render_dashboard_tab() -> None:
@@ -18251,23 +15436,14 @@ def render_dashboard_tab() -> None:
     with match_tab:
         st.markdown("#### 匹配度雷达图")
         if resume_match:
-            matched_names = resume_matched_requirement_names(resume_match)
-            missing_names = resume_missing_requirement_names(resume_match)
-            strength_texts = resume_strength_texts(resume_match)
-            matched_count = len(matched_names)
-            missing_count = len(missing_names)
-            hard_skill = max(20, min(100, 50 + matched_count * 8 - missing_count * 3))
-            tool_skill = 75 if any(skill in matched_names for skill in ["Python", "数据分析"]) else 45
-            english = 75 if "英文能力" in matched_names else 45
-            project = 80 if any("项目" in strength or "交付" in strength for strength in strength_texts) else 55
-            values = [hard_skill, tool_skill, english, project, resume_match_overall_score(resume_match)]
-            labels = ["硬技能", "工具/数据", "英文", "项目经历", "岗位匹配"]
+            labels, values = resume_match_radar_dimensions(resume_match)
             go = get_plotly_graph_objects()
             fig = go.Figure(
                 data=go.Scatterpolar(r=values + [values[0]], theta=labels + [labels[0]], fill="toself")
             )
             fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False)
             st.plotly_chart(fig, width="stretch")
+            render_user_dataframe(pd.DataFrame({"维度": labels, "得分": values}))
         else:
             st.caption("暂无简历匹配数据。")
 
@@ -18302,388 +15478,14 @@ def render_dashboard_tab() -> None:
             st.caption("暂无投递数据。")
 
 
-def render_jd_workspace_tab() -> None:
-    render_jd_workspace_heading()
-    mode = ui_components.pill_nav(APP_NAVIGATION["jd_modes"], st.session_state.get("jd_workspace_mode", APP_NAVIGATION["jd_modes"][0]), key="jd_workspace_mode")
-    if mode == "单条JD分析":
-        render_jd_tab()
-    elif mode == "批量JD筛选":
-        render_batch_jd_tab()
-    else:
-        render_recruitment_monitor_tab()
 
 
-def render_resume_workspace_tab() -> None:
-    render_resume_workspace_heading()
-    mode = ui_components.pill_nav(APP_NAVIGATION["resume_modes"], st.session_state.get("resume_workspace_mode", APP_NAVIGATION["resume_modes"][0]), key="resume_workspace_mode")
-    if mode == "简历解析与匹配":
-        render_resume_tab()
-    elif mode == "定制简历":
-        render_custom_resume_tab()
-    else:
-        render_gap_tab()
 
 
-def render_decision_workspace_tab() -> None:
-    render_decision_workspace_heading()
-    mode = ui_components.pill_nav(APP_NAVIGATION["decision_modes"], st.session_state.get("decision_workspace_mode", APP_NAVIGATION["decision_modes"][0]), key="decision_workspace_mode")
-    if mode == "Offer预测":
-        render_offer_prediction_tab()
-    elif mode == "实习评估":
-        render_internship_tab()
-    else:
-        render_applications_tab()
 
 
-def render_interview_report_workspace_tab() -> None:
-    render_interview_report_workspace_heading()
-    mode = ui_components.pill_nav(APP_NAVIGATION["report_modes"], st.session_state.get("report_workspace_mode", APP_NAVIGATION["report_modes"][0]), key="report_workspace_mode")
-    if mode == "面经分析":
-        render_interview_tab()
-    else:
-        render_dashboard_tab()
 
 
-def render_sidebar() -> None:
-    user = st.session_state.get(AUTH_SESSION_KEY) or {}
-    profiles = load_user_profiles()
-    active_profile = get_active_profile()
-    prefs = load_target_preferences()
-    resumes = load_user_resumes()
-    active_resume = get_active_resume()
-    profile_name_label = active_profile.get("name") or "未设置"
-    selected_industries, selected_directions = normalize_industry_direction_selection(
-        prefs.get("preferred_industries", []),
-        prefs.get("target_roles", []),
-    )
-    ui_components.render_sidebar_profile_card(
-        user.get("display_name") or user.get("email") or "未登录",
-        active_resume.get("name") or "未设置",
-        profile_name_label,
-        APP_BUILD_LABEL,
-    )
-    render_sidebar_status_card(
-        user.get("display_name") or user.get("email") or "未登录",
-        profile_name_label,
-        compact_list_text(prefs.get("target_cities", [])),
-        active_resume.get("name") or "未设置",
-    )
-    if user:
-        if st.sidebar.button("退出登录", key="logout_user_btn"):
-            logout_app_user()
-            st.rerun()
-        upload_url = capture_upload_public_url()
-        upload_token = get_or_create_capture_upload_token(int(user["id"]))
-        st.sidebar.markdown("#### 一键网页采集")
-        render_browser_capture_helper(upload_url, upload_token, key_prefix="sidebar")
-    st.sidebar.markdown("#### 求职目标")
-    st.sidebar.caption(profile_name_label)
-    if active_profile.get("content"):
-        st.sidebar.write(compact_profile_summary(active_profile.get("content", "")))
-    st.sidebar.caption("目标行业/方向：" + industry_selection_summary(selected_industries, selected_directions))
-    st.sidebar.caption("城市：" + compact_list_text(prefs.get("target_cities", [])))
-    st.sidebar.markdown("#### 当前简历")
-    st.sidebar.caption(active_resume.get("name") or "未设置")
-    if not st.sidebar.checkbox("编辑目标/简历", value=False, key="sidebar_editors_enabled"):
-        return
-
-    with st.sidebar.expander("编辑求职目标", expanded=profiles.empty):
-        profile_name = st.text_input(
-            "目标名称",
-            value=active_profile.get("name", ""),
-            key=f"target_goal_name_{active_profile.get('id') or 'new'}",
-        )
-        with st.container(border=True):
-            st.markdown("##### 目标行业与方向")
-            industry_summary = compact_list_text(selected_industries) if selected_industries else "未选择"
-            industry_expander_key = "target_industry_expander_open"
-            if industry_expander_key not in st.session_state:
-                st.session_state[industry_expander_key] = True
-            with st.expander(f"目标行业：{industry_summary}", expanded=bool(st.session_state[industry_expander_key])):
-                selected_industries = st.multiselect(
-                    "目标行业",
-                    RECRUITMENT_INDUSTRY_OPTIONS,
-                    default=selected_industries,
-                    key="target_industry_selector",
-                    placeholder="先选择一个或多个目标行业",
-                    label_visibility="collapsed",
-                    on_change=collapse_expander_state,
-                    args=(industry_expander_key,),
-                )
-            selected_industries, selected_directions = normalize_industry_direction_selection(
-                selected_industries,
-                selected_directions,
-            )
-            if selected_industries:
-                updated_directions: list[str] = []
-                for industry in selected_industries:
-                    active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
-                    current_directions = [direction for direction in selected_directions if direction in active_options]
-                    direction_summary = compact_list_text(current_directions) if current_directions else "未选择"
-                    direction_expander_key = f"target_direction_expander_open_{sanitize_capture_filename(industry)}"
-                    if direction_expander_key not in st.session_state:
-                        st.session_state[direction_expander_key] = True
-                    with st.expander(
-                        f"{industry} - 二级方向：{direction_summary}",
-                        expanded=bool(st.session_state[direction_expander_key]),
-                    ):
-                        chosen_directions = st.multiselect(
-                            f"{industry} 二级方向",
-                            active_options,
-                            default=current_directions,
-                            key=f"target_direction_selector_{industry}",
-                            placeholder=f"为「{industry}」选择二级方向",
-                            label_visibility="collapsed",
-                            on_change=collapse_expander_state,
-                            args=(direction_expander_key,),
-                        )
-                    updated_directions.extend(chosen_directions)
-                selected_directions = updated_directions
-            else:
-                selected_directions = []
-        with st.container(border=True):
-            st.markdown("##### 城市偏好")
-            selected_cities = free_input_multiselect(
-                "意向城市",
-                CHINA_CITY_OPTIONS,
-                split_preference_items(prefs.get("target_cities", [])),
-                key="target_city_selector",
-                help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以直接输入新城市后回车确认。",
-            )
-            target_city_strict = st.checkbox(
-                "城市严格匹配",
-                value=bool(prefs.get("target_city_strict")),
-                help="开启后，批量岗位排序会对不在目标城市的岗位设置更低推荐分上限。",
-            )
-        with st.container(border=True):
-            st.markdown("##### 薪资层级")
-            target_salary_enabled = st.checkbox(
-                "启用目标薪资偏好",
-                value=bool(prefs.get("target_salary_enabled")),
-                help="目标薪资只影响批量 JD 推荐排序，不影响简历匹配分和根据 JD 改简历。",
-            )
-            salary_cols = st.columns([1, 1, 0.86])
-            min_monthly_salary = salary_cols[0].number_input(
-                "最低月薪",
-                min_value=0,
-                max_value=200000,
-                step=1000,
-                value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
-                disabled=not target_salary_enabled,
-            )
-            max_monthly_salary = salary_cols[1].number_input(
-                "期望上限",
-                min_value=0,
-                max_value=300000,
-                step=1000,
-                value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
-                disabled=not target_salary_enabled,
-                help="不填或为 0 表示只看最低要求。",
-            )
-            salary_strict = salary_cols[2].checkbox(
-                "严格",
-                value=bool(prefs.get("salary_strict")),
-                disabled=not target_salary_enabled,
-                help="开启后，明显低于目标薪资的岗位推荐分会封顶到 50。",
-            )
-        job_keywords = st.text_input(
-            "岗位关键词",
-            value="、".join(split_preference_items(prefs.get("job_keywords", []))),
-        )
-        profile_content = st.text_area(
-            "目标说明",
-            value=active_profile.get("content", ""),
-            height=160,
-            key=f"target_goal_content_{active_profile.get('id') or 'new'}",
-        )
-        show_advanced_goal = st.checkbox("显示高级偏好", value=False, key="show_advanced_goal_preferences")
-        if show_advanced_goal:
-            avoid_keywords = st.text_area("排除关键词", value=str(prefs.get("avoid_keywords", "")), height=72)
-            notes = st.text_area("补充偏好", value=str(prefs.get("notes", "")), height=72)
-        else:
-            avoid_keywords = str(prefs.get("avoid_keywords", ""))
-            notes = str(prefs.get("notes", ""))
-        target_cols = st.columns(2)
-        if target_cols[0].button("保存求职目标"):
-            if not profile_name.strip() or not profile_content.strip():
-                st.warning("目标名称和目标说明不能为空。")
-            else:
-                try:
-                    if profiles.empty or active_profile.get("id") is None:
-                        new_id = create_user_profile(profile_name, profile_content)
-                        st.session_state.active_profile_id = new_id
-                    else:
-                        save_user_profile(int(active_profile["id"]), profile_name, profile_content)
-                    save_target_preferences(
-                        {
-                            "target_roles": selected_directions,
-                            "target_cities": selected_cities,
-                            "extra_cities": "",
-                            "accept_remote": bool(prefs.get("accept_remote")),
-                            "accept_nationwide": bool(prefs.get("accept_nationwide")),
-                            "target_city_strict": bool(target_city_strict),
-                            "target_salary_enabled": bool(target_salary_enabled),
-                            "salary_strict": bool(salary_strict),
-                            "min_monthly_salary": int(min_monthly_salary),
-                            "max_monthly_salary": int(max_monthly_salary),
-                            "min_daily_salary": int(prefs.get("min_daily_salary") or DEFAULT_TARGET_PREFERENCES["min_daily_salary"]),
-                            "preferred_industries": selected_industries,
-                            "extra_industries": "",
-                            "job_keywords": split_preference_items(job_keywords),
-                            "avoid_keywords": avoid_keywords,
-                            "notes": notes,
-                        }
-                    )
-                    st.success("求职目标已保存。")
-                except db_integrity_errors():
-                    st.error("目标名称已存在，请换一个名称。")
-        if target_cols[1].button("清空结构化项"):
-            save_target_preferences(DEFAULT_TARGET_PREFERENCES)
-            st.success("已清空城市、行业和二级方向关键词。")
-        if not profiles.empty and st.button("删除目标"):
-            delete_user_profile(int(active_profile["id"]))
-            st.success("目标意向已删除，可重新新建。")
-
-    st.sidebar.markdown("#### 当前简历")
-    if resumes.empty:
-        st.sidebar.caption("尚未设置当前简历。")
-        with st.sidebar.expander("新增简历", expanded=False):
-            new_resume_name = st.text_input("简历名称", value="", key="sidebar_new_resume_name")
-            new_resume_upload = st.file_uploader("上传简历 PDF / Word / TXT", type=["pdf", "docx", "txt", "md"], key="sidebar_new_resume_upload")
-            new_resume_upload_parsed = parsed_resume_from_upload(new_resume_upload) if new_resume_upload else None
-            new_resume_content_key = "sidebar_new_resume_content"
-            ensure_widget_text(new_resume_content_key)
-            new_resume_upload_text = sync_uploaded_resume_to_widget(
-                new_resume_upload,
-                new_resume_upload_parsed,
-                new_resume_content_key,
-                "sidebar_new_resume_upload_sig",
-            )
-            if new_resume_upload_parsed and new_resume_upload_text:
-                st.caption(f"已读取 {len(new_resume_upload_parsed['sections'])} 个简历栏目、{len(new_resume_upload_parsed['skills'])} 个技能词，并自动填入简历内容。")
-                upload_signature = uploaded_file_signature(new_resume_upload)
-                if upload_signature and st.session_state.get("sidebar_new_resume_saved_sig") != upload_signature:
-                    try:
-                        auto_name = unique_resume_name(new_resume_name or Path(new_resume_upload.name).stem)
-                        new_id = create_user_resume(auto_name, new_resume_upload_text, is_default=1)
-                        st.session_state.active_resume_id = new_id
-                        st.session_state.sidebar_new_resume_saved_sig = upload_signature
-                        clear_resume_dependent_results()
-                        st.success("已自动保存为当前简历，其他功能会直接调用这份内容。")
-                    except db_integrity_errors():
-                        st.error("简历名称已存在，请换一个名称后保存。")
-            elif new_resume_upload:
-                st.warning("没有从上传文件中读取到有效文本。若 PDF 是扫描件，请先转成可复制文字。")
-            new_resume_content = st.text_area("简历内容", height=180, key=new_resume_content_key)
-            if st.button("保存为当前简历"):
-                if new_resume_content.strip():
-                    new_id = create_user_resume(unique_resume_name(new_resume_name), new_resume_content, is_default=1)
-                    st.session_state.active_resume_id = new_id
-                    clear_resume_dependent_results()
-                    st.success("简历已保存。")
-                else:
-                    st.warning("请先粘贴简历内容。")
-    else:
-        active_resume = get_active_resume()
-        resume_names = resumes["name"].tolist()
-        resume_index = resume_names.index(active_resume["name"]) if active_resume["name"] in resume_names else 0
-        st.sidebar.caption(f"当前：{active_resume['name']}")
-        selected_resume_name = st.sidebar.selectbox("选择简历", resume_names, index=resume_index, key="sidebar_resume_select")
-        selected_resume = resumes[resumes["name"] == selected_resume_name].iloc[0]
-        if int(selected_resume["id"]) != st.session_state.get("active_resume_id"):
-            st.session_state.active_resume_id = int(selected_resume["id"])
-            active_resume = get_active_resume()
-
-        with st.sidebar.expander("简历状态", expanded=False):
-            render_global_resume_status(active_resume)
-
-        with st.sidebar.expander("编辑当前简历", expanded=False):
-            resume_name = st.text_input("简历名称", value=active_resume["name"], key=f"resume_name_{active_resume['id']}")
-            resume_content_key = f"resume_content_{active_resume['id']}"
-            ensure_widget_text(resume_content_key, active_resume["content"])
-            resume_upload = st.file_uploader("上传 PDF / Word / TXT 更新当前简历", type=["pdf", "docx", "txt", "md"], key=f"sidebar_resume_upload_{active_resume['id']}")
-            resume_upload_parsed = parsed_resume_from_upload(resume_upload) if resume_upload else None
-            resume_upload_text = sync_uploaded_resume_to_widget(
-                resume_upload,
-                resume_upload_parsed,
-                resume_content_key,
-                f"sidebar_resume_upload_sig_{active_resume['id']}",
-            )
-            if resume_upload_text:
-                st.caption(f"已读取上传简历：{len(resume_upload_parsed['sections'])} 个简历栏目、{len(resume_upload_parsed['skills'])} 个技能词，并自动填入简历内容。")
-                upload_signature = uploaded_file_signature(resume_upload)
-                autosave_key = f"sidebar_resume_upload_saved_sig_{active_resume['id']}"
-                if upload_signature and st.session_state.get(autosave_key) != upload_signature:
-                    save_user_resume(int(active_resume["id"]), resume_name, resume_upload_text)
-                    st.session_state[autosave_key] = upload_signature
-                    clear_resume_dependent_results()
-                    st.success("上传文件已自动保存为当前简历。")
-            elif resume_upload:
-                st.warning("没有从上传文件中读取到有效文本。若 PDF 是扫描件，请先转成可复制文字。")
-            resume_content = st.text_area("简历内容", height=220, key=resume_content_key)
-            cols = st.columns(2)
-            if cols[0].button("保存简历"):
-                try:
-                    old_fingerprint = content_fingerprint(active_resume["content"])
-                    save_user_resume(int(active_resume["id"]), resume_name, resume_content)
-                    if content_fingerprint(resume_content) != old_fingerprint:
-                        clear_resume_dependent_results()
-                    st.success("简历已保存。")
-                except db_integrity_errors():
-                    st.error("简历名称已存在。")
-            if cols[1].button("复制简历"):
-                try:
-                    new_id = create_user_resume(unique_resume_name(f"{resume_name} - 副本"), resume_content)
-                    st.session_state.active_resume_id = new_id
-                    clear_resume_dependent_results()
-                    st.success("已复制为新简历。")
-                except db_integrity_errors():
-                    st.error("副本名称已存在。")
-            if st.button("删除当前简历"):
-                if delete_user_resume(int(active_resume["id"])):
-                    st.success("简历已删除。")
-                else:
-                    st.warning("至少保留一个简历，或先新建另一个。")
-
-        with st.sidebar.expander("新增简历", expanded=False):
-            new_resume_name = st.text_input("新简历名称", key="sidebar_add_resume_name")
-            new_resume_upload = st.file_uploader("上传新简历 PDF / Word / TXT", type=["pdf", "docx", "txt", "md"], key="sidebar_add_resume_upload")
-            new_resume_upload_parsed = parsed_resume_from_upload(new_resume_upload) if new_resume_upload else None
-            new_resume_content_key = "sidebar_add_resume_content"
-            ensure_widget_text(new_resume_content_key)
-            new_resume_upload_text = sync_uploaded_resume_to_widget(
-                new_resume_upload,
-                new_resume_upload_parsed,
-                new_resume_content_key,
-                "sidebar_add_resume_upload_sig",
-            )
-            if new_resume_upload_parsed and new_resume_upload_text:
-                st.caption(f"已读取 {len(new_resume_upload_parsed['sections'])} 个简历栏目、{len(new_resume_upload_parsed['skills'])} 个技能词，并自动填入新简历内容。")
-                upload_signature = uploaded_file_signature(new_resume_upload)
-                if upload_signature and st.session_state.get("sidebar_add_resume_saved_sig") != upload_signature:
-                    try:
-                        auto_name = unique_resume_name(new_resume_name or Path(new_resume_upload.name).stem)
-                        new_id = create_user_resume(auto_name, new_resume_upload_text)
-                        st.session_state.active_resume_id = new_id
-                        st.session_state.sidebar_add_resume_saved_sig = upload_signature
-                        clear_resume_dependent_results()
-                        st.success("新简历已自动保存并设为当前简历。")
-                    except db_integrity_errors():
-                        st.error("简历名称已存在，请换一个名称后保存。")
-            elif new_resume_upload:
-                st.warning("没有从上传文件中读取到有效文本。若 PDF 是扫描件，请先转成可复制文字。")
-            new_resume_content = st.text_area("新简历内容", height=140, key=new_resume_content_key)
-            if st.button("新增并设为当前简历"):
-                if not new_resume_name.strip() or not new_resume_content.strip():
-                    st.warning("请填写名称和内容。")
-                else:
-                    try:
-                        new_id = create_user_resume(unique_resume_name(new_resume_name), new_resume_content)
-                        st.session_state.active_resume_id = new_id
-                        clear_resume_dependent_results()
-                        st.success("新简历已创建。")
-                    except db_integrity_errors():
-                        st.error("简历名称已存在。")
 
 
 def render_auth_screen() -> None:
@@ -18955,6 +15757,7 @@ def render_sidebar_target_profile_editor() -> None:
         )
         if int(selected_profile_id) != st.session_state.get("active_profile_id"):
             st.session_state.active_profile_id = int(selected_profile_id)
+            clear_preference_dependent_results()
             st.rerun()
         active_profile = get_active_profile()
 
@@ -19423,6 +16226,7 @@ def render_target_profile_page() -> None:
         selected_profile = profiles[profiles["name"] == selected_name].iloc[0]
         if int(selected_profile["id"]) != st.session_state.get("active_profile_id"):
             st.session_state.active_profile_id = int(selected_profile["id"])
+            clear_preference_dependent_results()
             st.rerun()
         active_profile = get_active_profile()
 
@@ -19727,35 +16531,63 @@ def render_jd_tab() -> None:
                 if not full_text:
                     ui_components.warning_card("还没有导入JD", "请先粘贴岗位描述，或上传 JD 文件。")
                 else:
-                    set_current_target_jd(full_text, "单条JD分析", "手动导入JD")
-                    st.success("JD 分析完成，并已设为当前目标 JD。")
+                    active_profile = get_active_profile()
+                    active_resume = get_active_resume()
+                    analyzed = analyze_job_record_once(
+                        {"source": "单条JD分析", "title": "手动导入JD", "text": full_text},
+                        profile_text_for_analysis(),
+                        active_resume.get("content", "") or active_profile.get("content", ""),
+                        load_target_preferences(),
+                        fast=True,
+                    )
+                    st.session_state.jd_analysis = analyzed.get("jd_analysis")
+                    st.session_state.resume_match = analyzed.get("match_result")
+                    st.session_state.single_jd_quality = analyzed.get("quality", {})
+                    st.session_state.target_jd_fingerprint = content_fingerprint(full_text)
+                    st.session_state.target_jd_meta = {
+                        "source": "单条JD分析",
+                        "title": analyzed.get("fields", {}).get("title") or "手动导入JD",
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    if analyzed.get("quality", {}).get("is_sufficient", True):
+                        st.success("JD 分析完成，并已设为当前目标 JD。")
+                    else:
+                        st.warning("JD 信息不足，已先标出缺失字段，暂不生成过度确定的推荐结论。")
 
     jd_analysis = st.session_state.get("jd_analysis")
     with right_col:
         with st.container(border=True):
             ui_components.render_section_header("判断结果", "推荐分、风险点和下一步行动会集中在这里。")
             if jd_analysis:
-                result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
-                ui_components.render_result_panel(result_panel)
-                with st.expander("更多证据与缺口", expanded=False):
-                    missing_items = result_panel.get("missing_requirements", []) or []
-                    weak_items = result_panel.get("weak_requirements", []) or []
-                    for item in missing_items[:4]:
-                        ui_components.gap_card(
-                            item.get("requirement", ""),
-                            item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写进简历。",
-                            "未找到真实证据，不建议直接写进简历。",
-                            item.get("importance", ""),
-                        )
-                    for item in weak_items[:4]:
-                        ui_components.gap_card(
-                            item.get("requirement", ""),
-                            item.get("problem", "") or "有相关线索，但证据不够完整。",
-                            "需要补充真实场景、动作和结果。",
-                            item.get("importance", ""),
-                        )
-                    if not missing_items and not weak_items:
-                        ui_components.empty_state("暂无更多缺口", "完成简历匹配后，这里会显示弱证据和缺失要求。")
+                quality = st.session_state.get("single_jd_quality") or jd_input_quality(jd_analysis, jd_analysis.get("raw_text", ""))
+                if not quality.get("is_sufficient", True):
+                    ui_components.warning_card(
+                        "信息不足",
+                        "缺失字段：" + "、".join(quality.get("missing_fields", [])),
+                    )
+                    st.caption("请补齐岗位名、职责、要求、公司、地点等核心信息后再生成确定推荐。")
+                else:
+                    result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
+                    ui_components.render_result_panel(result_panel)
+                    with st.expander("更多证据与缺口", expanded=False):
+                        missing_items = result_panel.get("missing_requirements", []) or []
+                        weak_items = result_panel.get("weak_requirements", []) or []
+                        for item in missing_items[:4]:
+                            ui_components.gap_card(
+                                item.get("requirement", ""),
+                                item.get("reason", "") or item.get("missing_reason", "") or "未找到真实证据，不建议直接写进简历。",
+                                "未找到真实证据，不建议直接写进简历。",
+                                item.get("importance", ""),
+                            )
+                        for item in weak_items[:4]:
+                            ui_components.gap_card(
+                                item.get("requirement", ""),
+                                item.get("problem", "") or "有相关线索，但证据不够完整。",
+                                "需要补充真实场景、动作和结果。",
+                                item.get("importance", ""),
+                            )
+                        if not missing_items and not weak_items:
+                            ui_components.empty_state("暂无更多缺口", "完成简历匹配后，这里会显示弱证据和缺失要求。")
                 if st.button("加入今日队列", key="add_current_jd_today_queue_result_panel", width="stretch"):
                     add_current_jd_to_today_queue(jd_analysis, st.session_state.get("resume_match"))
                     st.toast("已加入今日求职队列。")
