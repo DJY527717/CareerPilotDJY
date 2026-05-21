@@ -12,6 +12,18 @@ def _escape(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+def _clean_plain_text(value: object) -> str:
+    text = html.unescape("" if value is None else str(value))
+    text = re.sub(r"</?(strong|p|br|span|div|em|b|i)[^>]*>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _escape_text(value: object) -> str:
+    return html.escape(_clean_plain_text(value), quote=True)
+
+
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -32,7 +44,7 @@ def _score_text(value: object) -> str:
     try:
         return str(max(0, min(100, int(float(value or 0)))))
     except (TypeError, ValueError):
-        return _escape(value)
+        return _escape_text(value)
 
 
 def _score_pct(value: object) -> int:
@@ -195,15 +207,17 @@ def render_workspace_card(title: str, subtitle: str | None = None, class_name: s
 
 def render_empty_state(title: str, description: str, icon: str | None = None, compact: bool = True) -> None:
     compact_class = " cp-empty-compact" if compact else ""
-    icon_text = str(icon or "").strip()
+    clean_title = _clean_plain_text(title)
+    clean_description = _clean_plain_text(description)
+    icon_text = _clean_plain_text(icon)
     icon_class = " cp-empty-has-icon" if icon_text else ""
-    icon_html = f'<span class="cp-empty-state-icon">{_escape(icon_text)}</span>' if icon_text else ""
+    icon_html = f'<span class="cp-empty-state-icon">{_escape_text(icon_text)}</span>' if icon_text else ""
     st.markdown(
         f"""
         <div class="cp-empty-state{compact_class}{icon_class}">
             {icon_html}
-            <strong>{_escape(title)}</strong>
-            <p>{_escape(description)}</p>
+            <strong>{_escape_text(clean_title)}</strong>
+            <p>{_escape_text(clean_description)}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -295,12 +309,12 @@ def render_risk_tags(tags: Any) -> None:
 
 
 def render_decision_card(title: str, value: str, description: str | None = None) -> None:
-    description_html = f'<p>{_escape(description)}</p>' if description else ""
+    description_html = f'<p>{_escape_text(description)}</p>' if description else ""
     st.markdown(
         f"""
         <div class="cp-decision-card">
-            <div class="cp-decision-card-label cp-decision-label">{_escape(title)}</div>
-            <div class="cp-decision-card-value cp-decision-value">{_escape(value)}</div>
+            <div class="cp-decision-card-label cp-decision-label">{_escape_text(title)}</div>
+            <div class="cp-decision-card-value cp-decision-value">{_escape_text(value)}</div>
             {description_html}
         </div>
         """,
@@ -369,7 +383,7 @@ def render_revision_card(title: str, before: str, after: str, reason: str | None
         f"""
             <div class="cp-revision-reason">
                 <span>原因</span>
-                <p>{_escape(reason)}</p>
+                <p>{_escape_text(reason)}</p>
             </div>
         """
         if reason
@@ -380,21 +394,21 @@ def render_revision_card(title: str, before: str, after: str, reason: str | None
         <div class="cp-revision-card cp-revision-tone-{_escape(tone)}">
             <div class="cp-revision-card-head">
                 <div class="cp-revision-badge">✦ 改写建议</div>
-                <strong>{_escape(title)}</strong>
+                <strong>{_escape_text(title)}</strong>
             </div>
             <div class="cp-revision-compare">
                 <div class="cp-revision-before">
                     <div class="cp-revision-label cp-revision-label-before">
                         <span class="cp-revision-dot"></span>原文
                     </div>
-                    <p>{_escape(before)}</p>
+                    <p>{_escape_text(before)}</p>
                 </div>
                 <div class="cp-revision-arrow">→</div>
                 <div class="cp-revision-after">
                     <div class="cp-revision-label cp-revision-label-after">
                         <span class="cp-revision-dot"></span>建议
                     </div>
-                    <p>{_escape(after)}</p>
+                    <p>{_escape_text(after)}</p>
                 </div>
             </div>
             {reason_html}
@@ -538,7 +552,7 @@ def render_evidence_card(requirement: str, evidence: str, strength: object | Non
         f"""
             <div class="cp-evidence-explanation">
                 <span>解释</span>
-                <p>{_escape(explanation)}</p>
+                <p>{_escape_text(explanation)}</p>
             </div>
         """
         if explanation
@@ -550,11 +564,11 @@ def render_evidence_card(requirement: str, evidence: str, strength: object | Non
             <div class="cp-evidence-card-head">
                 <span>需求</span>
                 <div>
-                    <strong>{_escape(requirement or "匹配证据")}</strong>
+                    <strong>{_escape_text(requirement or "匹配证据")}</strong>
                 </div>
-                <em>{_escape(strength_text)}</em>
+                <em>{_escape_text(strength_text)}</em>
             </div>
-            <blockquote class="cp-evidence-quote">{_escape(evidence or "暂无可展示证据")}</blockquote>
+            <blockquote class="cp-evidence-quote">{_escape_text(evidence or "暂无可展示证据")}</blockquote>
             {explanation_html}
         </div>
         """,
@@ -567,7 +581,7 @@ def render_gap_card(requirement: str, reason: str, suggestion: str | None = None
         f"""
             <div class="cp-gap-card-suggestion">
                 <span>建议</span>
-                <p>{_escape(suggestion)}</p>
+                <p>{_escape_text(suggestion)}</p>
             </div>
         """
         if suggestion
@@ -577,12 +591,12 @@ def render_gap_card(requirement: str, reason: str, suggestion: str | None = None
         f"""
         <div class="cp-gap-card cp-revision-tone-gap">
             <div class="cp-gap-card-head">
-                <span>{_escape(importance or "缺口")}</span>
+                <span>{_escape_text(importance or "缺口")}</span>
                 <div>
-                    <strong>{_escape(requirement or "待补齐要求")}</strong>
+                    <strong>{_escape_text(requirement or "待补齐要求")}</strong>
                 </div>
             </div>
-            <p>{_escape(reason or "暂无原因说明")}</p>
+            <p>{_escape_text(reason or "暂无原因说明")}</p>
             {suggestion_html}
         </div>
         """,
@@ -621,11 +635,11 @@ def render_revision_panel(revision_result: dict[str, Any], match_result: dict[st
 
 
 def info_card(title: str, body: str) -> None:
-    st.markdown(f'<div class="cp-note-card cp-note-card-info"><strong>{_escape(title)}</strong><span>{_escape(body)}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cp-note-card cp-note-card-info"><strong>{_escape_text(title)}</strong><span>{_escape_text(body)}</span></div>', unsafe_allow_html=True)
 
 
 def warning_card(title: str, body: str) -> None:
-    st.markdown(f'<div class="cp-note-card cp-note-card-warning"><strong>{_escape(title)}</strong><span>{_escape(body)}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cp-note-card cp-note-card-warning"><strong>{_escape_text(title)}</strong><span>{_escape_text(body)}</span></div>', unsafe_allow_html=True)
 
 
 def section_title(title: str, subtitle: str | None = None) -> None:

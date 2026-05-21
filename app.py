@@ -84,7 +84,7 @@ def get_plotly_graph_objects() -> Any:
     return importlib.import_module("plotly.graph_objects")
 
 
-CHART_COLOR_SEQUENCE = ["#2563EB", "#0F766E", "#F59E0B", "#DC2626", "#7C3AED", "#0891B2", "#65A30D", "#DB2777"]
+CHART_COLOR_SEQUENCE = ["#6F9F8A", "#A8B8D8", "#D8BFA6", "#B8C7B1", "#D7A7A0", "#B9AEDC", "#A7C7C9", "#D6CFB8"]
 
 
 def pretty_bar_chart(
@@ -103,6 +103,8 @@ def pretty_bar_chart(
         chart_df = chart_df.sort_values(y, ascending=False)
     if limit:
         chart_df = chart_df.head(limit)
+    row_count = len(chart_df.index)
+    chart_height = 300 if row_count <= 5 else 360 if row_count <= 12 else min(480, 420 + max(0, row_count - 12) * 6)
     px = get_plotly_express()
     color_field = y if orientation == "h" else x
     fig = px.bar(
@@ -119,8 +121,8 @@ def pretty_bar_chart(
         fig.update_traces(
             texttemplate="%{x}",
             textposition="outside",
-            marker_line_color="rgba(15,23,42,0.18)",
-            marker_line_width=1,
+            marker_line_color="rgba(29,29,31,0.06)",
+            marker_line_width=0.8,
             cliponaxis=False,
         )
         fig.update_layout(yaxis={"categoryorder": "total ascending"})
@@ -128,21 +130,22 @@ def pretty_bar_chart(
         fig.update_traces(
             texttemplate="%{y}",
             textposition="outside",
-            marker_line_color="rgba(15,23,42,0.18)",
-            marker_line_width=1,
+            marker_line_color="rgba(29,29,31,0.06)",
+            marker_line_width=0.8,
             cliponaxis=False,
         )
     fig.update_layout(
         template="plotly_white",
         showlegend=False,
-        title={"text": title, "x": 0.02, "xanchor": "left", "font": {"size": 17}},
-        bargap=0.34,
+        height=chart_height,
+        title={"text": title, "x": 0.02, "xanchor": "left", "font": {"size": 16, "color": "#1D1D1F"}},
+        bargap=0.42,
         margin={"l": 16, "r": 28, "t": 54 if title else 28, "b": 42},
         plot_bgcolor="rgba(255,255,255,0)",
         paper_bgcolor="rgba(255,255,255,0)",
-        font={"family": "Inter, Microsoft YaHei, Arial, sans-serif", "size": 13, "color": "#334155"},
+        font={"family": '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif', "size": 13, "color": "#515154"},
         xaxis={"showgrid": False, "zeroline": False, "title": ""},
-        yaxis={"gridcolor": "rgba(148,163,184,0.18)", "zeroline": False, "title": ""},
+        yaxis={"gridcolor": "rgba(29,29,31,0.07)", "zeroline": False, "title": ""},
     )
     return fig
 
@@ -12808,10 +12811,14 @@ def render_sidebar_brand_panel() -> None:
     st.sidebar.markdown(
         f"""
         <section class="cp-sidebar-brand">
-            <div class="cp-sidebar-kicker">CareerPilot</div>
-            <div class="cp-sidebar-title">{safe_html(APP_TITLE)}</div>
-            <div class="cp-sidebar-copy">岗位分析、简历匹配、投递判断和复盘都收进同一个本地工作台。</div>
-            <div class="cp-sidebar-meta">版本 {safe_html(APP_BUILD_LABEL)}</div>
+            <div class="cp-sidebar-brand-row">
+                <span class="cp-logo-mark">CP</span>
+                <div>
+                    <div class="cp-sidebar-title">CareerPilot</div>
+                    <div class="cp-sidebar-meta">版本 {safe_html(APP_BUILD_LABEL)}</div>
+                </div>
+            </div>
+            <div class="cp-sidebar-copy">岗位、简历、面试和投递判断，收进一个轻量工作台。</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -12876,7 +12883,11 @@ def user_table_row_height(df: pd.DataFrame) -> int:
 
 
 def user_table_height(df: pd.DataFrame, row_height: int) -> int | str:
-    return table_format_utils.user_table_height(df, row_height)
+    if df is None or df.empty:
+        return "auto"
+    row_count = max(1, len(df))
+    max_height = 520 if row_count > 18 else 460
+    return min(max_height, max(220, 42 + row_count * max(34, row_height)))
 
 
 def user_table_column_width(series: pd.Series, column: str) -> str:
@@ -13672,18 +13683,56 @@ def render_decision_workspace_heading() -> None:
 
 
 
+def plain_display_text(value: object) -> str:
+    raw = html.unescape("" if value is None else str(value))
+    raw = re.sub(r"<br\s*/?>", " ", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"</?(strong|b|em|i|p|div|span|ul|ol|li)[^>]*>", " ", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def current_target_jd_analysis() -> dict[str, Any] | None:
+    candidate = st.session_state.get("jd_analysis")
+    if isinstance(candidate, dict) and str(candidate.get("raw_text") or "").strip():
+        return candidate
+    candidate = st.session_state.get("target_jd_analysis")
+    if isinstance(candidate, dict) and str(candidate.get("raw_text") or "").strip():
+        return candidate
+    return None
+
+
+def current_target_jd_is_ready(jd_analysis: dict[str, Any] | None = None) -> bool:
+    jd_analysis = jd_analysis or current_target_jd_analysis()
+    if not isinstance(jd_analysis, dict):
+        return False
+    raw_text = str(jd_analysis.get("raw_text") or "").strip()
+    if not raw_text:
+        return False
+    quality = st.session_state.get("single_jd_quality")
+    if not isinstance(quality, dict):
+        quality = jd_input_quality(jd_analysis, raw_text)
+    return bool(quality.get("is_sufficient", True))
+
+
 def render_decision_empty_state(
     title: str = "还不能生成决策",
     detail: str | list[str] = "Offer预测需要先有一个明确的目标JD。请先在岗位工作台选择或录入目标岗位，再回到这里生成判断。",
     badge: str = "等待目标JD",
 ) -> None:
     del badge
+
+    clean_title = plain_display_text(title) or "还不能生成决策"
+
     if isinstance(detail, list):
-        ui_components.empty_state(title, "")
-        for item in [str(step).strip() for step in detail if str(step).strip()]:
-            st.write(f"- {item}")
+        steps = [plain_display_text(step) for step in detail if plain_display_text(step)]
+        body = "请先完成左侧必要信息。"
+        ui_components.warning_card(clean_title, body)
+        if steps:
+            ui_components.render_action_list(steps)
         return
-    ui_components.empty_state(title, str(detail))
+
+    clean_detail = plain_display_text(detail)
+    ui_components.warning_card(clean_title, clean_detail or "请先补齐必要信息后再生成判断。")
 
 
 def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
@@ -14897,12 +14946,15 @@ def render_recruitment_monitor_tab() -> None:
 
 
 def render_offer_prediction_tab() -> None:
-    jd_analysis = st.session_state.get("jd_analysis")
+    jd_analysis = current_target_jd_analysis()
     resume_match = st.session_state.get("resume_match")
     gap_analysis = st.session_state.get("gap_analysis")
 
-    if not jd_analysis:
-        render_decision_empty_state()
+    if not current_target_jd_is_ready(jd_analysis):
+        render_decision_empty_state(
+            "还不能生成决策",
+            "请先在岗位工作台导入并分析一条有效JD。分析完成后，这里会自动使用它作为当前目标JD。",
+        )
         return
 
     inferred_company = jd_basic_value(jd_analysis, "公司名")
@@ -14962,6 +15014,7 @@ def render_offer_prediction_tab() -> None:
 def render_interview_tab() -> None:
     left_col, right_col = st.columns([0.55, 0.45], gap="large")
     with left_col:
+        st.markdown('<div class="cp-interview-sheet cp-interview-import">', unsafe_allow_html=True)
         with st.container(border=True):
             ui_components.section_title("导入面经", "粘贴复盘或上传文件，优先提炼真实追问。")
             text_value = st.text_area(
@@ -14982,6 +15035,7 @@ def render_interview_tab() -> None:
             for uploaded in uploaded_files or []:
                 source_items.append((uploaded.name, extract_text_from_upload(uploaded)))
 
+            st.markdown('<div class="cp-interview-action">', unsafe_allow_html=True)
             if st.button("提炼面试问题", type="primary", width="stretch"):
                 if not source_items:
                     ui_components.warning_card("还没有面经", "请先粘贴面经，或上传面经文件。")
@@ -14989,6 +15043,8 @@ def render_interview_tab() -> None:
                     jd_analysis = st.session_state.get("jd_analysis")
                     st.session_state.interview_analysis = analyze_interview_sources_v2(source_items, jd_analysis)
                     st.success("面试问题提炼完成。")
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     interview_analysis = st.session_state.get("interview_analysis")
     jd_analysis = st.session_state.get("jd_analysis")
@@ -14998,12 +15054,14 @@ def render_interview_tab() -> None:
     question_groups = interview_question_records(interview_analysis, jd_analysis, resume_match)
     personalized_answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
     with right_col:
+        st.markdown('<div class="cp-interview-sheet cp-interview-summary">', unsafe_allow_html=True)
         with st.container(border=True):
             ui_components.section_title("准备结论", "把面经题目转成你当前最该练的回答。")
             if interview_analysis:
                 render_interview_snapshot(interview_analysis, interview_gap_rows)
             else:
                 ui_components.empty_state("还没有面经", "导入面经后，会整理高频问题、回答建议和追问风险。")
+        st.markdown('</div>', unsafe_allow_html=True)
     if not interview_analysis:
         return
 
@@ -15480,42 +15538,37 @@ def render_dashboard_tab() -> None:
 
 
 def render_auth_screen() -> None:
-    left_col, right_col = st.columns([1.08, 0.92], gap="large")
+    left_col, right_col = st.columns([1.65, 1], gap="large")
     with left_col:
         st.markdown(
-            """
-            <section class="cp-auth-showcase">
-                <div class="cp-auth-showcase-inner">
-                    <div class="cp-auth-showcase-kicker">CareerPilot Access</div>
-                    <h3 class="cp-login-title"><span class="cp-login-title-brand">CareerPilot</span><span class="cp-login-title-cn">全职业岗位分析</span></h3>
-                    <p class="cp-login-subtitle">把岗位、简历、投递和判断放进一个安静的工作台，让求职推进更清晰。</p>
-                    <div class="cp-auth-feature-list">
-                        <div class="cp-auth-feature">
-                            <div class="cp-auth-feature-icon">01</div>
-                            <div>
-                                <strong>岗位采集</strong>
-                                <span>沉淀JD、公司和来源信息</span>
-                            </div>
-                        </div>
-                        <div class="cp-auth-feature">
-                            <div class="cp-auth-feature-icon">02</div>
-                            <div>
-                                <strong>简历匹配</strong>
-                                <span>看清优势、缺口和改写方向</span>
-                            </div>
-                        </div>
-                        <div class="cp-auth-feature">
-                            <div class="cp-auth-feature-icon">03</div>
-                            <div>
-                                <strong>求职决策</strong>
-                                <span>用分数和证据辅助判断</span>
-                            </div>
+            f"""
+            <section class="cp-auth-story">
+                <div class="cp-auth-brand-row">
+                    <span class="cp-auth-logo">CP</span>
+                    <span class="cp-auth-product">CareerPilot</span>
+                </div>
+                <h1>更安静地看清下一步职业选择。</h1>
+                <p>把岗位、简历、面试和投递判断放进一个轻量工作台，让每一次求职推进都有证据、有节奏，也有余地。</p>
+                <div class="cp-auth-feature-list">
+                    <div class="cp-auth-feature">
+                        <div class="cp-auth-feature-icon">1</div>
+                        <div>
+                            <strong>整理岗位线索</strong>
+                            <span>沉淀 JD、公司、城市、薪资和来源，不再散落在多个表格里。</span>
                         </div>
                     </div>
-                    <div class="cp-auth-showcase-note">
-                        <div class="cp-auth-showcase-pill">
-                            <strong>Collect faster. Decide calmer.</strong>
-                            <span>从信息收集到投递判断，保持清晰节奏。</span>
+                    <div class="cp-auth-feature">
+                        <div class="cp-auth-feature-icon">2</div>
+                        <div>
+                            <strong>看清简历匹配</strong>
+                            <span>基于目标岗位识别优势、缺口和可改写方向。</span>
+                        </div>
+                    </div>
+                    <div class="cp-auth-feature">
+                        <div class="cp-auth-feature-icon">3</div>
+                        <div>
+                            <strong>准备面试与决策</strong>
+                            <span>把面经、回答建议和投递判断串成可执行的下一步。</span>
                         </div>
                     </div>
                 </div>
@@ -15524,50 +15577,55 @@ def render_auth_screen() -> None:
             unsafe_allow_html=True,
         )
     with right_col:
-        st.markdown(
-            """
-            <section class="cp-auth-card">
-                <div class="cp-auth-card-head">
-                    <div class="cp-auth-card-kicker">Sign In To Continue</div>
-                    <h2 class="cp-auth-card-title"><span class="cp-auth-title-line">欢迎来到CareerPilot</span><span class="cp-auth-title-break">职业路上，我们陪你慢慢探索</span></h2>
-                    <p class="cp-auth-card-copy">不急着定义未来，先慢慢靠近答案</p>
+        with st.container(border=True):
+            st.markdown(
+                f"""
+                <div class="cp-auth-sheet-head">
+                    <div class="cp-auth-sheet-kicker">继续使用 {safe_html(APP_TITLE)}</div>
+                    <h2>欢迎回来</h2>
+                    <p class="cp-auth-sheet-copy">登录后进入你的本地职业分析工作台。</p>
                 </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="cp-auth-tabs-gap"></div>', unsafe_allow_html=True)
-        login_tab, register_tab = st.tabs(["登录", "注册"])
-        with login_tab:
-            with st.form("login_form"):
-                email = st.text_input("邮箱", key="login_email", placeholder="name@example.com")
-                password = st.text_input("密码", type="password", key="login_password", placeholder="请输入密码")
-                submitted = st.form_submit_button("登录", type="primary", use_container_width=True)
-            if submitted:
-                ok, message = authenticate_app_user(email, password)
-                if ok:
-                    st.success(message)
-                    st.rerun()
-                else:
-                    st.error(message)
-        with register_tab:
-            st.markdown('<p class="cp-auth-form-note">创建账号后会自动登录，直接进入 CareerPilot。</p>', unsafe_allow_html=True)
-            with st.form("register_form"):
-                display_name = st.text_input("昵称", key="register_display_name", placeholder="例如：Alex")
-                email = st.text_input("邮箱", key="register_email", placeholder="name@example.com")
-                password = st.text_input("密码", type="password", key="register_password", placeholder="设置登录密码")
-                password_confirm = st.text_input("确认密码", type="password", key="register_password_confirm", placeholder="再次输入密码")
-                submitted = st.form_submit_button("注册并登录", type="primary", use_container_width=True)
-            if submitted:
-                if password != password_confirm:
-                    st.error("两次输入的密码不一致。")
-                else:
-                    ok, message = create_app_user(email, password, display_name)
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div class="cp-auth-tabs-gap"></div>', unsafe_allow_html=True)
+            auth_mode = st.radio(
+                "登录方式",
+                ["登录", "注册"],
+                horizontal=True,
+                key="auth_mode",
+                label_visibility="collapsed",
+            )
+            if auth_mode == "登录":
+                with st.form("login_form"):
+                    email = st.text_input("邮箱", key="login_email", placeholder="name@example.com")
+                    password = st.text_input("密码", type="password", key="login_password", placeholder="请输入密码")
+                    submitted = st.form_submit_button("登录", type="primary", use_container_width=True)
+                if submitted:
+                    ok, message = authenticate_app_user(email, password)
                     if ok:
                         st.success(message)
                         st.rerun()
                     else:
                         st.error(message)
-        st.markdown("</section>", unsafe_allow_html=True)
+            else:
+                st.markdown('<p class="cp-auth-form-note">创建账号后会自动登录，直接进入 CareerPilot。</p>', unsafe_allow_html=True)
+                with st.form("register_form"):
+                    display_name = st.text_input("昵称", key="register_display_name", placeholder="例如：Alex")
+                    email = st.text_input("邮箱", key="register_email", placeholder="name@example.com")
+                    password = st.text_input("密码", type="password", key="register_password", placeholder="设置登录密码")
+                    password_confirm = st.text_input("确认密码", type="password", key="register_password_confirm", placeholder="再次输入密码")
+                    submitted = st.form_submit_button("注册并登录", type="primary", use_container_width=True)
+                if submitted:
+                    if password != password_confirm:
+                        st.error("两次输入的密码不一致。")
+                    else:
+                        ok, message = create_app_user(email, password, display_name)
+                        if ok:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
 
 
 # ---------------------------------------------------------------------------
@@ -16454,7 +16512,7 @@ def render_jd_tab() -> None:
             upload_text = ""
             crawled_jd_text = ""
             action_cols = st.columns([1.25, 1, 1], gap="small")
-            analyze_clicked = action_cols[0].button("分析JD", type="primary", width="stretch")
+            analyze_clicked = action_cols[0].button("分析JD", width="stretch", key="analyze_jd_main_action")
             action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
             action_cols[2].button("示例JD", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
 
@@ -16532,6 +16590,8 @@ def render_jd_tab() -> None:
                     st.session_state.jd_analysis = analyzed.get("jd_analysis")
                     st.session_state.resume_match = analyzed.get("match_result")
                     st.session_state.single_jd_quality = analyzed.get("quality", {})
+                    st.session_state.target_jd_analysis = st.session_state.jd_analysis
+                    st.session_state.target_jd_text = full_text
                     st.session_state.target_jd_fingerprint = content_fingerprint(full_text)
                     st.session_state.target_jd_meta = {
                         "source": "单条JD分析",
