@@ -27,21 +27,21 @@ def inject_global_styles() -> None:
           --cp-control-hover: rgba(255,255,255,.92);
           --cp-disabled-bg: rgba(29,29,31,.06);
           --cp-disabled-text: rgba(29,29,31,.34);
-          --cp-line: rgba(29,29,31,.065);
-          --cp-shadow-sheet: 0 18px 50px rgba(0,0,0,.045);
-          --cp-shadow-soft: 0 10px 30px rgba(0,0,0,.035);
-          --cp-radius-sheet: 28px;
-          --cp-radius-card: 22px;
+          --cp-line: rgba(29,29,31,.06);
+          --cp-shadow-sheet: 0 10px 28px rgba(0,0,0,.028);
+          --cp-shadow-soft: 0 6px 18px rgba(0,0,0,.024);
+          --cp-radius-sheet: 24px;
+          --cp-radius-card: 20px;
           --cp-radius-control: 14px;
           --cp-radius-pill: 999px;
-          --cp-sidebar-width: 272px;
+          --cp-sidebar-width: 300px;
           --cp-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
-          --cp-danger: #B85D55;
-          --cp-danger-soft: #F8EDEA;
-          --cp-warning: #A77A43;
-          --cp-warning-soft: #F8F0E4;
-          --cp-info: #7089B8;
-          --cp-info-soft: #EEF2FA;
+          --cp-danger: #8B6B62;
+          --cp-danger-soft: #F6EFEC;
+          --cp-warning: #8F765A;
+          --cp-warning-soft: #F7F2EA;
+          --cp-info: #6F7F91;
+          --cp-info-soft: #EEF1F3;
         }
 
         * {
@@ -69,6 +69,9 @@ def inject_global_styles() -> None:
         }
 
         #MainMenu,
+        [data-testid="stDeployButton"],
+        [data-testid="stAppDeployButton"],
+        [data-testid="stToolbar"],
         footer {
           display: none !important;
           visibility: hidden !important;
@@ -88,8 +91,8 @@ def inject_global_styles() -> None:
         }
 
         .block-container {
-          max-width: min(1220px, calc(100vw - 2rem));
-          padding: 2rem 2.1rem 4rem !important;
+          max-width: min(1180px, calc(100vw - 2rem));
+          padding: 1.8rem 2rem 3.6rem !important;
         }
 
         [data-testid="stVerticalBlock"] {
@@ -215,19 +218,41 @@ def inject_global_styles() -> None:
         }
 
         /* auth page */
-        .cp-auth-page {
-          min-height: calc(100vh - 4rem);
-          display: grid;
-          grid-template-columns: minmax(0, .98fr) minmax(360px, 430px);
-          gap: clamp(28px, 6vw, 72px);
-          align-items: center;
-          max-width: 1140px;
+        .cp-auth-scope {
+          display: none !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) {
+          max-width: 1040px;
+          padding-top: 40px !important;
+          padding-bottom: 40px !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn {
+          align-content: start;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .cp-auth-card) {
+          width: 100%;
+          max-width: 450px;
           margin: 0 auto;
-          padding: 42px 0 54px;
+          padding: 24px !important;
+          border: 1px solid rgba(29,29,31,.06) !important;
+          border-radius: 22px !important;
+          background: rgba(255,255,255,.78) !important;
+          box-shadow: 0 8px 22px rgba(0,0,0,.024) !important;
+          align-items: stretch !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .cp-auth-card) [data-testid="stElementContainer"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .cp-auth-card) [data-testid="stMarkdown"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .cp-auth-card) [data-testid="stMarkdownContainer"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) .stColumn [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .cp-auth-card) .cp-auth-card {
+          width: 100% !important;
         }
 
         .cp-auth-story {
-          max-width: 620px;
+          max-width: 520px;
           padding: 8px 0;
         }
 
@@ -261,16 +286,16 @@ def inject_global_styles() -> None:
         }
 
         .cp-auth-story h1 {
-          max-width: 720px;
+          max-width: 540px;
           margin: 0;
           color: var(--cp-text) !important;
-          font-size: clamp(42px, 5vw, 56px);
+          font-size: clamp(36px, 3.9vw, 48px);
           font-weight: 760 !important;
           line-height: 1.06 !important;
         }
 
         .cp-auth-story p {
-          max-width: 560px;
+          max-width: 520px;
           margin: 16px 0 0 !important;
           color: var(--cp-text-2) !important;
           font-size: 16px !important;
@@ -279,33 +304,45 @@ def inject_global_styles() -> None:
 
         .cp-auth-feature-list {
           display: grid;
-          gap: 12px;
-          max-width: 540px;
-          margin-top: 28px;
+          gap: 10px;
+          max-width: 460px;
+          margin-top: 16px;
         }
 
-        .cp-auth-feature {
+        .cp-auth-steps-line {
+          margin-top: 14px;
+          color: var(--cp-text) !important;
+          font-size: 14px;
+          font-weight: 660;
+          line-height: 1.45;
+        }
+
+        .cp-auth-feature,
+        .cp-auth-value-step {
           display: grid;
-          grid-template-columns: 28px minmax(0, 1fr);
+          grid-template-columns: 26px minmax(0, 1fr);
           gap: 12px;
           align-items: start;
-          padding: 2px 0;
+          padding: 1px 0;
         }
 
-        .cp-auth-feature-icon {
+        .cp-auth-feature-icon,
+        .cp-auth-value-step em {
           display: inline-grid;
           place-items: center;
-          width: 22px;
-          height: 22px;
+          width: 21px;
+          height: 21px;
           margin-top: 2px;
           border-radius: var(--cp-radius-pill);
           background: var(--cp-accent-faint);
           color: var(--cp-accent) !important;
           font-size: 11px;
-          font-weight: 680;
+          font-style: normal;
+          font-weight: 620;
         }
 
-        .cp-auth-feature strong {
+        .cp-auth-feature strong,
+        .cp-auth-value-step strong {
           display: block;
           color: var(--cp-text) !important;
           font-size: 15px;
@@ -313,23 +350,23 @@ def inject_global_styles() -> None:
           line-height: 1.35;
         }
 
-        .cp-auth-feature span {
+        .cp-auth-feature span,
+        .cp-auth-value-step span {
           display: block;
-          margin-top: 4px;
+          margin-top: 2px;
           color: var(--cp-muted) !important;
           font-size: 13px;
-          line-height: 1.58;
+          line-height: 1.45;
         }
 
         .cp-auth-sheet,
         .cp-auth-card {
-          border: 1px solid rgba(29,29,31,.07) !important;
-          border-radius: var(--cp-radius-sheet) !important;
-          padding: 28px !important;
-          background: rgba(255,255,255,.70) !important;
-          box-shadow: var(--cp-shadow-sheet) !important;
-          backdrop-filter: blur(18px) saturate(1.12);
-          -webkit-backdrop-filter: blur(18px) saturate(1.12);
+          border: 0 !important;
+          padding: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          max-width: 450px;
+          margin: 0 auto 10px;
         }
 
         .cp-auth-sheet-kicker,
@@ -342,6 +379,7 @@ def inject_global_styles() -> None:
 
         .cp-auth-sheet h2,
         .cp-auth-sheet-head h2,
+        .cp-auth-card h2,
         .cp-auth-card-title {
           margin: 0 !important;
           color: var(--cp-text) !important;
@@ -360,7 +398,28 @@ def inject_global_styles() -> None:
         }
 
         .cp-auth-tabs-gap {
-          height: 14px;
+          height: 10px;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] {
+          max-height: 44px;
+          margin-bottom: 12px !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] label,
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) label[data-baseweb="radio"] {
+          min-height: 34px !important;
+          padding: 0 18px !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stTextInput"] input {
+          min-height: 44px !important;
+          height: 46px !important;
+        }
+
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stFormSubmitButton"] button {
+          min-height: 48px !important;
+          height: 48px !important;
         }
 
         .cp-auth-showcase,
@@ -369,6 +428,11 @@ def inject_global_styles() -> None:
         .cp-auth-orbit,
         .cp-weekly-focus,
         .cp-auth-showcase-note {
+          display: none !important;
+        }
+
+        body:has(.cp-auth-scope) [data-testid="stSidebar"],
+        body:has(.cp-auth-scope) [data-testid="collapsedControl"] {
           display: none !important;
         }
 
@@ -527,6 +591,68 @@ def inject_global_styles() -> None:
           white-space: nowrap;
         }
 
+        .cp-sidebar-section-label,
+        .cp-sidebar-mini-title {
+          margin: 12px 8px 7px;
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          font-weight: 680 !important;
+          line-height: 1.3 !important;
+        }
+
+        .cp-sidebar-context-card {
+          display: grid;
+          gap: 7px;
+          margin: 12px 0 10px !important;
+          padding: 12px !important;
+          border: 1px solid rgba(29,29,31,.055) !important;
+          border-radius: 20px !important;
+          background: rgba(255,255,255,.52) !important;
+          box-shadow: none !important;
+        }
+
+        .cp-sidebar-context-row {
+          display: grid;
+          grid-template-columns: 44px minmax(0, 1fr);
+          align-items: center;
+          gap: 8px;
+          min-height: 25px;
+        }
+
+        .cp-sidebar-context-row span {
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          font-weight: 620 !important;
+        }
+
+        .cp-sidebar-context-row strong {
+          overflow: hidden;
+          color: var(--cp-text) !important;
+          font-size: 12px !important;
+          font-weight: 650 !important;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .cp-sidebar-user-line {
+          margin: 0 8px 10px;
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          line-height: 1.4 !important;
+        }
+
+        .cp-sidebar-divider {
+          height: 1px;
+          margin: 16px 0 12px;
+          background: rgba(29,29,31,.055);
+        }
+
+        .cp-sidebar-footer {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(29,29,31,.055);
+        }
+
         .cp-sidebar-block-title,
         .cp-sidebar-toolbox-title {
           margin: 16px 8px 6px;
@@ -540,53 +666,80 @@ def inject_global_styles() -> None:
 
         [data-testid="stSidebar"] [role="radiogroup"] {
           display: grid !important;
-          gap: 5px !important;
+          gap: 2px !important;
           background: transparent !important;
         }
 
-        [data-testid="stSidebar"] [role="radiogroup"] input[type="radio"],
         [data-testid="stSidebar"] [role="radiogroup"] svg,
         [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child {
           display: none !important;
         }
 
+        [data-testid="stSidebar"] [role="radiogroup"] input[type="radio"] {
+          position: absolute !important;
+          inset: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          opacity: 0 !important;
+          cursor: pointer !important;
+        }
+
         [data-testid="stSidebar"] [data-testid="stRadio"] label,
-        [data-testid="stSidebar"] label[data-baseweb="radio"] {
+        [data-testid="stSidebar"] label[data-baseweb="radio"],
+        [data-testid="stSidebar"] [role="radio"] {
+          position: relative !important;
           display: flex !important;
           align-items: center !important;
-          min-height: 40px !important;
+          min-height: 36px !important;
           margin: 0 !important;
-          padding: 0 12px !important;
+          padding: 0 10px !important;
           border: 1px solid transparent !important;
-          border-radius: var(--cp-radius-pill) !important;
+          border-radius: 12px !important;
           background: transparent !important;
           color: var(--cp-text-2) !important;
           font-size: 14px !important;
           font-weight: 620 !important;
           line-height: 1.2 !important;
-          transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+          box-shadow: none !important;
+          cursor: pointer !important;
+          pointer-events: auto !important;
+          transition: background .16s ease, color .16s ease, border-color .16s ease;
         }
 
         [data-testid="stSidebar"] [data-testid="stRadio"] label:hover,
-        [data-testid="stSidebar"] label[data-baseweb="radio"]:hover {
-          background: rgba(255,255,255,.62) !important;
+        [data-testid="stSidebar"] label[data-baseweb="radio"]:hover,
+        [data-testid="stSidebar"] [role="radio"]:hover {
+          border-color: rgba(111,159,138,.16) !important;
+          background: rgba(255,255,255,.70) !important;
+          color: var(--cp-text) !important;
         }
 
         [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked),
-        [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {
-          border-color: rgba(29,29,31,.06) !important;
-          background: var(--cp-surface-solid) !important;
+        [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked),
+        [data-testid="stSidebar"] label:has([aria-checked="true"]),
+        [data-testid="stSidebar"] [role="radio"][aria-checked="true"] {
+          border-color: rgba(111,159,138,.18) !important;
+          background: rgba(234,243,238,.72) !important;
           color: var(--cp-text) !important;
-          box-shadow: 0 4px 12px rgba(0,0,0,.025) !important;
+          box-shadow: none !important;
         }
 
         [data-testid="stSidebar"] [data-testid="stRadio"] label p,
         [data-testid="stSidebar"] label[data-baseweb="radio"] p,
         [data-testid="stSidebar"] [data-testid="stRadio"] label span,
-        [data-testid="stSidebar"] label[data-baseweb="radio"] span {
+        [data-testid="stSidebar"] label[data-baseweb="radio"] span,
+        [data-testid="stSidebar"] [role="radio"] *,
+        [data-testid="stSidebar"] [role="radio"][aria-checked="true"] * {
           margin: 0 !important;
           color: inherit !important;
           line-height: 1.2 !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stSidebar"] input[type="checkbox"],
+        [data-testid="stSidebar"] input[type="radio"] {
+          accent-color: var(--cp-accent) !important;
         }
 
         [data-testid="stSidebar"] [data-testid="stTextArea"] textarea {
@@ -610,9 +763,22 @@ def inject_global_styles() -> None:
         }
 
         [data-testid="stSidebar"] [data-testid="stButton"] button[aria-label*="删除"] {
-          border-color: rgba(184,93,85,.18) !important;
-          background: rgba(184,93,85,.08) !important;
-          color: #9D4E48 !important;
+          border-color: rgba(139,107,98,.16) !important;
+          background: rgba(139,107,98,.055) !important;
+          color: var(--cp-danger) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stButton"] button {
+          min-height: 36px !important;
+          border-color: rgba(111,159,138,.20) !important;
+          background: rgba(255,255,255,.58) !important;
+          color: var(--cp-text) !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stButton"] button:hover {
+          border-color: rgba(111,159,138,.30) !important;
+          background: rgba(234,243,238,.72) !important;
         }
 
         /* cards and sheets */
@@ -620,6 +786,7 @@ def inject_global_styles() -> None:
         .cp-panel,
         .cp-result-panel,
         .cp-decision-card,
+        .cp-summary-card,
         .cp-empty-state,
         .cp-revision-card,
         .cp-evidence-card,
@@ -821,6 +988,66 @@ def inject_global_styles() -> None:
           resize: vertical;
         }
 
+        div[data-testid="InputInstructions"] {
+          display: none !important;
+          visibility: hidden !important;
+          height: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        .cp-auth-sheet input:invalid,
+        .cp-auth-sheet input[aria-invalid="true"],
+        .cp-auth-card input:invalid,
+        .cp-auth-card input[aria-invalid="true"],
+        .cp-auth-sheet-head ~ [data-testid="stForm"] input:invalid,
+        .cp-auth-sheet-head ~ [data-testid="stForm"] input[aria-invalid="true"] {
+          border-color: var(--cp-line) !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stTextInput"] input[aria-invalid="true"],
+        [data-testid="stTextArea"] textarea[aria-invalid="true"] {
+          border-color: var(--cp-line) !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stForm"] [data-testid="stVerticalBlock"] {
+          gap: .88rem !important;
+        }
+
+        [data-testid="stFormSubmitButton"] {
+          margin-top: 4px !important;
+        }
+
+        [data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+          max-height: 84px !important;
+          overflow-y: auto !important;
+          align-content: flex-start !important;
+          scrollbar-width: thin !important;
+        }
+
+        [data-testid="stMultiSelect"] [data-baseweb="tag"],
+        [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+          border: 1px solid rgba(111,159,138,.24) !important;
+          background: rgba(234,243,238,.86) !important;
+          color: var(--cp-text) !important;
+          box-shadow: none !important;
+        }
+
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+        [data-testid="stMultiSelect"] span[data-baseweb="tag"] span {
+          color: var(--cp-text) !important;
+        }
+
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] svg,
+        [data-testid="stMultiSelect"] span[data-baseweb="tag"] svg,
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] button,
+        [data-testid="stMultiSelect"] span[data-baseweb="tag"] button {
+          color: var(--cp-accent) !important;
+          fill: var(--cp-accent) !important;
+        }
+
         [data-testid="stTextInput"] input:focus,
         [data-testid="stTextArea"] textarea:focus,
         [data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
@@ -968,7 +1195,8 @@ def inject_global_styles() -> None:
 
         /* segmented controls */
         [data-testid="stMain"] [data-testid="stRadio"],
-        .cp-auth-sheet [data-testid="stRadio"] {
+        .cp-auth-sheet [data-testid="stRadio"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] {
           display: inline-flex;
           width: auto;
           max-width: 100%;
@@ -981,22 +1209,35 @@ def inject_global_styles() -> None:
         }
 
         [data-testid="stMain"] [data-testid="stRadio"] div[role="radiogroup"],
-        .cp-auth-sheet [data-testid="stRadio"] div[role="radiogroup"] {
+        .cp-auth-sheet [data-testid="stRadio"] div[role="radiogroup"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] div[role="radiogroup"] {
           display: flex !important;
           flex-wrap: wrap !important;
           gap: 4px !important;
         }
 
-        [data-testid="stRadio"] input[type="radio"],
         [data-baseweb="radio"] > div:first-child,
         [data-testid="stRadio"] svg {
           display: none !important;
         }
 
+        [data-testid="stRadio"] input[type="radio"] {
+          position: absolute !important;
+          inset: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          opacity: 0 !important;
+          cursor: pointer !important;
+        }
+
         [data-testid="stMain"] [data-testid="stRadio"] label,
         [data-testid="stMain"] label[data-baseweb="radio"],
         .cp-auth-sheet [data-testid="stRadio"] label,
-        .cp-auth-sheet label[data-baseweb="radio"] {
+        .cp-auth-sheet label[data-baseweb="radio"],
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] label,
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) label[data-baseweb="radio"] {
+          position: relative !important;
           min-height: 34px !important;
           margin: 0 !important;
           padding: 0 16px !important;
@@ -1007,13 +1248,17 @@ def inject_global_styles() -> None:
           font-size: 13px !important;
           font-weight: 650 !important;
           line-height: 1.2 !important;
+          cursor: pointer !important;
+          pointer-events: auto !important;
           transition: background .16s ease, color .16s ease, box-shadow .16s ease;
         }
 
         [data-testid="stMain"] [data-testid="stRadio"] label:has(input:checked),
         [data-testid="stMain"] label[data-baseweb="radio"]:has(input:checked),
         .cp-auth-sheet [data-testid="stRadio"] label:has(input:checked),
-        .cp-auth-sheet label[data-baseweb="radio"]:has(input:checked) {
+        .cp-auth-sheet label[data-baseweb="radio"]:has(input:checked),
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) [data-testid="stRadio"] label:has(input:checked),
+        div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) label[data-baseweb="radio"]:has(input:checked) {
           background: var(--cp-surface-solid) !important;
           color: var(--cp-text) !important;
           box-shadow: 0 4px 12px rgba(0,0,0,.035) !important;
@@ -1090,11 +1335,11 @@ def inject_global_styles() -> None:
         /* tables */
         [data-testid="stDataFrame"],
         [data-testid="stTable"] {
-          border: 1px solid var(--cp-line) !important;
+          border: 1px solid rgba(29,29,31,.055) !important;
           border-radius: var(--cp-radius-card) !important;
           overflow: hidden !important;
           background: rgba(255,255,255,.82) !important;
-          box-shadow: 0 4px 14px rgba(0,0,0,.02) !important;
+          box-shadow: 0 3px 10px rgba(0,0,0,.018) !important;
         }
 
         [data-testid="stDataFrame"] * {
@@ -1106,12 +1351,12 @@ def inject_global_styles() -> None:
         [data-testid="stTable"] th {
           font-size: 13px !important;
           font-weight: 650 !important;
-          color: var(--cp-text-2) !important;
+          color: var(--cp-muted) !important;
         }
 
         [data-testid="stDataFrame"] [role="row"],
         [data-testid="stTable"] tr {
-          min-height: 36px !important;
+          min-height: 34px !important;
         }
 
         .cp-table-toolbar {
@@ -1177,6 +1422,308 @@ def inject_global_styles() -> None:
           background: transparent !important;
         }
 
+        .cp-summary-card {
+          display: grid;
+          gap: 14px;
+          padding: 18px 20px !important;
+          margin: 0 0 14px !important;
+          border-radius: var(--cp-radius-card) !important;
+        }
+
+        .cp-summary-head span {
+          display: block;
+          color: var(--cp-muted) !important;
+          font-size: 12px !important;
+          font-weight: 660 !important;
+          line-height: 1.35 !important;
+        }
+
+        .cp-summary-head strong {
+          display: block;
+          margin-top: 5px;
+          color: var(--cp-text) !important;
+          font-size: clamp(22px, 2.2vw, 30px);
+          font-weight: 740 !important;
+          line-height: 1.15 !important;
+        }
+
+        .cp-summary-copy {
+          max-width: 720px;
+          margin: 8px 0 0 !important;
+          color: var(--cp-muted) !important;
+          font-size: 14px !important;
+          line-height: 1.62 !important;
+        }
+
+        .cp-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+          gap: 10px;
+        }
+
+        .cp-summary-metric {
+          min-height: 74px;
+          padding: 12px 13px;
+          border: 1px solid rgba(29,29,31,.055);
+          border-radius: 18px;
+          background: rgba(255,255,255,.50);
+        }
+
+        .cp-summary-metric span {
+          display: block;
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          font-weight: 620 !important;
+        }
+
+        .cp-summary-metric strong {
+          display: block;
+          margin-top: 6px;
+          color: var(--cp-text) !important;
+          font-size: 16px !important;
+          font-weight: 700 !important;
+          line-height: 1.22 !important;
+        }
+
+        .cp-summary-actions {
+          display: grid;
+          gap: 8px;
+        }
+
+        .cp-summary-action {
+          display: grid;
+          grid-template-columns: 24px minmax(0, 1fr);
+          gap: 9px;
+          align-items: start;
+          padding: 9px 0 0;
+          border-top: 1px solid rgba(29,29,31,.055);
+        }
+
+        .cp-summary-action span {
+          display: inline-grid;
+          place-items: center;
+          width: 22px;
+          height: 22px;
+          border-radius: 999px;
+          background: rgba(111,159,138,.10);
+          color: var(--cp-accent) !important;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .cp-summary-action p {
+          margin: 1px 0 0 !important;
+          color: var(--cp-text-2) !important;
+          font-size: 13px !important;
+          line-height: 1.55 !important;
+        }
+
+        .cp-summary-success {
+          border-color: rgba(111,159,138,.16) !important;
+          background: rgba(255,255,255,.76) !important;
+        }
+
+        .cp-summary-warning {
+          border-color: rgba(143,118,90,.14) !important;
+          background: rgba(255,255,255,.74) !important;
+        }
+
+        .cp-summary-danger {
+          border-color: rgba(139,107,98,.14) !important;
+          background: rgba(255,255,255,.74) !important;
+        }
+
+        /* settings center */
+        .cp-settings-page {
+          display: grid;
+          gap: 10px;
+          max-width: 1040px;
+          margin: 0 auto;
+        }
+
+        .cp-settings-hero {
+          padding: 14px 18px;
+          border: 1px solid rgba(29,29,31,.06);
+          border-radius: 20px;
+          background: rgba(255,255,255,.78);
+          box-shadow: var(--cp-shadow-soft);
+        }
+
+        .cp-settings-hero span {
+          display: block;
+          color: var(--cp-muted) !important;
+          font-size: 12px !important;
+          font-weight: 650 !important;
+          line-height: 1.3 !important;
+        }
+
+        .cp-settings-hero h2 {
+          margin: 5px 0 0 !important;
+          color: var(--cp-text) !important;
+          font-size: clamp(24px, 2.4vw, 30px) !important;
+          font-weight: 740 !important;
+          line-height: 1.15 !important;
+        }
+
+        .cp-settings-hero p {
+          max-width: 780px;
+          margin: 6px 0 0 !important;
+          color: var(--cp-muted) !important;
+          font-size: 14px !important;
+          line-height: 1.45 !important;
+        }
+
+        .cp-settings-summary-grid,
+        .cp-status-tile-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          margin: 0 0 2px;
+        }
+
+        .cp-settings-summary-card,
+        .cp-settings-card,
+        .cp-status-tile {
+          border: 1px solid rgba(29,29,31,.06);
+          border-radius: 18px;
+          background: rgba(255,255,255,.78);
+          box-shadow: var(--cp-shadow-soft);
+        }
+
+        .cp-settings-summary-card,
+        .cp-status-tile {
+          min-height: 70px;
+          padding: 11px 13px;
+        }
+
+        .cp-settings-summary-card span,
+        .cp-settings-card-head span,
+        .cp-status-tile span {
+          display: block;
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          font-weight: 650 !important;
+          line-height: 1.35 !important;
+        }
+
+        .cp-settings-summary-card strong,
+        .cp-status-tile strong {
+          display: block;
+          overflow: hidden;
+          margin-top: 6px;
+          color: var(--cp-text) !important;
+          font-size: 15px !important;
+          font-weight: 700 !important;
+          line-height: 1.35 !important;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .cp-status-tile em {
+          display: block;
+          overflow: hidden;
+          margin-top: 4px;
+          color: var(--cp-muted) !important;
+          font-size: 11px !important;
+          font-style: normal;
+          line-height: 1.35 !important;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .cp-settings-card {
+          padding: 16px 18px;
+        }
+
+        .cp-settings-card-head {
+          margin: 0 0 12px;
+        }
+
+        .cp-settings-card-head strong {
+          display: block;
+          margin-top: 5px;
+          color: var(--cp-text) !important;
+          font-size: 17px !important;
+          font-weight: 720 !important;
+          line-height: 1.28 !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlockBorderWrapper"] {
+          border-color: rgba(29,29,31,.06) !important;
+          border-radius: 20px !important;
+          background: rgba(255,255,255,.78) !important;
+          box-shadow: var(--cp-shadow-soft) !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlockBorderWrapper"] > div {
+          padding: 16px 18px !important;
+        }
+
+        .cp-settings-form-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+
+        .cp-settings-page [data-testid="stMultiSelect"],
+        .cp-settings-page [data-testid="stTextInput"],
+        .cp-settings-page [data-testid="stTextArea"],
+        .cp-settings-page [data-testid="stNumberInput"],
+        .cp-settings-page [data-testid="stSelectbox"] {
+          margin-bottom: 10px !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stTextArea"] textarea {
+          min-height: 96px !important;
+        }
+
+        .cp-settings-page [data-testid="stMultiSelect"] label,
+        .cp-settings-page [data-testid="stTextInput"] label,
+        .cp-settings-page [data-testid="stTextArea"] label,
+        .cp-settings-page [data-testid="stNumberInput"] label,
+        .cp-settings-page [data-testid="stSelectbox"] label {
+          color: var(--cp-text-2) !important;
+          font-size: 12px !important;
+          font-weight: 660 !important;
+        }
+
+        .cp-settings-actions {
+          margin: 2px 0 0;
+          padding: 10px 0 0;
+          border-top: 1px solid rgba(29,29,31,.055);
+        }
+
+        .cp-preference-compact-panel {
+          display: contents;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlock"]:has(.cp-preference-compact-panel) {
+          padding: 14px 16px;
+          border: 1px solid rgba(29,29,31,.06);
+          border-radius: 18px;
+          background: rgba(255,255,255,.72);
+          box-shadow: none;
+        }
+
+        .cp-preference-compact-head {
+          margin-bottom: 8px !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlock"]:has(.cp-preference-compact-panel) [data-testid="stTextArea"] textarea {
+          min-height: 64px !important;
+          max-height: 72px !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlock"]:has(.cp-preference-compact-panel) [data-testid="stExpander"] {
+          border: 0 !important;
+          box-shadow: none !important;
+          background: transparent !important;
+        }
+
+        .cp-settings-page [data-testid="stVerticalBlock"]:has(.cp-preference-compact-panel) [data-testid="stButton"] {
+          width: auto !important;
+        }
+
         /* metrics, scores, alerts */
         [data-testid="stMetric"],
         [data-testid="stAlert"],
@@ -1187,7 +1734,14 @@ def inject_global_styles() -> None:
         }
 
         [data-testid="stAlert"] {
+          border-color: rgba(29,29,31,.065) !important;
+          background: rgba(255,255,255,.68) !important;
           color: var(--cp-text-2) !important;
+          box-shadow: var(--cp-shadow-soft) !important;
+        }
+
+        [data-testid="stAlert"] svg {
+          color: var(--cp-muted) !important;
         }
 
         .cp-score-grid,
@@ -1260,7 +1814,7 @@ def inject_global_styles() -> None:
         .cp-risk-tag-warning,
         .cp-revision-tone-gap {
           background: var(--cp-warning-soft) !important;
-          border-color: rgba(167,122,67,.16) !important;
+          border-color: rgba(143,118,90,.16) !important;
         }
 
         .cp-risk-tag-danger,
@@ -1422,8 +1976,7 @@ def inject_global_styles() -> None:
 
           .cp-topbar,
           .cp-section-title-block,
-          .cp-workspace-head,
-          .cp-auth-page {
+          .cp-workspace-head {
             display: grid;
             grid-template-columns: 1fr;
           }
@@ -1432,13 +1985,19 @@ def inject_global_styles() -> None:
             justify-content: flex-start;
           }
 
-          .cp-auth-page {
-            gap: 28px;
-            padding: 20px 0 42px;
+          div[data-testid="stMainBlockContainer"]:has(.cp-auth-scope) {
+            padding-top: 32px !important;
+            padding-bottom: 32px !important;
           }
 
           .cp-auth-story h1 {
-            font-size: 44px;
+            font-size: 38px;
+          }
+
+          .cp-settings-summary-grid,
+          .cp-status-tile-grid,
+          .cp-settings-form-grid {
+            grid-template-columns: 1fr;
           }
 
           .cp-auth-sheet,

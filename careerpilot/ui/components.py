@@ -190,6 +190,98 @@ def render_segmented_nav(options: Iterable[str], selected: str, *, key: str | No
     )
 
 
+def render_settings_hero(title: str, description: str) -> None:
+    st.markdown(
+        f"""
+        <section class="cp-settings-hero">
+            <span>CareerPilot Setup</span>
+            <h2>{_escape_text(title)}</h2>
+            <p>{_escape_text(description)}</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_status_tile(title: str, value: object, hint: str | None = None) -> str:
+    hint_html = f"<em>{_escape_text(hint)}</em>" if hint else ""
+    return (
+        '<section class="cp-status-tile">'
+        f"<span>{_escape_text(title)}</span>"
+        f"<strong>{_escape_text(value)}</strong>"
+        f"{hint_html}"
+        "</section>"
+    )
+
+
+def render_status_tile_grid(items: Sequence[dict[str, Any] | tuple[Any, ...]]) -> None:
+    tiles: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            title = item.get("title", "")
+            value = item.get("value", "")
+            hint = item.get("hint")
+        else:
+            title = item[0] if len(item) > 0 else ""
+            value = item[1] if len(item) > 1 else ""
+            hint = item[2] if len(item) > 2 else None
+        tiles.append(render_status_tile(str(title), value, str(hint) if hint is not None else None))
+    st.markdown(f'<div class="cp-status-tile-grid">{"".join(tiles)}</div>', unsafe_allow_html=True)
+
+
+def render_light_section(title: str, description: str | None = None) -> None:
+    desc_html = f"<p>{_escape_text(description)}</p>" if description else ""
+    st.markdown(
+        f"""
+        <div class="cp-light-section">
+            <strong>{_escape_text(title)}</strong>
+            {desc_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_auth_value_step(index: int | str, title: str, description: str | None = None) -> str:
+    desc_html = f"<span>{_escape_text(description)}</span>" if description else ""
+    return (
+        '<div class="cp-auth-value-step">'
+        f"<em>{_escape_text(index)}</em>"
+        "<div>"
+        f"<strong>{_escape_text(title)}</strong>"
+        f"{desc_html}"
+        "</div>"
+        "</div>"
+    )
+
+
+def render_auth_shell(title: str, subtitle: str, steps: Sequence[dict[str, str] | tuple[Any, ...]]) -> None:
+    step_html = ""
+    for idx, step in enumerate(steps, start=1):
+        if isinstance(step, dict):
+            step_title = step.get("title", "")
+            step_desc = step.get("description")
+        else:
+            step_title = step[0] if len(step) > 0 else ""
+            step_desc = step[1] if len(step) > 1 else None
+        step_html += render_auth_value_step(idx, str(step_title), str(step_desc) if step_desc is not None else None)
+    st.markdown(
+        f"""
+        <section class="cp-auth-story">
+            <div class="cp-auth-brand-row">
+                <span class="cp-auth-logo">CP</span>
+                <span class="cp-auth-product">CareerPilot</span>
+            </div>
+            <h1>{_escape_text(title)}</h1>
+            <p>{_escape_text(subtitle)}</p>
+            <div class="cp-auth-steps-line">三步：设定偏好、判断岗位、匹配简历</div>
+            <div class="cp-auth-feature-list">{step_html}</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_workspace_card(title: str, subtitle: str | None = None, class_name: str = "") -> None:
     subtitle_html = f'<p>{_escape(subtitle)}</p>' if subtitle else ""
     st.markdown(
@@ -212,16 +304,17 @@ def render_empty_state(title: str, description: str, icon: str | None = None, co
     icon_text = _clean_plain_text(icon)
     icon_class = " cp-empty-has-icon" if icon_text else ""
     icon_html = f'<span class="cp-empty-state-icon">{_escape_text(icon_text)}</span>' if icon_text else ""
-    st.markdown(
-        f"""
+    html_block = f"""
         <div class="cp-empty-state{compact_class}{icon_class}">
             {icon_html}
             <strong>{_escape_text(clean_title)}</strong>
             <p>{_escape_text(clean_description)}</p>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+    if hasattr(st, "html"):
+        st.html(html_block)
+    else:
+        st.markdown(html_block, unsafe_allow_html=True)
 
 
 def render_score_pill(label: str, score: object, level: str | None = None) -> None:
@@ -322,10 +415,69 @@ def render_decision_card(title: str, value: str, description: str | None = None)
     )
 
 
+def render_summary_card(
+    label: str,
+    title: str,
+    description: str | None = None,
+    metrics: Sequence[dict[str, Any] | tuple[Any, ...]] | None = None,
+    actions: Sequence[Any] | None = None,
+    tone: str = "neutral",
+) -> None:
+    safe_tone = str(tone or "neutral").lower()
+    if safe_tone not in {"neutral", "success", "warning", "danger"}:
+        safe_tone = "neutral"
+
+    metric_html = ""
+    for item in list(metrics or [])[:6]:
+        if isinstance(item, dict):
+            metric_label = item.get("label", "")
+            metric_value = item.get("value", item.get("score", ""))
+        else:
+            metric_label = item[0] if len(item) > 0 else ""
+            metric_value = item[1] if len(item) > 1 else ""
+        if str(metric_label).strip() or str(metric_value).strip():
+            metric_html += (
+                '<div class="cp-summary-metric">'
+                f'<span>{_escape_text(metric_label)}</span>'
+                f'<strong>{_escape_text(metric_value)}</strong>'
+                '</div>'
+            )
+
+    action_html = ""
+    clean_actions = [str(item).strip() for item in list(actions or []) if str(item).strip()][:5]
+    if clean_actions:
+        rows = "".join(
+            '<div class="cp-summary-action">'
+            f'<span>{idx}</span>'
+            f'<p>{_escape_text(action)}</p>'
+            '</div>'
+            for idx, action in enumerate(clean_actions, start=1)
+        )
+        action_html = f'<div class="cp-summary-actions">{rows}</div>'
+
+    desc_html = f'<p class="cp-summary-copy">{_escape_text(description)}</p>' if description else ""
+    metrics_html = f'<div class="cp-summary-grid">{metric_html}</div>' if metric_html else ""
+
+    st.markdown(
+        f"""
+        <section class="cp-summary-card cp-summary-{safe_tone}">
+            <div class="cp-summary-head">
+                <span>{_escape_text(label)}</span>
+                <strong>{_escape_text(title)}</strong>
+                {desc_html}
+            </div>
+            {metrics_html}
+            {action_html}
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_action_list(actions: Sequence[Any]) -> None:
     rows = ""
     for idx, action in enumerate([str(item).strip() for item in actions if str(item).strip()][:5], start=1):
-        rows += f'<div class="cp-action-row"><span>{idx}</span><p>{_escape(action)}</p></div>'
+        rows += f'<div class="cp-action-row"><span>{idx}</span><p>{_escape_text(action)}</p></div>'
     if not rows:
         render_empty_state("暂无下一步行动", "完成分析后会给出更具体的执行建议。")
         return

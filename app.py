@@ -84,7 +84,7 @@ def get_plotly_graph_objects() -> Any:
     return importlib.import_module("plotly.graph_objects")
 
 
-CHART_COLOR_SEQUENCE = ["#6F9F8A", "#A8B8D8", "#D8BFA6", "#B8C7B1", "#D7A7A0", "#B9AEDC", "#A7C7C9", "#D6CFB8"]
+CHART_COLOR_SEQUENCE = ["#6F9F8A", "#91A99A", "#B8B5A7", "#D3C7B6", "#A7B3B8", "#C7B7AE", "#BBC7BE", "#D8D2C5"]
 
 
 def pretty_bar_chart(
@@ -13640,37 +13640,36 @@ def render_resume_match_snapshot(resume_match: dict[str, Any]) -> None:
     score = resume_match_overall_score(resume_match)
     if score >= 78:
         verdict = "可以进入定制简历"
+        tone = "success"
     elif score >= 60:
         verdict = "需要补齐关键证据"
+        tone = "warning"
     else:
         verdict = "先补基础匹配"
-    facts = [
-        ("已覆盖", f"{len(resume_matched_requirement_names(resume_match))} 项"),
-        ("待补充能力", f"{len(resume_missing_requirement_names(resume_match))} 项"),
-        ("已去重", f"{int(resume_match.get('duplicate_removed', 0))} 段"),
-    ]
-    fact_cards = "".join(
-        '<div class="cp-fact">'
-        f'<div class="cp-fact-label">{safe_html(name)}</div>'
-        f'<div class="cp-fact-value">{safe_html(value)}</div>'
-        "</div>"
-        for name, value in facts
+        tone = "danger"
+
+    strengths = resume_strength_texts(resume_match, 4)
+    gaps = resume_gap_example_texts(resume_match, 4)
+    ui_components.render_summary_card(
+        "当前匹配度",
+        f"{score} / 100",
+        verdict,
+        metrics=[
+            {"label": "已覆盖", "value": f"{len(resume_matched_requirement_names(resume_match))} 项"},
+            {"label": "待补充", "value": f"{len(resume_missing_requirement_names(resume_match))} 项"},
+            {"label": "已去重", "value": f"{int(resume_match.get('duplicate_removed', 0))} 段"},
+        ],
+        actions=gaps or strengths,
+        tone=tone,
     )
-    st.markdown(
-        '<div class="cp-decision-card">'
-        '<div class="cp-decision-label">当前匹配度</div>'
-        f'<div class="cp-decision-value">{score} / 100</div>'
-        f'<div class="cp-decision-copy">{safe_html(verdict)}</div>'
-        "</div>"
-        f'<div class="cp-fact-grid">{fact_cards}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown("##### 可主打的优势")
-    for item in resume_strength_texts(resume_match, 4):
-        st.write(f"- {item}")
-    st.markdown("##### 投前必须处理")
-    for item in resume_gap_example_texts(resume_match, 4):
-        st.write(f"- {item}")
+
+    with st.expander("展开优势和缺口证据", expanded=False):
+        if strengths:
+            ui_components.render_section_header("可主打的优势", "先保留真实证据，再做表达优化。")
+            ui_components.render_action_list(strengths)
+        if gaps:
+            ui_components.render_section_header("投前必须处理", "这些内容优先补证据，不要硬写。")
+            ui_components.render_action_list(gaps)
 
 
 def render_decision_workspace_heading() -> None:
@@ -13738,10 +13737,11 @@ def render_decision_empty_state(
 def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
     if not result:
         render_decision_empty_state(
-            "完成左侧参数后，右侧会显示简历通过率、面试概率、Offer 概率和下一步动作。",
-            ["确认目标 JD。", "选择公司层级、学历是否符合和英文能力。", "点击预测结果。"],
+            "完成参数后生成预测",
+            ["确认当前目标JD。", "选择公司层级、学历匹配和英文能力。", "点击预测结果。"],
         )
         return
+
     ranges = result.get("display_range") or {}
     pass_range = str(ranges.get("简历通过率") or offer_probability_display_range(result.get("简历通过率", 0), int(result.get("sample_count", 0) or 0)))
     interview_range = str(ranges.get("进入面试概率") or offer_probability_display_range(result.get("进入面试概率", 0), int(result.get("sample_count", 0) or 0)))
@@ -13751,42 +13751,35 @@ def render_offer_prediction_snapshot(result: dict[str, Any] | None) -> None:
     confidence = str(result.get("confidence_note") or result.get("confidence") or "中")
     if sample_count < 5 and "低置信度" not in confidence:
         confidence = f"低置信度估算：{confidence}"
-    facts = [
-        ("简历通过", pass_range),
-        ("进入面试", interview_range),
-        ("拿 Offer", offer_range),
-        ("置信度", confidence),
-        ("历史样本", f"{sample_count} 条"),
-        ("主要瓶颈", str(result.get("bottleneck", "待判断"))),
-        ("最弱阶段", str(result.get("weakest_stage", "待判断"))),
-    ]
-    if result.get("career_families"):
-        facts.append(("岗位族", " / ".join(result.get("career_families", [])[:2])))
-    fact_cards = "".join(
-        '<div class="cp-fact">'
-        f'<div class="cp-fact-label">{safe_html(name)}</div>'
-        f'<div class="cp-fact-value">{safe_html(value)}</div>'
-        "</div>"
-        for name, value in facts
+
+    tone = "success" if any(token in verdict for token in ["可冲", "优先", "值得"]) else "warning"
+    if any(token in verdict for token in ["谨慎", "不建议", "暂缓", "低"]):
+        tone = "danger"
+
+    actions = humanize_advice_list(result.get("actions", []))[:5]
+    if not actions:
+        actions = humanize_advice_list(result.get("application_steps", []))[:5]
+
+    ui_components.render_summary_card(
+        "推进判断",
+        verdict,
+        str(result.get("scope_note", "区间只用于排序和行动优先级，不代表确定结果。")),
+        metrics=[
+            {"label": "简历通过", "value": pass_range},
+            {"label": "进入面试", "value": interview_range},
+            {"label": "拿 Offer", "value": offer_range},
+            {"label": "置信度", "value": confidence},
+            {"label": "历史样本", "value": f"{sample_count} 条"},
+            {"label": "主要瓶颈", "value": str(result.get("bottleneck", "待判断"))},
+        ],
+        actions=actions,
+        tone=tone,
     )
-    st.markdown(
-        '<div class="cp-decision-card">'
-        '<div class="cp-decision-label">推进判断</div>'
-        f'<div class="cp-decision-value">{safe_html(verdict)}</div>'
-        f'<div class="cp-decision-copy">{safe_html(result.get("scope_note", "区间只用于排序和行动优先级，不代表确定结果。"))}</div>'
-        "</div>"
-        f'<div class="cp-fact-grid">{fact_cards}</div>',
-        unsafe_allow_html=True,
-    )
+
     risk_flags = result.get("risk_flags", [])
     if risk_flags:
-        st.markdown("##### 先核实这些风险")
-        for item in risk_flags[:4]:
-            st.write(f"- {item}")
-    st.markdown("##### 下一步动作")
-    supportive_section_caption("job")
-    for item in humanize_advice_list(result.get("actions", [])[:4]):
-        st.write(f"- {item}")
+        with st.expander("需要先核实的风险", expanded=False):
+            ui_components.render_action_list(risk_flags[:5])
 
 
 def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
@@ -13797,43 +13790,43 @@ def render_internship_snapshot(analysis: dict[str, Any] | None) -> None:
             badge="等待实习信息",
         )
         return
+
     score = int(analysis.get("score", 0))
     grade_info = analysis.get("evidence_grade") or {}
     grade = str(grade_info.get("grade", "待判断"))
-    facts = [
-        ("价值评分", f"{score} / 100"),
-        ("证据等级", f"{grade}：{grade_info.get('reason', '待补充证据')}"),
-        ("建议产出", f"{len(analysis.get('recommended_outputs', []))} 项"),
-        ("入职前问题", f"{len(analysis.get('questions_to_ask', []))} 个"),
-        ("第一周动作", f"{len(analysis.get('first_week_plan', []))} 项"),
-    ]
+
+    if score >= 78:
+        tone = "success"
+    elif score >= 58:
+        tone = "warning"
+    else:
+        tone = "danger"
+
     career_families = analysis.get("signal_profile", {}).get("career_families", [])
+    metrics = [
+        {"label": "价值评分", "value": f"{score} / 100"},
+        {"label": "证据等级", "value": grade},
+        {"label": "建议产出", "value": f"{len(analysis.get('recommended_outputs', []))} 项"},
+        {"label": "入职前问题", "value": f"{len(analysis.get('questions_to_ask', []))} 个"},
+        {"label": "第一周动作", "value": f"{len(analysis.get('first_week_plan', []))} 项"},
+    ]
     if career_families:
-        facts.append(("识别方向", " / ".join(career_families[:2])))
-    fact_cards = "".join(
-        '<div class="cp-fact">'
-        f'<div class="cp-fact-label">{safe_html(name)}</div>'
-        f'<div class="cp-fact-value">{safe_html(value)}</div>'
-        "</div>"
-        for name, value in facts
+        metrics.append({"label": "识别方向", "value": " / ".join(career_families[:2])})
+
+    ui_components.render_summary_card(
+        "实习判断",
+        str(analysis.get("verdict", "待判断")),
+        str(analysis.get("decision", "")),
+        metrics=metrics,
+        actions=analysis.get("questions_to_ask", [])[:4],
+        tone=tone,
     )
-    st.markdown(
-        '<div class="cp-decision-card">'
-        '<div class="cp-decision-label">实习判断</div>'
-        f'<div class="cp-decision-value">{safe_html(analysis.get("verdict", "待判断"))}</div>'
-        f'<div class="cp-decision-copy">{safe_html(analysis.get("decision", ""))}</div>'
-        "</div>"
-        f'<div class="cp-fact-grid">{fact_cards}</div>',
-        unsafe_allow_html=True,
-    )
+
     if grade_info:
-        st.caption(
-            f"证据等级依据：项目线索 {grade_info.get('project_count', '0')}、导师/反馈 {grade_info.get('mentor_count', '0')}、交付物 {grade_info.get('output_count', '0')}、风险词 {grade_info.get('risk_count', '0')}。"
-        )
-    st.markdown("##### 接 Offer 前先问")
-    supportive_section_caption("internship")
-    for item in analysis.get("questions_to_ask", [])[:4]:
-        st.write(f"- {item}")
+        with st.expander("查看证据等级依据", expanded=False):
+            st.caption(
+                f"项目线索 {grade_info.get('project_count', '0')}，导师/反馈 {grade_info.get('mentor_count', '0')}，交付物 {grade_info.get('output_count', '0')}，风险词 {grade_info.get('risk_count', '0')}。"
+            )
 
 def render_application_summary(df: pd.DataFrame) -> None:
     today = today_label()
@@ -15011,6 +15004,48 @@ def render_offer_prediction_tab() -> None:
         render_user_dataframe(range_df)
 
 
+def _json_fingerprint_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _interview_runtime_outputs(
+    jd_analysis: Any,
+    resume_match: Any,
+    interview_analysis: Any,
+    resume_text: str,
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    fingerprint = content_fingerprint(
+        "||".join(
+            [
+                _json_fingerprint_payload(jd_analysis),
+                _json_fingerprint_payload(resume_match),
+                _json_fingerprint_payload(interview_analysis),
+                content_fingerprint(resume_text or ""),
+            ]
+        )
+    )
+    cache = st.session_state.get("_interview_runtime_outputs_cache")
+    if isinstance(cache, dict) and cache.get("fingerprint") == fingerprint:
+        return (
+            cache.get("interview_gap_rows", []),
+            cache.get("question_groups", {}),
+            cache.get("personalized_answers", []),
+        )
+    interview_gap_rows = build_interview_gap_rows_v2(jd_analysis, resume_match, interview_analysis, resume_text)
+    question_groups = interview_question_records(interview_analysis, jd_analysis, resume_match)
+    personalized_answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
+    st.session_state["_interview_runtime_outputs_cache"] = {
+        "fingerprint": fingerprint,
+        "interview_gap_rows": interview_gap_rows,
+        "question_groups": question_groups,
+        "personalized_answers": personalized_answers,
+    }
+    return interview_gap_rows, question_groups, personalized_answers
+
+
 def render_interview_tab() -> None:
     left_col, right_col = st.columns([0.55, 0.45], gap="large")
     with left_col:
@@ -15050,9 +15085,16 @@ def render_interview_tab() -> None:
     jd_analysis = st.session_state.get("jd_analysis")
     resume_match = st.session_state.get("resume_match")
     resume_text = profile_text_for_analysis()
-    interview_gap_rows = build_interview_gap_rows_v2(jd_analysis, resume_match, interview_analysis, resume_text)
-    question_groups = interview_question_records(interview_analysis, jd_analysis, resume_match)
-    personalized_answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
+    interview_gap_rows: list[dict[str, Any]] = []
+    question_groups: dict[str, list[dict[str, Any]]] = {}
+    personalized_answers: list[dict[str, Any]] = []
+    if interview_analysis:
+        interview_gap_rows, question_groups, personalized_answers = _interview_runtime_outputs(
+            jd_analysis,
+            resume_match,
+            interview_analysis,
+            resume_text,
+        )
     with right_col:
         st.markdown('<div class="cp-interview-sheet cp-interview-summary">', unsafe_allow_html=True)
         with st.container(border=True):
@@ -15065,8 +15107,12 @@ def render_interview_tab() -> None:
     if not interview_analysis:
         return
 
-    personalized_tab, mapping_tab, insight_tab, question_tab, history_tab = st.tabs(["个性化回答", "对应短板", "经验总结", "问题清单", "来源问题"])
-    with personalized_tab:
+    interview_view = ui_components.render_segmented_nav(
+        ["个性化回答", "对应短板", "经验总结", "问题清单", "来源问题"],
+        st.session_state.get("interview_detail_view", "个性化回答"),
+        key="interview_detail_view",
+    )
+    if interview_view == "个性化回答":
         if personalized_answers:
             st.markdown("#### 先练这些最贴当前简历的回答")
             render_user_dataframe(
@@ -15075,7 +15121,7 @@ def render_interview_tab() -> None:
             )
         else:
             st.caption("暂无可生成的个性化回答。")
-    with mapping_tab:
+    elif interview_view == "对应短板":
         if interview_gap_rows:
             st.markdown("#### 这次最该优先准备的短板题")
             summary_rows = pd.DataFrame(interview_gap_rows)
@@ -15085,7 +15131,7 @@ def render_interview_tab() -> None:
             )
         else:
             st.caption("暂无明确短板映射。")
-    with insight_tab:
+    elif interview_view == "经验总结":
         source_df = pd.DataFrame(interview_analysis.get("source_summaries", []))
         if not source_df.empty:
             st.markdown("#### 批量面经概览")
@@ -15102,14 +15148,14 @@ def render_interview_tab() -> None:
         st.markdown("#### 通用回答框架")
         for item in interview_analysis.get("answer_templates", []):
             st.write(f"- {item}")
-    with question_tab:
+    elif interview_view == "问题清单":
         for group_name, rows in question_groups.items():
             st.markdown(f"#### {group_name}")
             if rows:
                 render_user_dataframe(pd.DataFrame(rows), ["问题", "来源"])
             else:
                 st.caption("暂无问题。")
-    with history_tab:
+    else:
         cols = st.columns(2)
         for idx, (category, questions) in enumerate(interview_analysis.get("buckets", {}).items()):
             with cols[idx % 2]:
@@ -15466,8 +15512,12 @@ def render_dashboard_tab() -> None:
                     width="stretch",
                 )
 
-    skill_tab, match_tab, gap_tab, application_tab = st.tabs(["岗位关键词", "匹配度雷达", "能力缺口", "投递进度"])
-    with skill_tab:
+    report_view = ui_components.render_segmented_nav(
+        ["岗位关键词", "匹配度雷达", "能力缺口", "投递进度"],
+        st.session_state.get("report_dashboard_view", "岗位关键词"),
+        key="report_dashboard_view",
+    )
+    if report_view == "岗位关键词":
         st.markdown("#### 岗位关键词")
         if jd_analysis and not jd_analysis["skills"].empty:
             fig = pretty_bar_chart(
@@ -15482,7 +15532,7 @@ def render_dashboard_tab() -> None:
         else:
             st.caption("暂无岗位关键词数据。")
 
-    with match_tab:
+    elif report_view == "匹配度雷达":
         st.markdown("#### 匹配度雷达图")
         if resume_match:
             labels, values = resume_match_radar_dimensions(resume_match)
@@ -15496,7 +15546,7 @@ def render_dashboard_tab() -> None:
         else:
             st.caption("暂无简历匹配数据。")
 
-    with gap_tab:
+    elif report_view == "能力缺口":
         st.markdown("#### 能力缺口柱状图")
         if gap_analysis:
             gap_counts = pd.DataFrame(
@@ -15514,7 +15564,7 @@ def render_dashboard_tab() -> None:
         else:
             st.caption("暂无不足分析数据。")
 
-    with application_tab:
+    else:
         st.markdown("#### 投递进度")
         df = load_applications()
         if not df.empty:
@@ -15538,57 +15588,33 @@ def render_dashboard_tab() -> None:
 
 
 def render_auth_screen() -> None:
-    left_col, right_col = st.columns([1.65, 1], gap="large")
+    st.markdown('<div class="cp-auth-scope"></div>', unsafe_allow_html=True)
+    try:
+        left_col, right_col = st.columns([1.05, 0.95], gap="large", vertical_alignment="center")
+    except TypeError:
+        left_col, right_col = st.columns([1.05, 0.95], gap="large")
     with left_col:
-        st.markdown(
-            f"""
-            <section class="cp-auth-story">
-                <div class="cp-auth-brand-row">
-                    <span class="cp-auth-logo">CP</span>
-                    <span class="cp-auth-product">CareerPilot</span>
-                </div>
-                <h1>更安静地看清下一步职业选择。</h1>
-                <p>把岗位、简历、面试和投递判断放进一个轻量工作台，让每一次求职推进都有证据、有节奏，也有余地。</p>
-                <div class="cp-auth-feature-list">
-                    <div class="cp-auth-feature">
-                        <div class="cp-auth-feature-icon">1</div>
-                        <div>
-                            <strong>整理岗位线索</strong>
-                            <span>沉淀 JD、公司、城市、薪资和来源，不再散落在多个表格里。</span>
-                        </div>
-                    </div>
-                    <div class="cp-auth-feature">
-                        <div class="cp-auth-feature-icon">2</div>
-                        <div>
-                            <strong>看清简历匹配</strong>
-                            <span>基于目标岗位识别优势、缺口和可改写方向。</span>
-                        </div>
-                    </div>
-                    <div class="cp-auth-feature">
-                        <div class="cp-auth-feature-icon">3</div>
-                        <div>
-                            <strong>准备面试与决策</strong>
-                            <span>把面经、回答建议和投递判断串成可执行的下一步。</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-            """,
-            unsafe_allow_html=True,
+        ui_components.render_auth_shell(
+            "看清每一次求职选择。",
+            "先设定目标，再判断岗位价值，最后推进投递。",
+            [
+                {"title": "设定偏好", "description": "明确目标方向和筛选边界。"},
+                {"title": "判断岗位", "description": "先看机会质量，再看风险与取舍。"},
+                {"title": "匹配简历", "description": "把优势和缺口变成行动。"},
+            ],
         )
     with right_col:
-        with st.container(border=True):
+        with st.container():
             st.markdown(
                 f"""
-                <div class="cp-auth-sheet-head">
-                    <div class="cp-auth-sheet-kicker">继续使用 {safe_html(APP_TITLE)}</div>
-                    <h2>欢迎回来</h2>
-                    <p class="cp-auth-sheet-copy">登录后进入你的本地职业分析工作台。</p>
-                </div>
+                <section class="cp-auth-card">
+                    <div class="cp-auth-card-kicker">CareerPilot 求职判断系统</div>
+                    <h2>{safe_html(APP_TITLE)}</h2>
+                    <p class="cp-auth-card-copy">登录后继续你的岗位判断、简历匹配和投递推进。</p>
+                </section>
                 """,
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="cp-auth-tabs-gap"></div>', unsafe_allow_html=True)
             auth_mode = st.radio(
                 "登录方式",
                 ["登录", "注册"],
@@ -15633,7 +15659,7 @@ def render_auth_screen() -> None:
 # ---------------------------------------------------------------------------
 
 APP_NAVIGATION = {
-    "main_tabs": ["岗位工作台", "简历匹配", "求职决策", "面试与报告"],
+    "main_tabs": ["资料与偏好", "岗位工作台", "简历匹配", "求职决策", "面试与报告"],
     "jd_modes": ["单条JD分析", "批量JD筛选", "行业招聘监测"],
     "resume_modes": ["简历解析与匹配", "目标JD改简历", "不足补强"],
     "decision_modes": ["Offer预测", "实习评估", "投递管理"],
@@ -15641,6 +15667,7 @@ APP_NAVIGATION = {
 }
 
 MAIN_WORKSPACE_LABELS = {
+    "settings": "资料与偏好",
     "jd": "岗位工作台",
     "resume": "简历匹配",
     "decision": "求职决策",
@@ -15652,6 +15679,7 @@ WORKSPACE_DESCRIPTIONS = {
     "resume": "基于当前简历和目标JD做匹配、改写和短板补强。",
     "decision": "把投递、实习、Offer 概率和下一步动作放到同一处判断。",
     "report": "整理面试准备、复盘材料和可导出的求职报告。",
+    "settings": "管理目标档案、简历和筛选偏好。",
 }
 
 
@@ -15660,10 +15688,10 @@ def render_app_styles() -> None:
 
 
 def render_main_workspace_nav() -> str:
-    current = st.session_state.get("main_workspace", "jd")
+    current = st.session_state.get("main_workspace", "settings")
     if current not in MAIN_WORKSPACE_LABELS:
-        current = "jd"
-        st.session_state.main_workspace = current
+        current = "settings"
+        st.session_state["main_workspace"] = "settings"
     return current
 
 
@@ -15692,6 +15720,7 @@ def render_app_shell_header(workspace: str = "jd") -> None:
         "resume": "resume",
         "decision": "decision",
         "report": "report",
+        "settings": "settings",
     }.get(workspace, "default")
     ui_components.render_topbar(
         title,
@@ -15828,7 +15857,7 @@ def render_sidebar_target_profile_editor() -> None:
         placeholder="例如：目标岗位、阶段性求职策略、机会判断标准和需要避开的方向。",
     )
     cols = st.columns(2)
-    if cols[0].button("保存目标档案", type="primary", width="stretch", key="sidebar_save_target_profile"):
+    if cols[0].button("保存目标档案", width="stretch", key="sidebar_save_target_profile"):
         try:
             if profile_id:
                 save_user_profile(int(profile_id), profile_name.strip() or "目标档案", profile_content)
@@ -15902,7 +15931,7 @@ def render_sidebar_resume_manager() -> None:
 
     resume_content = st.text_area("简历内容", key=content_key, height=190)
     action_cols = st.columns(3)
-    if action_cols[0].button("保存", type="primary", width="stretch", key="sidebar_save_resume"):
+    if action_cols[0].button("保存", width="stretch", key="sidebar_save_resume"):
         try:
             if resume_id:
                 save_user_resume(int(resume_id), resume_name.strip() or "当前简历", resume_content)
@@ -15952,7 +15981,7 @@ def render_sidebar_resume_manager() -> None:
         else:
             st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
     new_content = st.text_area("新简历内容", key=new_content_key, height=160)
-    if st.button("新增并设为当前简历", type="primary", width="stretch", key="sidebar_create_resume"):
+    if st.button("新增并设为当前简历", width="stretch", key="sidebar_create_resume"):
         if not new_content.strip():
             st.warning("请先填写或上传简历内容。")
         else:
@@ -15967,127 +15996,401 @@ def render_sidebar_resume_manager() -> None:
                 st.error("简历名称已存在，请换一个名称。")
 
 
-def render_sidebar() -> None:
-    user = st.session_state.get(AUTH_SESSION_KEY) or {}
+def render_sidebar_context_card(user_label: str, profile_label: str, resume_label: str, prefs: dict[str, Any]) -> None:
+    cities = split_preference_items(prefs.get("target_cities", []))
+    industries = split_preference_items(prefs.get("preferred_industries", []))
+    city_text = " / ".join(cities[:2]) if cities else "未设置"
+    industry_text = " / ".join(industries[:2]) if industries else "未设置"
+    st.sidebar.markdown(
+        f"""
+        <section class="cp-sidebar-context-card">
+            <div class="cp-sidebar-context-row">
+                <span>简历</span>
+                <strong>{safe_html(resume_label)}</strong>
+            </div>
+            <div class="cp-sidebar-context-row">
+                <span>目标</span>
+                <strong>{safe_html(profile_label)}</strong>
+            </div>
+            <div class="cp-sidebar-context-row">
+                <span>城市</span>
+                <strong>{safe_html(city_text)}</strong>
+            </div>
+            <div class="cp-sidebar-context-row">
+                <span>行业</span>
+                <strong>{safe_html(industry_text)}</strong>
+            </div>
+        </section>
+        <div class="cp-sidebar-user-line">{safe_html(user_label)}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def settings_chip_selector(
+    label: str,
+    options: list[str],
+    selected: list[str] | str,
+    *,
+    key: str,
+    placeholder: str,
+    help_text: str | None = None,
+    allow_custom: bool = False,
+    empty_text: str = "暂未选择",
+) -> list[str]:
+    return _sidebar_chip_selector(
+        label,
+        options,
+        selected,
+        key=key,
+        placeholder=placeholder,
+        help_text=help_text,
+        allow_custom=allow_custom,
+        empty_text=empty_text,
+    )
+
+
+def _reset_settings_selector_state() -> None:
+    prefixes = (
+        "settings_target_industries_",
+        "settings_target_cities_",
+        "settings_direction_",
+    )
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith(prefixes):
+            st.session_state.pop(state_key, None)
+    for state_key in (
+        "settings_job_keywords",
+        "settings_avoid_keywords",
+        "settings_notes",
+        "settings_target_city_strict",
+        "settings_target_salary_enabled",
+        "settings_salary_strict",
+        "settings_min_monthly_salary",
+        "settings_max_monthly_salary",
+    ):
+        st.session_state.pop(state_key, None)
+
+
+def render_settings_summary_cards() -> None:
     prefs = load_target_preferences()
-    active_profile = get_active_profile()
-    active_resume = get_active_resume()
+    _user_label, profile_label, resume_label = _current_shell_labels()
+    cities = split_preference_items(prefs.get("target_cities", []))
+    industries = split_preference_items(prefs.get("preferred_industries", []))
+    directions = split_preference_items(prefs.get("target_roles", []))
+    ui_components.render_status_tile_grid(
+        [
+            {"title": "当前简历", "value": resume_label, "hint": "用于匹配与改写"},
+            {"title": "目标档案", "value": profile_label, "hint": "定义机会判断标准"},
+            {"title": "求职城市", "value": " / ".join(cities[:2]) or "未设置", "hint": "影响批量筛选"},
+            {"title": "行业方向", "value": " / ".join((directions or industries)[:2]) or "未设置", "hint": "约束岗位池"},
+        ]
+    )
+
+
+def render_settings_profile_section() -> None:
     profiles = load_user_profiles()
+    active_profile = get_active_profile()
+    left_col, right_col = st.columns([0.34, 0.66], gap="large")
+
+    with left_col:
+        with st.container(border=True):
+            st.markdown('<div class="cp-settings-card-head"><span>目标档案</span><strong>选择与管理</strong></div>', unsafe_allow_html=True)
+            profile_id = active_profile.get("id")
+            if not profiles.empty:
+                profile_ids = profiles["id"].astype(int).tolist()
+                current_id = int(profile_id) if profile_id in profile_ids else profile_ids[0]
+                selected_profile_id = st.selectbox(
+                    "当前目标档案",
+                    profile_ids,
+                    index=profile_ids.index(current_id),
+                    key="settings_target_profile_select",
+                    format_func=lambda item_id: str(
+                        profiles.loc[profiles["id"].astype(int) == int(item_id), "name"].iloc[0]
+                    ),
+                )
+                if int(selected_profile_id) != st.session_state.get("active_profile_id"):
+                    st.session_state.active_profile_id = int(selected_profile_id)
+                    st.session_state["settings_target_profile_is_new"] = False
+                    clear_preference_dependent_results()
+                    st.rerun()
+            else:
+                st.caption("还没有目标档案。")
+            if st.button("新建目标档案", key="settings_new_target_profile", width="stretch"):
+                st.session_state["settings_target_profile_is_new"] = True
+                st.rerun()
+            can_delete = bool(profile_id) and not profiles.empty
+            if st.button("删除当前档案", key="settings_delete_target_profile", width="stretch", disabled=not can_delete):
+                if delete_user_profile(int(profile_id)):
+                    st.session_state["settings_target_profile_is_new"] = False
+                    clear_preference_dependent_results()
+                    st.success("目标档案已删除。")
+                    st.rerun()
+                else:
+                    st.warning("没有可删除的目标档案。")
+
+    with right_col:
+        with st.container(border=True):
+            is_new = bool(st.session_state.get("settings_target_profile_is_new")) or not active_profile.get("id")
+            profile_id = None if is_new else active_profile.get("id")
+            name_key = "settings_target_profile_name"
+            content_key = "settings_target_profile_content"
+            _sync_sidebar_widget_pair(
+                "settings_target_profile_marker",
+                "new" if is_new else profile_id,
+                {
+                    name_key: "" if is_new else active_profile.get("name", "") or "目标档案",
+                    content_key: "" if is_new else active_profile.get("content", "") or "",
+                },
+            )
+            st.markdown('<div class="cp-settings-card-head"><span>编辑</span><strong>目标说明</strong></div>', unsafe_allow_html=True)
+            profile_name = st.text_input("档案名称", key=name_key)
+            profile_content = st.text_area(
+                "目标说明",
+                key=content_key,
+                height=240,
+                placeholder="例如：目标岗位、阶段性求职策略、机会判断标准和需要避开的方向。",
+            )
+            if st.button("保存目标档案", type="primary", key="settings_save_target_profile", width="stretch"):
+                try:
+                    if profile_id:
+                        save_user_profile(int(profile_id), profile_name.strip() or "目标档案", profile_content)
+                    else:
+                        new_id = create_user_profile(profile_name.strip() or "目标档案", profile_content)
+                        st.session_state.active_profile_id = int(new_id)
+                    st.session_state["settings_target_profile_is_new"] = False
+                    clear_preference_dependent_results()
+                    st.success("目标档案已保存。")
+                    st.rerun()
+                except db_integrity_errors():
+                    st.error("档案名称已存在，请换一个名称。")
+
+
+def render_settings_resume_section() -> None:
     resumes = load_user_resumes()
-    user_label, profile_label, resume_label = _current_shell_labels()
+    active_resume = get_active_resume()
+    left_col, right_col = st.columns([0.34, 0.66], gap="large")
+
+    with left_col:
+        with st.container(border=True):
+            st.markdown('<div class="cp-settings-card-head"><span>当前简历</span><strong>选择与导入</strong></div>', unsafe_allow_html=True)
+            resume_id = active_resume.get("id")
+            if not resumes.empty:
+                resume_ids = resumes["id"].astype(int).tolist()
+                current_id = int(resume_id) if resume_id in resume_ids else resume_ids[0]
+                selected_resume_id = st.selectbox(
+                    "切换当前简历",
+                    resume_ids,
+                    index=resume_ids.index(current_id),
+                    key="settings_resume_select",
+                    format_func=lambda item_id: str(
+                        resumes.loc[resumes["id"].astype(int) == int(item_id), "name"].iloc[0]
+                    ),
+                )
+                if int(selected_resume_id) != st.session_state.get("active_resume_id"):
+                    st.session_state.active_resume_id = int(selected_resume_id)
+                    clear_resume_dependent_results()
+                    st.rerun()
+            else:
+                st.caption("还没有简历。")
+            st.caption(f"已保存简历：{len(resumes)} 份")
+            new_upload = st.file_uploader(
+                "上传新简历",
+                type=["pdf", "docx", "doc", "txt", "md"],
+                key="settings_new_resume_upload",
+            )
+            if new_upload is not None:
+                parsed_new = parsed_resume_from_upload(new_upload)
+                parsed_new_text = resume_text_from_parsed(parsed_new).strip()
+                if parsed_new_text:
+                    st.session_state["settings_new_resume_content"] = parsed_new_text
+                    st.success("已读取上传文件。")
+                else:
+                    st.warning("没有读取到有效简历内容。")
+            can_delete = bool(resume_id) and len(resumes) > 1
+            if st.button("删除当前简历", key="settings_delete_resume", width="stretch", disabled=not can_delete):
+                if delete_user_resume(int(resume_id)):
+                    clear_resume_dependent_results()
+                    st.success("简历已删除。")
+                    st.rerun()
+
+    with right_col:
+        with st.container(border=True):
+            resume_id = active_resume.get("id")
+            name_key = "settings_resume_name"
+            content_key = "settings_resume_content"
+            _sync_sidebar_widget_pair(
+                "settings_resume_marker",
+                resume_id,
+                {
+                    name_key: active_resume.get("name", "") or "当前简历",
+                    content_key: active_resume.get("content", "") or "",
+                },
+            )
+            st.markdown('<div class="cp-settings-card-head"><span>编辑</span><strong>简历内容</strong></div>', unsafe_allow_html=True)
+            resume_name = st.text_input("简历名称", key=name_key)
+            resume_content = st.text_area("简历内容", key=content_key, height=280)
+            cols = st.columns([1, 1])
+            if cols[0].button("保存当前简历", type="primary", key="settings_save_resume", width="stretch"):
+                try:
+                    if resume_id:
+                        save_user_resume(int(resume_id), resume_name.strip() or "当前简历", resume_content)
+                    else:
+                        new_id = create_user_resume(unique_resume_name(resume_name.strip() or "当前简历"), resume_content, is_default=1)
+                        st.session_state.active_resume_id = int(new_id)
+                    clear_resume_dependent_results()
+                    st.success("简历已保存。")
+                    st.rerun()
+                except db_integrity_errors():
+                    st.error("简历名称已存在，请换一个名称。")
+            if cols[1].button("复制为新简历", key="settings_copy_resume", width="stretch", disabled=not resume_content.strip()):
+                try:
+                    new_id = create_user_resume(unique_resume_name(f"{resume_name.strip() or '当前简历'} - 副本"), resume_content, is_default=1)
+                    st.session_state.active_resume_id = int(new_id)
+                    clear_resume_dependent_results()
+                    st.success("已复制为新简历。")
+                    st.rerun()
+                except db_integrity_errors():
+                    st.error("副本名称已存在，请换一个名称。")
+
+            with st.expander("新增简历", expanded=bool(st.session_state.get("settings_new_resume_content"))):
+                ensure_widget_text("settings_new_resume_content")
+                new_name = st.text_input("新简历名称", key="settings_new_resume_name", placeholder="例如：数据分析岗位简历")
+                new_content = st.text_area("新简历内容", key="settings_new_resume_content", height=220)
+                if st.button("新增并设为当前简历", key="settings_create_resume", width="stretch"):
+                    if not new_content.strip():
+                        st.warning("请先填写或上传简历内容。")
+                    else:
+                        try:
+                            new_id = create_user_resume(unique_resume_name(new_name.strip() or "新简历"), new_content, is_default=1)
+                            st.session_state.active_resume_id = int(new_id)
+                            st.session_state["settings_new_resume_content"] = ""
+                            clear_resume_dependent_results()
+                            st.success("新简历已创建。")
+                            st.rerun()
+                        except db_integrity_errors():
+                            st.error("简历名称已存在，请换一个名称。")
+
+
+def render_settings_preferences_tab() -> None:
+    prefs = load_target_preferences()
     selected_industries, selected_directions = normalize_industry_direction_selection(
         prefs.get("preferred_industries", []),
         prefs.get("target_roles", []),
     )
+    left_col, right_col = st.columns([1, 1], gap="large")
+    with left_col:
+        with st.container(border=True):
+            st.markdown('<div class="cp-settings-card-head"><span>方向与城市</span><strong>目标范围</strong></div>', unsafe_allow_html=True)
+            selected_industries = settings_chip_selector(
+                "目标行业",
+                RECRUITMENT_INDUSTRY_OPTIONS,
+                selected_industries,
+                key="settings_target_industries",
+                placeholder="选择目标行业",
+                empty_text="先选择一个或多个目标行业。",
+            )
+            selected_industries, selected_directions = normalize_industry_direction_selection(
+                selected_industries,
+                selected_directions,
+            )
+            if selected_industries:
+                updated_directions: list[str] = []
+                for industry in selected_industries:
+                    active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
+                    current_directions = [item for item in selected_directions if item in active_options]
+                    chosen_directions = settings_chip_selector(
+                        f"{industry}方向",
+                        active_options,
+                        current_directions,
+                        key=f"settings_direction_{sanitize_capture_filename(industry)}",
+                        placeholder=f"选择{industry}方向",
+                        empty_text="可不选，系统会按行业和JD文本判断。",
+                    )
+                    updated_directions.extend(chosen_directions)
+                selected_directions = list(dict.fromkeys(updated_directions))
+            else:
+                selected_directions = []
+            selected_cities = settings_chip_selector(
+                "意向城市",
+                CHINA_CITY_OPTIONS,
+                split_preference_items(prefs.get("target_cities", [])),
+                key="settings_target_cities",
+                placeholder="选择意向城市",
+                help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市，也可以直接新增。",
+                allow_custom=True,
+                empty_text="未选择时，系统不会按城市强限制推荐结果。",
+            )
 
-    ui_components.render_sidebar_brand(APP_BUILD_LABEL)
-    ui_components.render_sidebar_status(user_label, resume_label, profile_label)
-    ui_components.render_sidebar_nav(
-        MAIN_WORKSPACE_LABELS,
-        st.session_state.get("main_workspace", "jd"),
-        key="main_workspace",
-    )
+    with right_col:
+        with st.container(border=True):
+            st.markdown('<div class="cp-settings-card-head"><span>薪资与规则</span><strong>筛选边界</strong></div>', unsafe_allow_html=True)
+            target_salary_enabled = st.checkbox(
+                "启用目标薪资偏好",
+                value=bool(prefs.get("target_salary_enabled")),
+                key="settings_target_salary_enabled",
+                help="目标薪资只影响批量 JD 推荐排序。",
+            )
+            salary_cols = st.columns([1, 1])
+            min_monthly_salary = salary_cols[0].number_input(
+                "最低月薪",
+                min_value=0,
+                max_value=200000,
+                step=1000,
+                value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
+                disabled=not target_salary_enabled,
+                key="settings_min_monthly_salary",
+            )
+            max_monthly_salary = salary_cols[1].number_input(
+                "期望上限",
+                min_value=0,
+                max_value=300000,
+                step=1000,
+                value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
+                disabled=not target_salary_enabled,
+                key="settings_max_monthly_salary",
+                help="不填或为 0 表示只看最低要求。",
+            )
+            rule_cols = st.columns([1, 1])
+            target_city_strict = rule_cols[0].checkbox(
+                "城市严格匹配",
+                value=bool(prefs.get("target_city_strict")),
+                key="settings_target_city_strict",
+            )
+            salary_strict = rule_cols[1].checkbox(
+                "薪资严格匹配",
+                value=bool(prefs.get("salary_strict")),
+                disabled=not target_salary_enabled,
+                key="settings_salary_strict",
+            )
 
-    with st.sidebar.expander(
-        "目标档案",
-        expanded=profiles.empty or not active_profile.get("content", "").strip(),
-    ):
-        render_sidebar_target_profile_editor()
-
-    with st.sidebar.expander(
-        "简历管理",
-        expanded=resumes.empty or not active_resume.get("content", "").strip(),
-    ):
-        render_sidebar_resume_manager()
-
-    with st.sidebar.expander("求职偏好", expanded=not _sidebar_has_basic_preferences(prefs)):
-        selected_industries = _sidebar_chip_selector(
-            "目标行业",
-            RECRUITMENT_INDUSTRY_OPTIONS,
-            selected_industries,
-            key="sidebar_target_industries",
-            placeholder="选择目标行业",
-            empty_text="先选择一个或多个目标行业。",
-        )
-        selected_industries, selected_directions = normalize_industry_direction_selection(
-            selected_industries,
-            selected_directions,
-        )
-        if selected_industries:
-            updated_directions: list[str] = []
-            for industry in selected_industries:
-                active_options = INDUSTRY_DIRECTION_TREE.get(industry, [])
-                current_directions = [
-                    direction for direction in selected_directions
-                    if direction in active_options
-                ]
-                chosen_directions = _sidebar_chip_selector(
-                    f"{industry}方向",
-                    active_options,
-                    current_directions,
-                    key=f"sidebar_direction_{sanitize_capture_filename(industry)}",
-                    placeholder=f"选择{industry}方向",
-                    empty_text="可不选，系统会按行业和JD文本判断。",
-                )
-                updated_directions.extend(chosen_directions)
-            selected_directions = list(dict.fromkeys(updated_directions))
-        else:
-            selected_directions = []
-
-        selected_cities = _sidebar_chip_selector(
-            "意向城市",
-            CHINA_CITY_OPTIONS,
-            split_preference_items(prefs.get("target_cities", [])),
-            key="sidebar_target_cities",
-            placeholder="选择意向城市",
-            help_text=f"可搜索 {len(CHINA_CITY_OPTIONS)} 个中国城市；也可以用下方输入框添加新城市。",
-            allow_custom=True,
-            empty_text="未选择时，系统不会按城市强限制推荐结果。",
-        )
-        target_city_strict = st.checkbox(
-            "城市严格匹配",
-            value=bool(prefs.get("target_city_strict")),
-            help="开启后，非目标城市岗位会被降级或限制推荐分。远程、全国可投等情况会按岗位文本继续判断。",
-        )
-
-        target_salary_enabled = st.checkbox(
-            "启用目标薪资偏好",
-            value=bool(prefs.get("target_salary_enabled")),
-            help="目标薪资只影响批量 JD 推荐排序，不影响简历匹配分和根据 JD 改简历。",
-        )
-        salary_cols = st.columns([1, 1, 0.8])
-        min_monthly_salary = salary_cols[0].number_input(
-            "最低月薪",
-            min_value=0,
-            max_value=200000,
-            step=1000,
-            value=int(prefs.get("min_monthly_salary") or DEFAULT_TARGET_PREFERENCES["min_monthly_salary"]),
-            disabled=not target_salary_enabled,
-        )
-        max_monthly_salary = salary_cols[1].number_input(
-            "期望上限",
-            min_value=0,
-            max_value=300000,
-            step=1000,
-            value=int(prefs.get("max_monthly_salary") or DEFAULT_TARGET_PREFERENCES["max_monthly_salary"]),
-            disabled=not target_salary_enabled,
-            help="不填或为 0 表示只看最低要求。",
-        )
-        salary_strict = salary_cols[2].checkbox(
-            "严格",
-            value=bool(prefs.get("salary_strict")),
-            disabled=not target_salary_enabled,
-            help="开启后，明显低于目标薪资的岗位推荐分会封顶到 50。",
-        )
-        job_keywords = st.text_input(
+    with st.container():
+        st.markdown('<div class="cp-preference-compact-panel"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="cp-settings-card-head cp-preference-compact-head"><span>关键词与备注</span><strong>细化筛选</strong></div>', unsafe_allow_html=True)
+        keyword_cols = st.columns([1, 1], gap="medium")
+        job_keywords = keyword_cols[0].text_input(
             "岗位关键词",
             value="、".join(split_preference_items(prefs.get("job_keywords", []))),
+            key="settings_job_keywords",
+            placeholder="用顿号、逗号或空格分隔",
         )
-        with st.expander("高级偏好", expanded=False):
-            avoid_keywords = st.text_area("排除关键词", value=str(prefs.get("avoid_keywords", "")), height=72)
-            notes = st.text_area("补充偏好", value=str(prefs.get("notes", "")), height=72)
-        pref_cols = st.columns(2)
-        if pref_cols[0].button("保存偏好", width="stretch"):
+        avoid_keywords = keyword_cols[1].text_input(
+            "回避关键词",
+            value=str(prefs.get("avoid_keywords", "")),
+            key="settings_avoid_keywords",
+            placeholder="用顿号、逗号或空格分隔",
+        )
+        with st.expander("补充备注", expanded=bool(prefs.get("notes"))):
+            notes = st.text_area("备注", value=str(prefs.get("notes", "")), height=68, key="settings_notes", label_visibility="collapsed")
+        st.markdown('<div class="cp-settings-actions">', unsafe_allow_html=True)
+        action_cols = st.columns([1, 1, 4])
+        if action_cols[0].button("清空结构化项", key="settings_clear_preferences"):
+            save_target_preferences(DEFAULT_TARGET_PREFERENCES)
+            _reset_settings_selector_state()
+            clear_preference_dependent_results()
+            st.success("已清空城市、行业、方向和关键词。")
+            st.rerun()
+        if action_cols[1].button("保存求职偏好", type="primary", key="settings_save_preferences"):
             save_target_preferences(
                 {
                     "target_roles": selected_directions,
@@ -16108,21 +16411,51 @@ def render_sidebar() -> None:
                     "notes": notes,
                 }
             )
-            st.success("偏好设置已保存。")
-        if pref_cols[1].button("清空结构化项", width="stretch"):
-            save_target_preferences(DEFAULT_TARGET_PREFERENCES)
-            _reset_sidebar_selector_state()
-            st.success("已清空城市、行业、方向和关键词。")
+            clear_preference_dependent_results()
+            st.success("求职偏好已保存。")
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    if user:
-        upload_url = capture_upload_public_url()
-        upload_token = get_or_create_capture_upload_token(int(user["id"]))
-        with st.sidebar.expander("网页采集助手", expanded=False):
-            render_browser_capture_helper(upload_url, upload_token, key_prefix="sidebar")
-        if st.sidebar.button("退出登录", key="logout_user_btn", width="stretch"):
-            logout_app_user()
-            st.rerun()
+
+def render_settings_workspace_tab() -> None:
+    st.markdown('<div class="cp-settings-page">', unsafe_allow_html=True)
+    ui_components.render_settings_hero(
+        "先设定你是谁，再判断机会",
+        "把目标档案、当前简历和筛选偏好先对齐，后面的岗位分析、简历匹配和求职决策才会更稳。",
+    )
+    render_settings_summary_cards()
+    section = ui_components.render_segmented_nav(
+        ["目标档案", "当前简历", "求职偏好"],
+        st.session_state.get("settings_section_nav", "目标档案"),
+        key="settings_section_nav",
+    )
+    if section == "目标档案":
+        render_settings_profile_section()
+    elif section == "当前简历":
+        render_settings_resume_section()
+    else:
+        render_settings_preferences_tab()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_sidebar() -> None:
+    prefs = load_target_preferences()
+    user_label, profile_label, resume_label = _current_shell_labels()
+    current_workspace = st.session_state.get("main_workspace", "settings")
+    if current_workspace not in MAIN_WORKSPACE_LABELS:
+        current_workspace = "settings"
+        st.session_state["main_workspace"] = "settings"
+
+    ui_components.render_sidebar_brand(APP_BUILD_LABEL)
+
+    st.sidebar.markdown('<div class="cp-sidebar-section-label">工作区</div>', unsafe_allow_html=True)
+    ui_components.render_sidebar_nav(
+        MAIN_WORKSPACE_LABELS,
+        current_workspace,
+        key="main_workspace",
+    )
+
+    render_sidebar_context_card(user_label, profile_label, resume_label, prefs)
 
 
 def render_resume_management_page() -> None:
@@ -16176,7 +16509,7 @@ def render_resume_management_page() -> None:
 
             resume_content = st.text_area("简历内容", key=resume_content_key, height=320)
             action_cols = st.columns(3)
-            if action_cols[0].button("保存简历", type="primary", width="stretch"):
+            if action_cols[0].button("保存简历", width="stretch"):
                 try:
                     if active_resume.get("id"):
                         save_user_resume(int(active_resume["id"]), resume_name.strip() or "当前简历", resume_content)
@@ -16354,7 +16687,7 @@ def render_target_profile_page() -> None:
             notes = st.text_area("补充偏好", value=str(prefs.get("notes", "")), height=80)
 
     action_cols = st.columns([1, 1, 1])
-    if action_cols[0].button("保存目标档案", type="primary", width="stretch"):
+    if action_cols[0].button("保存目标档案", width="stretch"):
         try:
             if profiles.empty or active_profile.get("id") is None:
                 new_id = create_user_profile(profile_name, profile_content)
@@ -16496,31 +16829,34 @@ def render_jd_tab() -> None:
             "任职要求：熟悉 Excel，了解 SQL 或 Python，有用户增长、运营分析或课程项目经验优先。"
         )
 
-    st.markdown('<div class="cp-section-title-block"><div><h2>单条JD分析</h2><p>粘贴岗位描述，快速判断是否值得投。</p></div></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="cp-section-title-block"><div><h2>当前目标JD</h2><p>先确定一个岗位，再推进简历匹配、决策和投递。</p></div></div>',
+        unsafe_allow_html=True,
+    )
     left_col, right_col = st.columns([0.52, 0.48], gap="medium")
 
     with left_col:
         with st.container(border=True):
-            ui_components.render_section_header("导入JD", "粘贴岗位描述，系统会判断推荐价值和风险。")
+            ui_components.render_section_header("输入区", "粘贴JD正文。链接、上传和采集放在更多导入方式里。")
             text = st.text_area(
-                "粘贴 JD 文本",
+                "岗位描述",
                 height=220,
-                placeholder="粘贴招聘 JD、岗位描述或网页复制内容...",
+                placeholder="粘贴招聘JD、岗位描述或网页复制内容。建议包含岗位名、公司、地点、职责和要求。",
                 key="jd_manual_text",
             )
             exported_jd_text = ""
             upload_text = ""
             crawled_jd_text = ""
             action_cols = st.columns([1.25, 1, 1], gap="small")
-            analyze_clicked = action_cols[0].button("分析JD", width="stretch", key="analyze_jd_main_action")
+            analyze_clicked = action_cols[0].button("设为目标JD并分析", width="stretch", key="analyze_jd_main_action")
             action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
-            action_cols[2].button("示例JD", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
+            action_cols[2].button("插入示例", width="stretch", key="use_example_jd", on_click=use_example_jd_text)
 
-            with st.expander("文件上传和网页导入", expanded=False):
+            with st.expander("更多导入方式", expanded=False):
                 import_modes = st.columns(3)
-                use_url_import = import_modes[0].checkbox("公开链接抓取", value=False, key="jd_use_url_import")
-                use_capture_import = import_modes[1].checkbox("一键网页采集", value=False, key="jd_use_capture_import")
-                use_file_import = import_modes[2].checkbox("上传文件", value=False, key="jd_use_file_import")
+                use_url_import = import_modes[0].checkbox("公开链接", value=False, key="jd_use_url_import")
+                use_capture_import = import_modes[1].checkbox("网页采集", value=False, key="jd_use_capture_import")
+                use_file_import = import_modes[2].checkbox("文件上传", value=False, key="jd_use_file_import")
 
                 if use_url_import:
                     url_block = st.text_area(
@@ -16599,14 +16935,14 @@ def render_jd_tab() -> None:
                         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                     if analyzed.get("quality", {}).get("is_sufficient", True):
-                        st.success("JD 分析完成，并已设为当前目标 JD。")
+                        st.success("已更新当前目标JD。")
                     else:
                         st.warning("JD 信息不足，已先标出缺失字段，暂不生成过度确定的推荐结论。")
 
     jd_analysis = st.session_state.get("jd_analysis")
     with right_col:
         with st.container(border=True):
-            ui_components.render_section_header("判断结果", "推荐分、风险点和下一步行动会集中在这里。")
+            ui_components.render_section_header("结果区", "先看结论，再展开证据、缺口和改法。")
             if jd_analysis:
                 quality = st.session_state.get("single_jd_quality") or jd_input_quality(jd_analysis, jd_analysis.get("raw_text", ""))
                 if not quality.get("is_sufficient", True):
@@ -16614,7 +16950,7 @@ def render_jd_tab() -> None:
                         "信息不足",
                         "缺失字段：" + "、".join(quality.get("missing_fields", [])),
                     )
-                    st.caption("请补齐岗位名、职责、要求、公司、地点等核心信息后再生成确定推荐。")
+                    st.caption("补齐岗位名、公司、地点、职责和要求后，推荐判断会更稳定。")
                 else:
                     result_panel = single_jd_result_panel_data(jd_analysis, st.session_state.get("resume_match"))
                     ui_components.render_result_panel(result_panel)
@@ -16658,27 +16994,34 @@ def main() -> None:
         page_title=APP_TITLE,
         page_icon="🧭",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     refresh_render_utils_module()
     render_app_styles()
     clear_legacy_runtime_state()
     init_db()
+    if st.session_state.get("main_workspace") not in MAIN_WORKSPACE_LABELS:
+        st.session_state["main_workspace"] = "settings"
     if not current_user_id():
         render_auth_screen()
         return
     render_sidebar()
     render_state_alerts()
     workspace = render_main_workspace_nav()
-    render_app_shell_header(workspace)
     if workspace == "jd":
+        render_app_shell_header(workspace)
         render_jd_workspace_tab()
     elif workspace == "resume":
+        render_app_shell_header(workspace)
         render_resume_workspace_tab()
     elif workspace == "decision":
+        render_app_shell_header(workspace)
         render_decision_workspace_tab()
-    else:
+    elif workspace == "report":
+        render_app_shell_header(workspace)
         render_interview_report_workspace_tab()
+    else:
+        render_settings_workspace_tab()
 
 
 if __name__ == "__main__":
