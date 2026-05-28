@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .streamlit/
 .venv/
 .venv_cp313/
@@ -7,13 +12,31 @@ __pycache__/
 .venv_streamlit/
 venv/
 .env
+.env.*
+!.env.example
 carboncareer.db
 careerpilot.db
 *.db
+*.sqlite
+*.sqlite3
 *.xlsx
 *.pdf
 *.docx
 *.log
+logs/
 Downloads/
 CareerPilot_JD/
 uploaded_jd/
+uploads/
+tmp/
+temp/
+
+# Frontend local dependencies and build outputs
+web/node_modules/
+web/dist/
+web/.vite/
+web/.cache/
+web/*.tsbuildinfo
+
+# Local Codex/runtime scratch space
+.codex_tmp/

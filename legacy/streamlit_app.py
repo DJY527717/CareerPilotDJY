@@ -7075,6 +7075,48 @@ def extract_text_from_upload(uploaded_file: Any) -> str:
     return "[暂不支持该文件类型，请上传 PDF / DOCX / TXT / HTML / Excel / 图片。]"
 
 
+def uploaded_file_fingerprint(uploaded_file: Any) -> str:
+    if uploaded_file is None:
+        return ""
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        data = b""
+    name = getattr(uploaded_file, "name", "") or ""
+    return hashlib.sha256(name.encode("utf-8", errors="ignore") + b"\0" + data).hexdigest()
+
+
+def uploaded_file_signature(uploaded_file: Any) -> str:
+    return uploaded_file_fingerprint(uploaded_file)
+
+
+def get_cached_upload_text(uploaded_file: Any, namespace: str) -> str:
+    if uploaded_file is None:
+        return ""
+    fingerprint = uploaded_file_signature(uploaded_file)
+    cache_key = f"{namespace}_upload_text"
+    fingerprint_key = f"{namespace}_upload_fingerprint"
+    if st.session_state.get(fingerprint_key) != fingerprint:
+        st.session_state[fingerprint_key] = fingerprint
+        st.session_state[cache_key] = extract_text_from_upload(uploaded_file)
+    return str(st.session_state.get(cache_key, ""))
+
+
+def cached_extract_text_from_upload(uploaded_file: Any, cache_prefix: str) -> str:
+    return get_cached_upload_text(uploaded_file, cache_prefix)
+
+
+def cached_extract_texts_from_uploads(uploaded_files: Any, cache_prefix: str) -> list[tuple[str, str]]:
+    files = list(uploaded_files or [])
+    fingerprints = [(getattr(file, "name", "") or "", uploaded_file_fingerprint(file)) for file in files]
+    fingerprint_key = f"{cache_prefix}_upload_fingerprints"
+    cache_key = f"{cache_prefix}_upload_texts"
+    if st.session_state.get(fingerprint_key) != fingerprints:
+        st.session_state[fingerprint_key] = fingerprints
+        st.session_state[cache_key] = [(getattr(file, "name", "") or "上传文件", extract_text_from_upload(file)) for file in files]
+    return list(st.session_state.get(cache_key, []))
+
+
 RESUME_SECTION_RULES: dict[str, list[str]] = {
     "基本信息": ["基本信息", "个人信息", "联系方式", "求职意向", "个人简介", "profile"],
     "教育背景": ["教育背景", "教育经历", "教育", "education"],
@@ -7242,18 +7284,6 @@ def resume_text_from_parsed(parsed: dict[str, Any] | None) -> str:
     if not parsed:
         return ""
     return str(parsed.get("structured_text") or parsed.get("clean_text") or parsed.get("raw_text") or "")
-
-
-def uploaded_file_signature(uploaded_file: Any) -> str:
-    if uploaded_file is None:
-        return ""
-    return "|".join(
-        [
-            str(getattr(uploaded_file, "name", "")),
-            str(getattr(uploaded_file, "size", "")),
-            str(getattr(uploaded_file, "type", "")),
-        ]
-    )
 
 
 def ensure_widget_text(key: str, default: str = "") -> None:
@@ -12793,6 +12823,22 @@ def build_report_frames() -> dict[str, pd.DataFrame]:
     return frames
 
 
+def report_export_signature() -> str:
+    payload = {
+        "profile": get_active_profile(),
+        "resume": get_active_resume(),
+        "preferences": load_target_preferences(),
+        "jd": st.session_state.get("jd_analysis"),
+        "resume_match": st.session_state.get("resume_match"),
+        "gap": st.session_state.get("gap_analysis"),
+        "interview": st.session_state.get("interview_analysis"),
+        "batch": st.session_state.get("batch_jd_analysis"),
+        "recruitment": st.session_state.get("recruitment_monitor"),
+        "applications_view": st.session_state.get("report_dashboard_view"),
+    }
+    return content_fingerprint(_json_fingerprint_payload(payload))
+
+
 def build_excel_report() -> bytes:
     return report_export_utils.build_excel_report(frames=build_report_frames())
 
@@ -13073,7 +13119,7 @@ def render_batch_jd_detail(row: pd.Series) -> None:
             ui_components.empty_state("缺口较少", "当前没有明显未覆盖或弱证据要求。")
     with detail_tabs[2]:
         st.caption(f"{row.get('地点', '')} · {row.get('薪资', '')} · {row.get('链接', '')}")
-        st.text_area("JD 原文", value=str(row.get("JD原文", "") or ""), height=220, disabled=True, key=f"batch_detail_jd_{row.name}")
+        st.text_area("JD 原文", value=str(row.get("JD原文", "") or ""), height=140, disabled=True, key=f"batch_detail_jd_{row.name}")
 
 
 def apply_batch_quick_view(df: pd.DataFrame, view_name: str, preferences: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -14059,7 +14105,9 @@ def render_browser_capture_import(key_prefix: str, default: bool = False, show_t
         )
     if not use_capture_import:
         return ""
-    with st.container(border=True):
+    with st.container():
+        ui_components.render_surface_anchor("plain")
+        ui_components.render_surface_header("网页采集")
         user_id = current_user_id()
         upload_url = capture_upload_public_url()
         upload_token = get_or_create_capture_upload_token(user_id) if user_id else ""
@@ -14285,12 +14333,14 @@ def render_batch_jd_tab() -> None:
         use_url_import = import_modes[2].checkbox("公开链接抓取", value=False, key="batch_use_url_import")
 
         if use_paste_import:
-            with st.container(border=True):
-                st.markdown("##### 粘贴多条 JD")
-                pasted_text = st.text_area("每条之间空一行", height=180, key="batch_pasted_text")
+            with st.container():
+                ui_components.render_surface_anchor("sheet")
+                ui_components.render_surface_header("粘贴多条 JD")
+                pasted_text = st.text_area("每条之间空一行", height=142, key="batch_pasted_text")
         if use_file_import:
-            with st.container(border=True):
-                st.markdown("##### 上传表格/文件")
+            with st.container():
+                ui_components.render_surface_anchor("sheet")
+                ui_components.render_surface_header("上传表格/文件")
                 uploaded_files = st.file_uploader(
                     "支持 Excel / CSV / TXT / HTML / PDF / DOCX",
                     type=["xlsx", "xls", "csv", "txt", "md", "html", "htm", "pdf", "docx"],
@@ -14298,8 +14348,9 @@ def render_batch_jd_tab() -> None:
                     key="batch_jd_upload",
                 )
         if use_url_import:
-            with st.container(border=True):
-                st.markdown("##### 公开链接抓取")
+            with st.container():
+                ui_components.render_surface_anchor("sheet")
+                ui_components.render_surface_header("公开链接抓取")
                 url_block = st.text_area("一行一个 URL", height=90, key="batch_url_block")
                 use_dynamic_crawl = st.checkbox(
                     "公开链接增强解析",
@@ -14451,7 +14502,8 @@ def render_batch_jd_tab() -> None:
             st.success(f"已加入今日求职队列：{added} 个岗位。")
     with detail_col:
         selected_row = display_df.iloc[selected_options.index(selected_label)]
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
             render_batch_jd_detail(selected_row)
         with st.expander("设为目标 JD", expanded=False):
             render_target_jd_picker(display_df.iloc[[selected_options.index(selected_label)]], "batch_jd", "批量JD筛选")
@@ -14496,13 +14548,14 @@ def render_resume_tab() -> None:
 
     left_col, right_col = st.columns([1.05, 0.95], gap="large")
     with left_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">当前简历</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("当前简历")
             if active_resume.get("content", "").strip():
                 st.text_area(
                     f"当前简历：{active_resume.get('name') or '简历'}",
                     value=active_resume["content"],
-                    height=300,
+                    height=210,
                     disabled=True,
                     key=f"resume_global_preview_{active_resume.get('id', 'none')}",
                 )
@@ -14527,8 +14580,9 @@ def render_resume_tab() -> None:
                 st.warning("需要先保存当前简历。")
 
     with right_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">匹配结论</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("匹配结论")
             if resume_match and can_match and resume_match_current:
                 render_resume_match_snapshot(resume_match)
             elif resume_match and can_match and not resume_match_current:
@@ -14691,7 +14745,7 @@ def render_custom_resume_tab() -> None:
     with st.expander(f"当前简历：{active_resume['name']}", expanded=False):
         st.text_area(
             "当前简历内容",
-            height=240,
+            height=140,
             value=active_resume["content"],
             disabled=True,
             key=f"custom_global_resume_preview_{active_resume.get('id', 'none')}",
@@ -14760,7 +14814,7 @@ def render_custom_resume_tab() -> None:
             ui_components.warning_card("只能有限优化", "可以优化表达，但不要把缺失能力写成已有经历。")
             render_rewrite_buckets(bullet_rewrites, revision_level)
         else:
-            st.text_area("可复制到简历里再按真实经历微调", value=result.get("ready_resume_text", ""), height=280)
+            st.text_area("可复制到简历里再按真实经历微调", value=result.get("ready_resume_text", ""), height=210)
     with parts_tab:
         if revision_level in {"PARTIAL_CUSTOMIZATION", "HIGHLY_CUSTOMIZABLE"}:
             st.markdown("##### 证据优势")
@@ -14850,12 +14904,14 @@ def render_recruitment_monitor_tab() -> None:
     use_file_input = input_modes[3].checkbox("上传文件", value=False, key="recruitment_use_file")
 
     if use_paste_input:
-        with st.container(border=True):
-            st.markdown("##### 粘贴招聘文本")
-            pasted_text = st.text_area("多条 JD 之间空一行", height=220, placeholder="可以一次粘贴多条 JD；建议每条之间空一行。")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("粘贴招聘文本")
+            pasted_text = st.text_area("多条 JD 之间空一行", height=142, placeholder="可以一次粘贴多条 JD；建议每条之间空一行。")
     if use_link_input:
-        with st.container(border=True):
-            st.markdown("##### 招聘链接抓取")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("招聘链接抓取")
             url_block = st.text_area("一行一个 URL", height=100, placeholder="https://...\nhttps://...")
             crawl_cols = st.columns(2)
             max_workers = crawl_cols[0].slider("并发爬虫数", min_value=1, max_value=8, value=5, key="recruitment_workers")
@@ -14863,10 +14919,11 @@ def render_recruitment_monitor_tab() -> None:
     if use_capture_input:
         exported_recruitment_text = render_browser_capture_import("recruitment", default=True, show_toggle=False)
     if use_file_input:
-        with st.container(border=True):
-            st.markdown("##### 上传招聘信息文件")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("上传招聘信息文件")
             uploaded = st.file_uploader("支持 TXT / MD / CSV / Excel / HTML", type=["txt", "md", "csv", "xlsx", "xls", "html", "htm"], key="recruitment_upload")
-            upload_text = extract_text_from_upload(uploaded) if uploaded else ""
+            upload_text = cached_extract_text_from_upload(uploaded, "recruitment_monitor") if uploaded else ""
 
     if st.button("开始监测并解析", type="primary"):
         urls = extract_urls(url_block)
@@ -14955,8 +15012,9 @@ def render_offer_prediction_tab() -> None:
     tier_options = ["头部/知名机构", "中高层级", "普通公司", "小公司/冷门岗位", "未知"]
     left_col, right_col = st.columns([0.95, 1.05], gap="large")
     with left_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">预测参数</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("预测参数")
             if not resume_match:
                 st.warning("建议先完成简历匹配；未完成时会用默认匹配度估算。")
             company_tier = st.selectbox("公司层级", tier_options, index=tier_options.index(inferred_tier) if inferred_tier in tier_options else 4)
@@ -14975,8 +15033,9 @@ def render_offer_prediction_tab() -> None:
 
     result = st.session_state.get("offer_prediction")
     with right_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">推进结论</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("推进结论")
             render_offer_prediction_snapshot(result)
     if not result:
         return
@@ -15046,15 +15105,50 @@ def _interview_runtime_outputs(
     return interview_gap_rows, question_groups, personalized_answers
 
 
+def _interview_cache_fingerprint(*values: Any) -> str:
+    return content_fingerprint("||".join(_json_fingerprint_payload(value) for value in values))
+
+
+def _cached_interview_gap_rows(jd_analysis: Any, resume_match: Any, interview_analysis: Any, resume_text: str) -> list[dict[str, Any]]:
+    fingerprint = _interview_cache_fingerprint(jd_analysis, resume_match, interview_analysis, resume_text)
+    cache = st.session_state.get("_interview_gap_rows_cache")
+    if isinstance(cache, dict) and cache.get("fingerprint") == fingerprint:
+        return list(cache.get("rows", []))
+    rows = build_interview_gap_rows_v2(jd_analysis, resume_match, interview_analysis, resume_text)
+    st.session_state["_interview_gap_rows_cache"] = {"fingerprint": fingerprint, "rows": rows}
+    return rows
+
+
+def _cached_interview_question_groups(interview_analysis: Any, jd_analysis: Any, resume_match: Any) -> dict[str, list[dict[str, Any]]]:
+    fingerprint = _interview_cache_fingerprint(interview_analysis, jd_analysis, resume_match)
+    cache = st.session_state.get("_interview_question_groups_cache")
+    if isinstance(cache, dict) and cache.get("fingerprint") == fingerprint:
+        return dict(cache.get("groups", {}))
+    groups = interview_question_records(interview_analysis, jd_analysis, resume_match)
+    st.session_state["_interview_question_groups_cache"] = {"fingerprint": fingerprint, "groups": groups}
+    return groups
+
+
+def _cached_personalized_interview_answers(interview_analysis: Any, resume_text: str, jd_analysis: Any, resume_match: Any) -> list[dict[str, Any]]:
+    fingerprint = _interview_cache_fingerprint(interview_analysis, resume_text, jd_analysis, resume_match)
+    cache = st.session_state.get("_interview_personalized_answers_cache")
+    if isinstance(cache, dict) and cache.get("fingerprint") == fingerprint:
+        return list(cache.get("answers", []))
+    answers = build_personalized_interview_answers_v2(interview_analysis, resume_text, jd_analysis, resume_match)
+    st.session_state["_interview_personalized_answers_cache"] = {"fingerprint": fingerprint, "answers": answers}
+    return answers
+
+
 def render_interview_tab() -> None:
     left_col, right_col = st.columns([0.55, 0.45], gap="large")
     with left_col:
         st.markdown('<div class="cp-interview-sheet cp-interview-import">', unsafe_allow_html=True)
-        with st.container(border=True):
-            ui_components.section_title("导入面经", "粘贴复盘或上传文件，优先提炼真实追问。")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("导入面经", "粘贴复盘或上传文件，优先提炼真实追问。")
             text_value = st.text_area(
                 "粘贴面经文本",
-                height=190,
+                height=142,
                 placeholder="粘贴牛客、公众号、社群或个人复盘中的面经内容。建议一份面经一段；如果是批量总结，也可以连续粘贴多份。",
             )
             with st.expander("上传面经文件 / 截图", expanded=False):
@@ -15064,14 +15158,15 @@ def render_interview_tab() -> None:
                     key="interview_upload",
                     accept_multiple_files=True,
                 )
-            source_items: list[tuple[str, str]] = []
-            if normalize_text(text_value):
-                source_items.append(("手动粘贴", text_value))
-            for uploaded in uploaded_files or []:
-                source_items.append((uploaded.name, extract_text_from_upload(uploaded)))
+                if uploaded_files:
+                    st.caption(f"已选择 {len(uploaded_files)} 个文件，点击提炼时解析。")
 
             st.markdown('<div class="cp-interview-action">', unsafe_allow_html=True)
             if st.button("提炼面试问题", type="primary", width="stretch"):
+                source_items: list[tuple[str, str]] = []
+                if normalize_text(text_value):
+                    source_items.append(("手动粘贴", text_value))
+                source_items.extend(cached_extract_texts_from_uploads(uploaded_files, "interview_sources"))
                 if not source_items:
                     ui_components.warning_card("还没有面经", "请先粘贴面经，或上传面经文件。")
                 else:
@@ -15086,19 +15181,13 @@ def render_interview_tab() -> None:
     resume_match = st.session_state.get("resume_match")
     resume_text = profile_text_for_analysis()
     interview_gap_rows: list[dict[str, Any]] = []
-    question_groups: dict[str, list[dict[str, Any]]] = {}
-    personalized_answers: list[dict[str, Any]] = []
     if interview_analysis:
-        interview_gap_rows, question_groups, personalized_answers = _interview_runtime_outputs(
-            jd_analysis,
-            resume_match,
-            interview_analysis,
-            resume_text,
-        )
+        interview_gap_rows = _cached_interview_gap_rows(jd_analysis, resume_match, interview_analysis, resume_text)
     with right_col:
         st.markdown('<div class="cp-interview-sheet cp-interview-summary">', unsafe_allow_html=True)
-        with st.container(border=True):
-            ui_components.section_title("准备结论", "把面经题目转成你当前最该练的回答。")
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("准备结论", "把面经题目转成你当前最该练的回答。")
             if interview_analysis:
                 render_interview_snapshot(interview_analysis, interview_gap_rows)
             else:
@@ -15113,6 +15202,7 @@ def render_interview_tab() -> None:
         key="interview_detail_view",
     )
     if interview_view == "个性化回答":
+        personalized_answers = _cached_personalized_interview_answers(interview_analysis, resume_text, jd_analysis, resume_match)
         if personalized_answers:
             st.markdown("#### 先练这些最贴当前简历的回答")
             render_user_dataframe(
@@ -15149,6 +15239,7 @@ def render_interview_tab() -> None:
         for item in interview_analysis.get("answer_templates", []):
             st.write(f"- {item}")
     elif interview_view == "问题清单":
+        question_groups = _cached_interview_question_groups(interview_analysis, jd_analysis, resume_match)
         for group_name, rows in question_groups.items():
             st.markdown(f"#### {group_name}")
             if rows:
@@ -15170,8 +15261,9 @@ def render_internship_tab() -> None:
     active_profile = get_active_profile()
     left_col, right_col = st.columns([1.04, 0.96], gap="large")
     with left_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">实习信息</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("实习信息")
             cols = st.columns(2)
             company = cols[0].text_input("实习公司", placeholder="例如：SGS / TÜV / 制造业低碳部门 / 咨询公司")
             role = cols[1].text_input("实习岗位", placeholder="例如：数据分析实习生 / 产品运营实习生 / 咨询实习生 / 研发实习生")
@@ -15181,14 +15273,14 @@ def render_internship_tab() -> None:
 
             internship_text = st.text_area(
                 "粘贴实习 JD 或工作内容",
-                height=220,
+                height=140,
                 placeholder="粘贴实习招聘描述、导师说的工作内容、项目方向，或你已经拿到的 offer 信息...",
             )
             uploaded = st.file_uploader("上传实习 JD 文件", type=["pdf", "docx", "txt", "md", "html", "htm"], key="internship_upload")
-            upload_text = extract_text_from_upload(uploaded) if uploaded else ""
+            upload_text = cached_extract_text_from_upload(uploaded, "internship") if uploaded else ""
             if upload_text:
                 with st.expander("查看上传文件内容"):
-                    st.text_area("上传文件内容", value=upload_text, height=160)
+                    st.text_area("上传文件内容", value=upload_text, height=132)
 
             if st.button("评估这个实习是否值得去", type="primary", width="stretch"):
                 full_text = "\n".join([internship_text, upload_text]).strip()
@@ -15207,8 +15299,9 @@ def render_internship_tab() -> None:
 
     analysis = st.session_state.get("internship_analysis")
     with right_col:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">是否值得去</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("是否值得去")
             render_internship_snapshot(analysis)
     if not analysis:
         return
@@ -15482,16 +15575,21 @@ def render_dashboard_tab() -> None:
 
     top_cols = st.columns([1.05, 0.95], gap="large")
     with top_cols[0]:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">报告完整度</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("plain")
+            ui_components.render_surface_header("报告完整度")
             render_report_readiness_panel()
     with top_cols[1]:
-        with st.container(border=True):
-            st.markdown('<div class="cp-panel-title">导出投递包</div>', unsafe_allow_html=True)
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("导出投递包")
+            export_signature = report_export_signature()
             export_cols = st.columns(2)
             if export_cols[0].button("生成 Excel", key="build_excel_report_btn"):
-                st.session_state.report_excel_bytes = build_excel_report()
-            if st.session_state.get("report_excel_bytes"):
+                if st.session_state.get("report_excel_signature") != export_signature:
+                    st.session_state.report_excel_bytes = build_excel_report()
+                    st.session_state.report_excel_signature = export_signature
+            if st.session_state.get("report_excel_bytes") and st.session_state.get("report_excel_signature") == export_signature:
                 st.download_button(
                     "下载 Excel",
                     st.session_state.report_excel_bytes,
@@ -15500,10 +15598,12 @@ def render_dashboard_tab() -> None:
                     width="stretch",
                 )
             if export_cols[1].button("生成 PDF", key="build_pdf_report_btn"):
-                st.session_state.report_pdf_bytes = build_pdf_report()
+                if st.session_state.get("report_pdf_signature") != export_signature:
+                    st.session_state.report_pdf_bytes = build_pdf_report()
+                    st.session_state.report_pdf_signature = export_signature
                 if not st.session_state.report_pdf_bytes:
                     st.warning("PDF 导出需要安装 reportlab。")
-            if st.session_state.get("report_pdf_bytes"):
+            if st.session_state.get("report_pdf_bytes") and st.session_state.get("report_pdf_signature") == export_signature:
                 st.download_button(
                     "下载 PDF",
                     st.session_state.report_pdf_bytes,
@@ -15595,7 +15695,7 @@ def render_auth_screen() -> None:
         left_col, right_col = st.columns([1.05, 0.95], gap="large")
     with left_col:
         ui_components.render_auth_shell(
-            "看清每一次求职选择。",
+            "看清每一次求职选择",
             "先设定目标，再判断岗位价值，最后推进投递。",
             [
                 {"title": "设定偏好", "description": "明确目标方向和筛选边界。"},
@@ -15605,13 +15705,14 @@ def render_auth_screen() -> None:
         )
     with right_col:
         with st.container():
+            ui_components.render_surface_anchor("auth")
             st.markdown(
                 f"""
-                <section class="cp-auth-card">
+                <div class="cp-auth-fixed-shell">
                     <div class="cp-auth-card-kicker">CareerPilot 求职判断系统</div>
                     <h2>{safe_html(APP_TITLE)}</h2>
                     <p class="cp-auth-card-copy">登录后继续你的岗位判断、简历匹配和投递推进。</p>
-                </section>
+                </div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -15621,6 +15722,12 @@ def render_auth_screen() -> None:
                 horizontal=True,
                 key="auth_mode",
                 label_visibility="collapsed",
+            )
+            note_text = "创建账号后会自动登录，直接进入 CareerPilot。" if auth_mode == "注册" else ""
+            st.markdown(
+                f'<div class="cp-auth-fixed-note {"is-empty" if not note_text else ""}">{safe_html(note_text)}</div>'
+                '<span class="cp-auth-fixed-body"></span>',
+                unsafe_allow_html=True,
             )
             if auth_mode == "登录":
                 with st.form("login_form"):
@@ -15635,7 +15742,6 @@ def render_auth_screen() -> None:
                     else:
                         st.error(message)
             else:
-                st.markdown('<p class="cp-auth-form-note">创建账号后会自动登录，直接进入 CareerPilot。</p>', unsafe_allow_html=True)
                 with st.form("register_form"):
                     display_name = st.text_input("昵称", key="register_display_name", placeholder="例如：Alex")
                     email = st.text_input("邮箱", key="register_email", placeholder="name@example.com")
@@ -16078,14 +16184,17 @@ def render_settings_summary_cards() -> None:
     cities = split_preference_items(prefs.get("target_cities", []))
     industries = split_preference_items(prefs.get("preferred_industries", []))
     directions = split_preference_items(prefs.get("target_roles", []))
-    ui_components.render_status_tile_grid(
-        [
-            {"title": "当前简历", "value": resume_label, "hint": "用于匹配与改写"},
-            {"title": "目标档案", "value": profile_label, "hint": "定义机会判断标准"},
-            {"title": "求职城市", "value": " / ".join(cities[:2]) or "未设置", "hint": "影响批量筛选"},
-            {"title": "行业方向", "value": " / ".join((directions or industries)[:2]) or "未设置", "hint": "约束岗位池"},
-        ]
+    chips = [
+        ("当前简历", resume_label),
+        ("目标档案", profile_label),
+        ("求职城市", " / ".join(cities[:2]) or "未设置"),
+        ("行业方向", " / ".join((directions or industries)[:2]) or "未设置"),
+    ]
+    chip_html = "".join(
+        f'<span><em>{safe_html(label)}</em><strong>{safe_html(value)}</strong></span>'
+        for label, value in chips
     )
+    st.markdown(f'<div class="cp-settings-status-strip">{chip_html}</div>', unsafe_allow_html=True)
 
 
 def render_settings_profile_section() -> None:
@@ -16094,7 +16203,8 @@ def render_settings_profile_section() -> None:
     left_col, right_col = st.columns([0.34, 0.66], gap="large")
 
     with left_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("list")
             st.markdown('<div class="cp-settings-card-head"><span>目标档案</span><strong>选择与管理</strong></div>', unsafe_allow_html=True)
             profile_id = active_profile.get("id")
             if not profiles.empty:
@@ -16130,7 +16240,8 @@ def render_settings_profile_section() -> None:
                     st.warning("没有可删除的目标档案。")
 
     with right_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
             is_new = bool(st.session_state.get("settings_target_profile_is_new")) or not active_profile.get("id")
             profile_id = None if is_new else active_profile.get("id")
             name_key = "settings_target_profile_name"
@@ -16148,7 +16259,7 @@ def render_settings_profile_section() -> None:
             profile_content = st.text_area(
                 "目标说明",
                 key=content_key,
-                height=240,
+                height=132,
                 placeholder="例如：目标岗位、阶段性求职策略、机会判断标准和需要避开的方向。",
             )
             if st.button("保存目标档案", type="primary", key="settings_save_target_profile", width="stretch"):
@@ -16172,7 +16283,8 @@ def render_settings_resume_section() -> None:
     left_col, right_col = st.columns([0.34, 0.66], gap="large")
 
     with left_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("list")
             st.markdown('<div class="cp-settings-card-head"><span>当前简历</span><strong>选择与导入</strong></div>', unsafe_allow_html=True)
             resume_id = active_resume.get("id")
             if not resumes.empty:
@@ -16215,7 +16327,8 @@ def render_settings_resume_section() -> None:
                     st.rerun()
 
     with right_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
             resume_id = active_resume.get("id")
             name_key = "settings_resume_name"
             content_key = "settings_resume_content"
@@ -16229,7 +16342,7 @@ def render_settings_resume_section() -> None:
             )
             st.markdown('<div class="cp-settings-card-head"><span>编辑</span><strong>简历内容</strong></div>', unsafe_allow_html=True)
             resume_name = st.text_input("简历名称", key=name_key)
-            resume_content = st.text_area("简历内容", key=content_key, height=280)
+            resume_content = st.text_area("简历内容", key=content_key, height=200)
             cols = st.columns([1, 1])
             if cols[0].button("保存当前简历", type="primary", key="settings_save_resume", width="stretch"):
                 try:
@@ -16256,7 +16369,7 @@ def render_settings_resume_section() -> None:
             with st.expander("新增简历", expanded=bool(st.session_state.get("settings_new_resume_content"))):
                 ensure_widget_text("settings_new_resume_content")
                 new_name = st.text_input("新简历名称", key="settings_new_resume_name", placeholder="例如：数据分析岗位简历")
-                new_content = st.text_area("新简历内容", key="settings_new_resume_content", height=220)
+                new_content = st.text_area("新简历内容", key="settings_new_resume_content", height=172)
                 if st.button("新增并设为当前简历", key="settings_create_resume", width="stretch"):
                     if not new_content.strip():
                         st.warning("请先填写或上传简历内容。")
@@ -16280,7 +16393,8 @@ def render_settings_preferences_tab() -> None:
     )
     left_col, right_col = st.columns([1, 1], gap="large")
     with left_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
             st.markdown('<div class="cp-settings-card-head"><span>方向与城市</span><strong>目标范围</strong></div>', unsafe_allow_html=True)
             selected_industries = settings_chip_selector(
                 "目标行业",
@@ -16323,7 +16437,8 @@ def render_settings_preferences_tab() -> None:
             )
 
     with right_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
             st.markdown('<div class="cp-settings-card-head"><span>薪资与规则</span><strong>筛选边界</strong></div>', unsafe_allow_html=True)
             target_salary_enabled = st.checkbox(
                 "启用目标薪资偏好",
@@ -16419,10 +16534,6 @@ def render_settings_preferences_tab() -> None:
 
 def render_settings_workspace_tab() -> None:
     st.markdown('<div class="cp-settings-page">', unsafe_allow_html=True)
-    ui_components.render_settings_hero(
-        "先设定你是谁，再判断机会",
-        "把目标档案、当前简历和筛选偏好先对齐，后面的岗位分析、简历匹配和求职决策才会更稳。",
-    )
     render_settings_summary_cards()
     section = ui_components.render_segmented_nav(
         ["目标档案", "当前简历", "求职偏好"],
@@ -16483,8 +16594,9 @@ def render_resume_management_page() -> None:
 
     left_col, right_col = st.columns([1.08, 0.92], gap="large")
     with left_col:
-        with st.container(border=True):
-            st.markdown("##### 当前简历")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("当前简历")
             resume_name_key = f"resume_page_name_{active_resume.get('id') or 'new'}"
             resume_content_key = f"resume_page_content_{active_resume.get('id') or 'new'}"
             if resume_name_key not in st.session_state:
@@ -16538,8 +16650,9 @@ def render_resume_management_page() -> None:
                     st.rerun()
 
     with right_col:
-        with st.container(border=True):
-            st.markdown("##### 新增简历")
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("新增简历")
             new_name = st.text_input("新简历名称", key="resume_page_new_name", placeholder="例如：数据分析岗位简历")
             new_upload = st.file_uploader(
                 "上传新简历 PDF / Word / TXT",
@@ -16555,7 +16668,7 @@ def render_resume_management_page() -> None:
                     st.warning("没有从文件中读取到有效简历内容，请改用可复制文本。")
             if "resume_page_new_content" not in st.session_state:
                 st.session_state["resume_page_new_content"] = ""
-            new_content = st.text_area("新简历内容", key="resume_page_new_content", height=220)
+            new_content = st.text_area("新简历内容", key="resume_page_new_content", height=172)
             if st.button("新增并设为当前简历", type="primary", width="stretch"):
                 if not new_content.strip():
                     st.warning("请先填写或上传简历内容。")
@@ -16612,7 +16725,9 @@ def render_target_profile_page() -> None:
 
     left_col, right_col = st.columns([1, 1], gap="large")
     with left_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("目标档案", "管理用于判断机会的目标标准。")
             profile_name = st.text_input(
                 "档案名称",
                 value=active_profile.get("name", "") or "目标档案",
@@ -16621,7 +16736,7 @@ def render_target_profile_page() -> None:
             profile_content = st.text_area(
                 "目标说明",
                 value=active_profile.get("content", ""),
-                height=220,
+                height=132,
                 key=f"profile_page_content_{active_profile.get('id') or 'new'}",
                 placeholder="例如：目标岗位、行业、城市、阶段性求职策略和必须避开的机会。",
             )
@@ -16651,7 +16766,9 @@ def render_target_profile_page() -> None:
             selected_directions = list(dict.fromkeys(updated_directions))
 
     with right_col:
-        with st.container(border=True):
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("筛选边界", "城市、薪资和关键词统一写入求职偏好。")
             selected_cities = _sidebar_chip_selector(
                 "意向城市",
                 CHINA_CITY_OPTIONS,
@@ -16836,17 +16953,19 @@ def render_jd_tab() -> None:
     left_col, right_col = st.columns([0.52, 0.48], gap="medium")
 
     with left_col:
-        with st.container(border=True):
-            ui_components.render_section_header("输入区", "粘贴JD正文。链接、上传和采集放在更多导入方式里。")
+        with st.container():
+            ui_components.render_surface_anchor("sheet")
+            ui_components.render_surface_header("输入区", "粘贴JD正文。链接、上传和采集放在更多导入方式里。")
             text = st.text_area(
                 "岗位描述",
-                height=220,
+                height=164,
                 placeholder="粘贴招聘JD、岗位描述或网页复制内容。建议包含岗位名、公司、地点、职责和要求。",
                 key="jd_manual_text",
             )
             exported_jd_text = ""
             upload_text = ""
             crawled_jd_text = ""
+            uploaded_jd_file = None
             action_cols = st.columns([1.25, 1, 1], gap="small")
             analyze_clicked = action_cols[0].button("设为目标JD并分析", width="stretch", key="analyze_jd_main_action")
             action_cols[1].button("清空", width="stretch", key="clear_jd_manual_text", on_click=clear_jd_manual_text)
@@ -16902,14 +17021,17 @@ def render_jd_tab() -> None:
                     exported_jd_text = st.session_state.get("jd_exported_text", "")
 
                 if use_file_import:
-                    uploaded = st.file_uploader(
+                    uploaded_jd_file = st.file_uploader(
                         "上传 JD 文件",
                         type=["pdf", "docx", "txt", "md", "html", "htm", "xlsx", "xls", "csv", "png", "jpg", "jpeg", "webp"],
                         key="jd_upload",
                     )
-                    upload_text = extract_text_from_upload(uploaded) if uploaded else ""
+                    if uploaded_jd_file:
+                        st.caption("已选择文件，点击分析时读取并缓存内容。")
 
             if analyze_clicked:
+                if uploaded_jd_file:
+                    upload_text = get_cached_upload_text(uploaded_jd_file, "jd_single")
                 full_text = "\n".join([text, exported_jd_text, crawled_jd_text, upload_text]).strip()
                 if not full_text:
                     ui_components.warning_card("还没有导入JD", "请先粘贴岗位描述，或上传 JD 文件。")
@@ -16941,8 +17063,9 @@ def render_jd_tab() -> None:
 
     jd_analysis = st.session_state.get("jd_analysis")
     with right_col:
-        with st.container(border=True):
-            ui_components.render_section_header("结果区", "先看结论，再展开证据、缺口和改法。")
+        with st.container():
+            ui_components.render_surface_anchor("inspector")
+            ui_components.render_surface_header("结果区", "先看结论，再展开证据、缺口和改法。")
             if jd_analysis:
                 quality = st.session_state.get("single_jd_quality") or jd_input_quality(jd_analysis, jd_analysis.get("raw_text", ""))
                 if not quality.get("is_sufficient", True):
